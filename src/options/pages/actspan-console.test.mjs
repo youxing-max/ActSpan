@@ -43,8 +43,8 @@ export { getSyncStatus } from './src/options/pages/actspan-console-status.ts';`,
 const { saveWorkflowFunction, skillFunction, registryService, getSyncStatus } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].contents).toString('base64')}`);
 
 const workflow = {
-  name: 'search_products', label: 'Search products', description: 'Search catalog',
-  triggers: ['find products', 'search catalog'],
+  name: 'search_products', label: '搜索商品', description: '帮助用户搜索商品',
+  triggers: ['搜索商品', '查找商品'],
   url_patterns: ['*://example.com/*'],
   parameters: { type: 'object', properties: {} },
   plan: { steps: [{ action: 'page', params: {} }] },

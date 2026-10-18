@@ -22,4 +22,10 @@ test('system prompt gives deterministic workflow discovery and execution naming 
   assert.match(prompt, /skill\(action=["']run["'], name=["']<workflow_name>["'], params=/);
   assert.match(prompt, /workflow_json/);
   assert.match(prompt, /explicitly confirms|明确确认/);
+  assert.match(prompt, /录制步骤.*(?:起始 URL|URL).*参数.*(?:自动|补全|修正)|(?:自动|补全|修正).*录制步骤.*(?:起始 URL|URL).*参数/i);
+  assert.match(prompt, /name.*英文 snake_case|英文 snake_case.*name/i);
+  assert.match(prompt, /triggers.*自然语言|自然语言.*triggers/i);
+  assert.match(prompt, /无法(?:可靠)?推断.*(?:ask_user|询问)|(?:ask_user|询问).*无法(?:可靠)?推断/i);
+  assert.match(prompt, /修改.*完整.*workflow JSON.*(?:重新|再次)展示|(?:重新|再次)展示.*完整 workflow JSON/i);
+  assert.match(prompt, /未经确认.*(?:禁止|不得).*save_workflow|(?:禁止|不得).*save_workflow.*未经确认/i);
 });

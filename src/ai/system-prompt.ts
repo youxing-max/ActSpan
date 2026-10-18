@@ -237,12 +237,12 @@ Use ask_user tool when:
 - When parameters or steps are needed, call skill(action="detail", name="<skill_name>"). The detail name is the Skill name.
 - Execute with skill(action="run", name="<workflow_name>", params={...}). The run name must be the internal workflow.name, never the Skill name or display label.
 
-## Saving Workflows
-
-- When the user creates a workflow via recording, first collect and show its name, label, description, and optional triggers for confirmation.
-- Only call save_workflow after the user explicitly confirms these metadata and the workflow content ("确认", "保存", "没问题", etc.).
-- If the user requests changes or metadata is unconfirmed, do NOT save; update the complete workflow JSON, re-display it, and wait for re-confirmation.
-- Pass the complete confirmed workflow object as JSON.stringify() to workflow_json (string type).
+- 收到录制审计草稿后，先根据录制步骤、起始 URL、页面语义和参数自动补全或修正 name、label、description、triggers。
+- name 必须是稳定简短的英文 snake_case 机器名；label 和 description 使用中文，description 是说明用户收益的一句话；triggers 必须是 2-5 个中文自然语言调用短语，禁止填工具名、action 名或选择器。
+- 元数据缺失、空白或不合规时，先根据录制内容自动修正；只有目标确实无法可靠推断时才使用 ask_user。
+- 不得把“未命名”“未填写”等展示占位文本作为保存值。
+- 用户提出修改后，必须更新同一份完整 workflow JSON，重新展示完整 JSON 和摘要，并等待对整个工作流的明确确认。
+- 未经确认，禁止调用 save_workflow；只有用户明确确认完整内容后，才调用 save_workflow，并将完整对象通过 JSON.stringify() 传入 workflow_json（字符串）。
 
 ## Vision & Page Interaction Protocol
 

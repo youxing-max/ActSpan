@@ -7,7 +7,7 @@ import { isSupportedRemotePlanAction } from './remote-workflow';
 // 保存用户确认的工作流
 export const saveWorkflowFunction: FunctionDefinition = {
   name: 'save_workflow',
-  description: 'Save a user-confirmed workflow definition to the registry. Only call this after the user has explicitly confirmed every metadata field and the steps. workflow_json must contain non-blank name, label, description, and a non-empty plan.steps array; triggers is optional but, when provided, must be an array of strings.',
+  description: 'Save a user-confirmed workflow definition to the registry. Only call this after the user has explicitly confirmed every metadata field and the steps. workflow_json must contain a valid English snake_case name, Chinese label and description, 2-5 non-blank trigger strings, and a non-empty plan.steps array.',
   supportsParallel: false,
   permissionLevel: 'interact',
   parameters: {
@@ -15,7 +15,7 @@ export const saveWorkflowFunction: FunctionDefinition = {
     properties: {
       workflow_json: {
         type: 'string',
-        description: 'Complete workflow definition as a JSON string. Requires non-blank name, label, description, and plan.steps with at least one step. Optional triggers must be a string array. Example: {"name":"search_product","label":"Search Product","description":"Searches products","triggers":["find products"],"plan":{"steps":[{"action":"cdp_input","params":{"action":"click","selector":"button"}}]}}',
+        description: 'Complete workflow definition as a JSON string. Requires an English snake_case name, Chinese label and description, 2-5 non-blank trigger strings, and plan.steps with at least one step. Example: {"name":"search_product","label":"搜索商品","description":"帮助用户搜索商品","triggers":["搜索商品","查找商品"],"plan":{"steps":[{"action":"cdp_input","params":{"action":"click","selector":"button"}}]}}',
       },
     },
     required: ['workflow_json'],
@@ -45,14 +45,32 @@ export const saveWorkflowFunction: FunctionDefinition = {
       }
     }
 
+    if (!/^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/.test(workflow.name)
+      || /^(?:workflow|workflow_name|unnamed|untitled|name)$/i.test(workflow.name)) {
+      return { success: false, error: 'Workflow name must use English snake_case and not be a placeholder' };
+    }
+    if (!/[\u3400-\u9fff]/.test(workflow.label)
+      || /(?:未命名|未填写|待补充|待 AI 根据步骤补全)/.test(workflow.label)) {
+      return { success: false, error: 'Workflow label must contain valid Chinese text' };
+    }
+    if (!/[\u3400-\u9fff]/.test(workflow.description)
+      || /(?:未命名|未填写|待补充|待 AI 根据步骤补全)/.test(workflow.description)) {
+      return { success: false, error: 'Workflow description must contain valid Chinese text' };
+    }
+
+    if (!Array.isArray(workflow.triggers)
+      || workflow.triggers.length < 2
+      || workflow.triggers.length > 5
+      || !workflow.triggers.every((trigger: unknown) =>
+        typeof trigger === 'string'
+        && trigger.trim().length > 0
+        && /[\u3400-\u9fff]/.test(trigger))) {
+      return { success: false, error: 'workflow.triggers must be an array of 2-5 non-blank Chinese strings' };
+    }
+
     if (!workflow.plan || typeof workflow.plan !== 'object'
       || !Array.isArray(workflow.plan.steps) || workflow.plan.steps.length === 0) {
       return { success: false, error: 'workflow.plan.steps must be a non-empty array' };
-    }
-
-    if (Object.prototype.hasOwnProperty.call(workflow, 'triggers')
-      && (!Array.isArray(workflow.triggers) || !workflow.triggers.every((trigger: unknown) => typeof trigger === 'string'))) {
-      return { success: false, error: 'workflow.triggers must be an array of strings when provided' };
     }
 
     // Validate plan actions through the resolver wired by the registry after static initialization.

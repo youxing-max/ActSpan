@@ -4,9 +4,11 @@
  */
 
 import Channel from '../lib/channel';
-import { getAISettings } from '../ai/llm-client';
+import { chatComplete } from '../ai/llm-client';
 import { buildSessionSyncPayload, createSession, createSessionPushEvent, persistRuntimeSessions } from './session-manager';
 import { readMigratedStorage } from '../lib/legacy-storage';
+import { isRecorderOwnerTab, isRecorderStateForTab, shouldTransferRecorderToTab } from './recorder-state';
+import { buildRecorderAuditPrompt } from './workflow-recorder-prompt';
 import type { InputItem, AIStreamEvent, Session, SessionSyncPayload } from '../ai/types';
 
 const RECORDER_STATE_KEY = 'actspan_recorder_state';
@@ -48,6 +50,7 @@ let recorderState: RecorderState | null = null;
 
 /** 导航监听器引用，用于注销 */
 let recorderNavListener: ((details: chrome.webNavigation.WebNavigationFramedCallbackDetails) => void) | null = null;
+let recorderTargetListener: ((details: chrome.webNavigation.WebNavigationSourceCallbackDetails) => void) | null = null;
 
 // ============ Session Storage 辅助函数 ============
 
@@ -74,7 +77,19 @@ const loadRecorderState = async (): Promise<RecorderState | null> => {
 
 /** 注册录制期间的导航监听器 */
 const registerRecorderNavListener = (): void => {
-    if (recorderNavListener) return; // 防止重复注册
+    if (recorderNavListener || recorderTargetListener) return; // 防止重复注册
+
+    recorderTargetListener = (details: chrome.webNavigation.WebNavigationSourceCallbackDetails) => {
+        if (!shouldTransferRecorderToTab(recorderState, details.sourceTabId, details.tabId)) return;
+        if (details.sourceFrameId !== 0) return;
+
+        const previousTabId = recorderState!.tabId;
+        recorderState!.tabId = details.tabId;
+        void saveRecorderState();
+
+        // 原页面不再拥有录制权，只清理本地捕获和 UI；录制步骤继续保留。
+        Channel.sendToTab(previousTabId, '__recorder_transfer', { tabId: details.tabId });
+    };
 
     recorderNavListener = (details: chrome.webNavigation.WebNavigationFramedCallbackDetails) => {
         // 只监听录制中的 tab 的主 frame
@@ -100,6 +115,7 @@ const registerRecorderNavListener = (): void => {
         Channel.sendToTab(recorderState.tabId, '__recorder_navigate', { url: details.url });
     };
 
+    chrome.webNavigation.onCreatedNavigationTarget.addListener(recorderTargetListener);
     chrome.webNavigation.onCompleted.addListener(recorderNavListener);
 };
 
@@ -109,7 +125,12 @@ const unregisterRecorderNavListener = (): void => {
         chrome.webNavigation.onCompleted.removeListener(recorderNavListener);
         recorderNavListener = null;
     }
+    if (recorderTargetListener) {
+        chrome.webNavigation.onCreatedNavigationTarget.removeListener(recorderTargetListener);
+        recorderTargetListener = null;
+    }
 };
+
 
 // ============ Channel 消息处理器 ============
 
@@ -129,9 +150,11 @@ const captureStepScreenshot = async (step: RecorderStep, tabId: number): Promise
         });
 
         // 截图
-        const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
-        const windowId = activeTab?.windowId;
-        if (windowId !== undefined) {
+        // captureVisibleTab 只能截取窗口当前可见页，因此必须以录制 Tab 的窗口为目标，
+        // 不能再查询用户当前活动的其他 Tab。
+        const recorderTab = await chrome.tabs.get(tabId);
+        const windowId = recorderTab.windowId;
+        if (windowId !== undefined && recorderTab.active) {
             const dataUrl = await chrome.tabs.captureVisibleTab(windowId, {
                 format: 'jpeg',
                 quality: 70,
@@ -153,6 +176,9 @@ const captureStepScreenshot = async (step: RecorderStep, tabId: number): Promise
         try { Channel.sendToTab(tabId, '__screenshot_show', {}); } catch { /* 忽略 */ }
     }
 };
+const isRecorderOwner = (sender?: chrome.runtime.MessageSender): boolean => (
+    isRecorderOwnerTab(recorderState, sender?.tab?.id)
+);
 
 /** 开始录制 */
 Channel.on('__recorder_start', (data, sender, sendResponse) => {
@@ -181,9 +207,13 @@ Channel.on('__recorder_start', (data, sender, sendResponse) => {
 });
 
 /** 停止录制 */
-Channel.on('__recorder_stop', (_data, _sender, sendResponse) => {
+Channel.on('__recorder_stop', (_data, sender, sendResponse) => {
     if (!recorderState) {
         sendResponse?.({ success: false, error: '当前没有进行中的录制' });
+        return true;
+    }
+    if (!isRecorderOwner(sender)) {
+        sendResponse?.({ success: false, error: '当前 Tab 没有录制权限' });
         return true;
     }
 
@@ -197,8 +227,8 @@ Channel.on('__recorder_stop', (_data, _sender, sendResponse) => {
 });
 
 /** 接收录制步骤 + 异步截图 */
-Channel.on('__recorder_step', (data) => {
-    if (!recorderState?.active || !data) return;
+Channel.on('__recorder_step', (data, sender) => {
+    if (!recorderState?.active || !isRecorderOwner(sender) || !data) return;
 
     const step: RecorderStep = {
         seq: data.seq ?? (recorderState.steps.length + 1),
@@ -229,33 +259,47 @@ Channel.on('__recorder_step', (data) => {
 });
 
 /** 查询当前录制状态 */
-Channel.on('__recorder_state', (_data, _sender, sendResponse) => {
-    sendResponse?.(recorderState);
+Channel.on('__recorder_state', async (_data, sender, sendResponse) => {
+    // Service Worker 可能刚被唤醒，先从 session storage 恢复再响应 content。
+    if (!recorderState) {
+        recorderState = await loadRecorderState();
+        if (recorderState?.active) registerRecorderNavListener();
+    }
+    const tabId = sender?.tab?.id;
+    sendResponse?.(isRecorderStateForTab(recorderState, tabId) ? recorderState : null);
     return true;
 });
 
 /** 取消审计：清理录制状态，释放 AI 处理 */
 let auditCancelled = false;
-Channel.on('__recorder_cancel_audit', (_data, _sender, sendResponse) => {
+Channel.on('__recorder_cancel_audit', (_data, sender, sendResponse) => {
+    if (recorderState && !isRecorderOwner(sender)) {
+        sendResponse?.({ success: false, error: '当前 Tab 没有录制权限' });
+        return true;
+    }
     auditCancelled = true;
     recorderState = null;
     void saveRecorderState();
+    unregisterRecorderNavListener();
     console.log('[Actspan] 工作流录制审计已取消');
     sendResponse?.({ success: true });
     return true;
 });
 
 /** 提交录制结果给 AI 审计，审计后通过对话确认 */
-Channel.on('__recorder_submit', (_data, _sender, sendResponse) => {
+Channel.on('__recorder_submit', (_data, sender, sendResponse) => {
     if (!recorderState || recorderState.steps.length === 0) {
         sendResponse?.({ success: false, error: '没有可提交的录制步骤' });
+        return true;
+    }
+    if (!isRecorderOwner(sender)) {
+        sendResponse?.({ success: false, error: '当前 Tab 没有录制权限' });
         return true;
     }
 
     const steps = [...recorderState.steps];
     const startUrl = recorderState.startUrl;
     const tabId = recorderState.tabId;
-
     // 重置取消标志
     auditCancelled = false;
 
@@ -268,57 +312,7 @@ Channel.on('__recorder_submit', (_data, _sender, sendResponse) => {
                 seq, action, selector, semanticHint, tag, ...(value !== undefined ? { value } : {}), url,
             }));
 
-            const prompt = [
-                '你是一个工作流审计助手。以下是用户在浏览器中录制的一系列操作步骤：',
-                '',
-                JSON.stringify(cleanSteps, null, 2),
-                '',
-                `起始 URL: ${startUrl}`,
-                '',
-                '可用的 action 名称（必须从以下清单选取）：',
-                '- tab_navigate — 标签页导航（打开/关闭/切换页面，params.action: navigate/open/close）',
-                '- cdp_input — 页面元素操作（点击/填写/选择/等待元素，params.action: click/fill/select/wait_for_element）',
-                '- page_snapshot — 获取页面语义快照',
-                '- page_viewer — 获取页面内容',
-                '- cdp_frame — 执行 JavaScript 代码（params.action: evaluate, params.expression: "代码"）',
-                '- cdp_dom — DOM 查询和修改',
-                '- extract_data — 结构化数据提取',
-                '- cdp_input — CDP 可信输入事件（鼠标/键盘）',
-                '- page_assert — 页面断言验证',
-                '- screenshot — 页面截图',
-                '',
-                '请完成以下任务：',
-                '1. 去除明显的噪声步骤（误点击、重复操作）',
-                '2. 合并连续的输入动作',
-                '3. 为每步添加中文说明（note 字段）',
-                '4. 识别用户输入的变量部分，用 {{param_name}} 替代，并在 parameters 中定义',
-                '5. 生成便于用户调用的 triggers 字符串数组（关键词或短语）',
-                '',
-                '重要：',
-                '- name 必须是英文下划线格式的机器名；label 是面向用户的显示名；description 是一句话描述；triggers 必须是字符串数组',
-                '- action 必须从上述清单中选取，不要使用 click/type/navigate 等原始录制动作名',
-                '- 页面导航（URL 变化）使用 tab_navigate，不是 cdp_input',
-                '- 元素点击/填写/选择使用 cdp_input',
-                '- 需要执行 JS 时使用 cdp_frame',
-                '',
-                '输出格式（严格 JSON，无多余文字）：',
-                '{',
-                '  "name": "workflow_名称（英文下划线格式）",',
-                '  "label": "显示名称（中文）",',
-                '  "description": "一句话工作流描述（中文）",',
-                '  "triggers": ["调用关键词或短语"],',
-                '  "url_patterns": ["匹配的 URL 模式"],',
-                '  "parameters": { JSON Schema 格式的参数定义 },',
-                '  "readable_steps": "人类可读的步骤描述（Markdown 编号列表，含参数标注）",',
-                '  "plan": {',
-                '    "steps": [',
-                '      { "action": "tab_navigate", "params": { "action": "navigate", "url": "..." }, "note": "导航到目标页" },',
-                '      { "action": "cdp_input", "params": { "action": "click", "selector": "..." }, "note": "点击按钮" },',
-                '      { "action": "cdp_input", "params": { "action": "fill", "selector": "input", "value": "{{keyword}}" }, "note": "输入搜索词" }',
-                '    ]',
-                '  }',
-                '}',
-            ].join('\n');
+            const prompt = buildRecorderAuditPrompt(cleanSteps, startUrl);
 
             // 调用 AI 进行审计
             const input: InputItem[] = [
@@ -361,11 +355,32 @@ Channel.on('__recorder_submit', (_data, _sender, sendResponse) => {
                 return;
             }
 
-            // 创建会话，注入审计结果供对话确认
-            const missingMetadata = (['name', 'label', 'description'] as const).filter(field => {
-                const value = workflowJson[field];
-                return typeof value !== 'string' || !value.trim();
-            });
+            const metadataPlaceholder = '待 AI 根据步骤补全（不会写入 workflow JSON）';
+            const isValidWorkflowName = (value: unknown): value is string =>
+                typeof value === 'string'
+                && /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/.test(value)
+                && !/^(?:workflow|workflow_name|unnamed|untitled|name)$/i.test(value);
+            const isValidChineseMetadata = (value: unknown): value is string =>
+                typeof value === 'string'
+                && value.trim().length > 0
+                && /[\u3400-\u9fff]/.test(value)
+                && !/(?:未命名|未填写|待补充|待 AI 根据步骤补全)/.test(value);
+            const isValidTriggers = (value: unknown): value is string[] =>
+                Array.isArray(value)
+                && value.length >= 2
+                && value.length <= 5
+                && value.every((trigger: unknown) =>
+                    typeof trigger === 'string'
+                    && trigger.trim().length > 0
+                    && /[\u3400-\u9fff]/.test(trigger));
+            const metadataValid = {
+                name: isValidWorkflowName(workflowJson.name),
+                label: isValidChineseMetadata(workflowJson.label),
+                description: isValidChineseMetadata(workflowJson.description),
+                triggers: isValidTriggers(workflowJson.triggers),
+            };
+            const missingMetadata = (['name', 'label', 'description', 'triggers'] as const)
+                .filter(field => !metadataValid[field]);
             const readableSteps = workflowJson.readable_steps || '（步骤解析中…）';
             const sessionQuery = '确认录制的工作流';
             const session = createSession(sessionQuery, tabId);
@@ -374,12 +389,11 @@ Channel.on('__recorder_submit', (_data, _sender, sendResponse) => {
             session.context.push({
                 role: 'system',
                 content: [
-                    '以下是用户刚刚录制并经过审计的工作流 JSON，用户尚未确认，禁止直接保存。',
+                    '以下是用户刚刚录制并经过审计的工作流 JSON 草稿，用户尚未确认，禁止直接保存。',
                     '保存前必须向用户展示并询问是否修改全部元数据：机器名 name、显示名 label、一句话 description、调用关键词 triggers、parameters 和 plan.steps。',
-                    '若 name、label 或 description 缺失或空白，先用 ask_user 或自然语言向用户补问具体值，再展示完整修订摘要并确认；不能把“未命名”“未填写”当作保存值。',
+                    '若任一元数据缺失、空白或不符合规则，先根据录制步骤、起始 URL、页面语义和参数自动补全或修正；只有确实无法推断目标时才用 ask_user 或自然语言询问，不能把“待 AI 根据步骤补全”等提示当作保存值。',
                     '用户要求修改任何字段后，必须基于最新 JSON 再展示完整修订摘要，并等待用户明确确认；未明确确认前不得调用 save_workflow。',
                     '只有用户明确确认全部内容后，才调用 save_workflow 工具保存完整 JSON。',
-                    '',
                     '```json',
                     JSON.stringify(workflowJson, null, 2),
                     '```',
@@ -396,21 +410,20 @@ Channel.on('__recorder_submit', (_data, _sender, sendResponse) => {
             const paramLine = paramEntries.length > 0
                 ? `**参数**：${paramEntries.map(([k, v]: [string, Record<string, unknown>]) => `\`${k}\` — ${(v as Record<string, unknown>).description || k}`).join('、')}`
                 : '**参数**：无';
-            const triggerLine = Array.isArray(workflowJson.triggers) && workflowJson.triggers.length > 0
+            const triggerLine = isValidTriggers(workflowJson.triggers)
                 ? workflowJson.triggers.map(trigger => `\`${trigger}\``).join('、')
-                : '无';
+                : metadataPlaceholder;
 
             const aiSummary = [
                 '我帮你整理了刚才录制的流程，请先审核以下待确认摘要：',
-                `**名称**：机器名 \`${workflowJson.name || '未命名'}\`；显示名 **${workflowJson.label || '未命名'}**`,
-                `**描述**：${workflowJson.description || '未填写'}`,
-                `**调用关键词**：${triggerLine}`,
+                `**名称**：机器名 \`${metadataValid.name ? workflowJson.name : metadataPlaceholder}\`；显示名 **${metadataValid.label ? workflowJson.label : metadataPlaceholder}**`,
+                `**描述**：${metadataValid.description ? workflowJson.description : metadataPlaceholder}`,
                 paramLine,
                 '**步骤**：',
                 readableSteps,
                 '',
-                ...(missingMetadata.length ? [`**待补充**：${missingMetadata.join('、')}。请先告诉我这些值，再确认完整工作流。`] : []),
-                '你可以修改名称、描述、调用关键词、参数或步骤。每次修改后我会展示修订摘要；仅在你明确确认全部内容后才保存。',
+                ...(missingMetadata.length ? [`**待补充**：${missingMetadata.join('、')}。先根据录制步骤自动补全；只有确实无法推断时才请用户提供，再确认完整工作流。`] : []),
+                '你可以修改名称、描述、调用关键词、参数或步骤。每次修改后我会展示完整修订 JSON；仅在你明确确认全部内容后才保存。',
             ].join('\n');
 
             session.context.push({
