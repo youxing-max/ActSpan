@@ -82,6 +82,12 @@ export const normalizeWorkflow = (raw: unknown, now: number): WorkflowEntry | nu
   const parameters = isObject(raw.parameters)
     ? clone(raw.parameters)
     : { type: 'object', properties: {} };
+  const triggers = Array.isArray(raw.triggers)
+    ? [...new Set(raw.triggers
+      .filter((value): value is string => typeof value === 'string')
+      .map(value => value.trim())
+      .filter(Boolean))]
+    : [];
   return {
     name,
     label,
@@ -89,6 +95,7 @@ export const normalizeWorkflow = (raw: unknown, now: number): WorkflowEntry | nu
     parameters,
     plan,
     ...(structuredSteps ? { steps: structuredSteps } : {}),
+    ...(triggers.length > 0 ? { triggers } : {}),
     ...(Number.isFinite(Number(raw.version)) ? { version: Math.max(1, Math.floor(Number(raw.version))) } : {}),
     ...(Number.isFinite(Number(raw.updatedAt)) ? { updatedAt: Number(raw.updatedAt) } : { updatedAt: now }),
     ...(typeof raw.contentHash === 'string' && raw.contentHash ? { contentHash: raw.contentHash } : {}),

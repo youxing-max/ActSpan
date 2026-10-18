@@ -67,6 +67,28 @@ test('stores canonical shape and increments revision for user writes', async () 
   assert.equal(stored.skills[0].name, 'catalog');
   assert.equal(stored.skills[0].source, 'user');
 });
+test('normalizes workflow triggers by trimming and deduplicating values', async () => {
+  const area = storage();
+  const service = new RegistryService({ storage: area, now: () => 100 });
+  await service.initialize();
+
+  await service.upsertSkill(skill({
+    source: 'user',
+    workflows: [{ ...workflow, triggers: ['  search  ', 'find', 'search', '', '   ', 42, 'find'] }],
+  }));
+
+  assert.deepEqual((await service.get('catalog', 'domain')).workflows[0].triggers, ['search', 'find']);
+});
+test('keeps legacy workflows without triggers readable', async () => {
+  const area = storage();
+  const service = new RegistryService({ storage: area, now: () => 100 });
+  await service.initialize();
+
+  await service.upsertSkill(skill({ source: 'user' }));
+
+  const storedWorkflow = (await service.get('catalog', 'domain')).workflows[0];
+  assert.equal(Object.hasOwn(storedWorkflow, 'triggers'), false);
+});
 test('normalizes unsupported structured workflow error policies to stop', async () => {
   const area = storage();
   const service = new RegistryService({ storage: area, now: () => 100 });

@@ -30,6 +30,8 @@ export interface WorkflowEntry {
   label: string;
   /** 一句话描述（出现在工具 description 中） */
   description: string;
+  /** 用户可说的调用关键词或同义短语。 */
+  triggers?: string[];
   /** 参数 JSON Schema */
   parameters: Record<string, any>;
   /** 执行计划（RemoteWorkflowPlan 格式，由 remote-workflow.ts 引擎执行） */
