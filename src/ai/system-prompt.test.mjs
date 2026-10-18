@@ -8,7 +8,7 @@ const bundle = await build({
   bundle: true, write: false, format: 'esm', platform: 'node',
 });
 const { buildSystemPrompt } = await import(
-  `data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].contents).toString('base64')}`,
+  `data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].contents).toString('base64')}`
 );
 
 test('system prompt gives deterministic workflow discovery and execution naming rules', () => {

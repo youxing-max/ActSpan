@@ -35,7 +35,7 @@ const bundle = await build({
   bundle: true, write: false, format: 'esm', platform: 'node',
 });
 const { Channel, ensureSkillRegistryReady, registryService } = await import(
-  `data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].contents).toString('base64')}`,
+  `data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].contents).toString('base64')}`
 );
 await ensureSkillRegistryReady();
 await registryService.upsertSkill({

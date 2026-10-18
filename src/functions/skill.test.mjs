@@ -29,7 +29,7 @@ globalThis.chrome = {
 };
 
 const { buildSkillContext, skillFunction, registryService } = await import(
-  `data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].contents).toString('base64')}`,
+  `data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].contents).toString('base64')}`
 );
 
 await buildSkillContext('https://unmatched.example/');

@@ -362,6 +362,10 @@ Channel.on('__recorder_submit', (_data, _sender, sendResponse) => {
             }
 
             // 创建会话，注入审计结果供对话确认
+            const missingMetadata = (['name', 'label', 'description'] as const).filter(field => {
+                const value = workflowJson[field];
+                return typeof value !== 'string' || !value.trim();
+            });
             const readableSteps = workflowJson.readable_steps || '（步骤解析中…）';
             const sessionQuery = '确认录制的工作流';
             const session = createSession(sessionQuery, tabId);
@@ -372,6 +376,7 @@ Channel.on('__recorder_submit', (_data, _sender, sendResponse) => {
                 content: [
                     '以下是用户刚刚录制并经过审计的工作流 JSON，用户尚未确认，禁止直接保存。',
                     '保存前必须向用户展示并询问是否修改全部元数据：机器名 name、显示名 label、一句话 description、调用关键词 triggers、parameters 和 plan.steps。',
+                    '若 name、label 或 description 缺失或空白，先用 ask_user 或自然语言向用户补问具体值，再展示完整修订摘要并确认；不能把“未命名”“未填写”当作保存值。',
                     '用户要求修改任何字段后，必须基于最新 JSON 再展示完整修订摘要，并等待用户明确确认；未明确确认前不得调用 save_workflow。',
                     '只有用户明确确认全部内容后，才调用 save_workflow 工具保存完整 JSON。',
                     '',
@@ -404,6 +409,7 @@ Channel.on('__recorder_submit', (_data, _sender, sendResponse) => {
                 '**步骤**：',
                 readableSteps,
                 '',
+                ...(missingMetadata.length ? [`**待补充**：${missingMetadata.join('、')}。请先告诉我这些值，再确认完整工作流。`] : []),
                 '你可以修改名称、描述、调用关键词、参数或步骤。每次修改后我会展示修订摘要；仅在你明确确认全部内容后才保存。',
             ].join('\n');
 
