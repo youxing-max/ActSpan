@@ -264,7 +264,7 @@ export function WorkflowsPage() {
             <div style={{ ...label, margin: '24px 0 12px' }}>WORKFLOWS / {current.workflows.length}</div>
             {current.workflows.map(workflow => <article key={workflow.name} style={{ borderTop: '1px solid #dce5ef', padding: '16px 0' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-                <div><strong>{workflow.label || workflow.name}</strong> <Text code>{workflow.name}</Text><div><Text type="secondary">{workflow.description}</Text></div></div>
+                <div><strong>{workflow.label || workflow.name}</strong> <Text code>{workflow.name}</Text><div><Text type="secondary">{workflow.description}</Text></div>{workflow.triggers?.length ? <div><Text type="secondary">关键词：{workflow.triggers.join('、')}</Text></div> : null}</div>
                 <Space>
                   <input aria-label={`导出 ${workflow.name}`} type="checkbox" checked={selectedExports.includes(`${identity(current)}:${workflow.name}`)}
                     onChange={event => setSelectedExports(keys => event.target.checked ? [...keys, `${identity(current)}:${workflow.name}`] : keys.filter(key => key !== `${identity(current)}:${workflow.name}`))} />

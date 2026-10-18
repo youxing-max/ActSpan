@@ -44,6 +44,7 @@ const { saveWorkflowFunction, skillFunction, registryService, getSyncStatus } = 
 
 const workflow = {
   name: 'search_products', label: 'Search products', description: 'Search catalog',
+  triggers: ['find products', 'search catalog'],
   url_patterns: ['*://example.com/*'],
   parameters: { type: 'object', properties: {} },
   plan: { steps: [{ action: 'page', params: {} }] },
@@ -57,14 +58,28 @@ test('AI save is visible at the same revision to Console and Skill API without o
   assert.ok(savedSkill);
   assert.equal(savedSkill.source, 'user');
   assert.deepEqual(savedSkill.url_patterns, workflow.url_patterns);
+  assert.deepEqual(savedSkill.workflows.find(item => item.name === workflow.name).triggers, workflow.triggers);
   assert.equal(values.actspan_skills.revision, snapshot.revision);
   assert.equal(writes.some(items => 'mole_site_workflows_v1' in items), false);
   const list = await skillFunction.execute({ action: 'list' });
   assert.equal(list.data.revision, snapshot.revision);
-  assert.ok(list.data.skills.some(skill => skill.name === savedSkill.name));
+  const listedSkill = list.data.skills.find(skill => skill.name === savedSkill.name);
+  assert.ok(listedSkill);
+  const listedWorkflow = listedSkill.workflows.find(item => item.name === workflow.name);
+  assert.deepEqual(listedWorkflow, {
+    name: workflow.name,
+    label: workflow.label,
+    description: workflow.description,
+    triggers: workflow.triggers,
+    parameters: workflow.parameters,
+  });
+  assert.equal('plan' in listedWorkflow, false);
   const detail = await skillFunction.execute({ action: 'detail', name: savedSkill.name });
   assert.equal(detail.data.revision, snapshot.revision);
   assert.equal(detail.data.workflows[0].name, workflow.name);
+  assert.equal(detail.data.workflows[0].label, workflow.label);
+  assert.equal(detail.data.workflows[0].description, workflow.description);
+  assert.deepEqual(detail.data.workflows[0].triggers, workflow.triggers);
 });
 
 test('Console edits and deletions change the next Skill API query without reloading', async () => {

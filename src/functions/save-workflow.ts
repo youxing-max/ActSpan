@@ -7,7 +7,7 @@ import { isSupportedRemotePlanAction } from './remote-workflow';
 // 保存用户确认的工作流
 export const saveWorkflowFunction: FunctionDefinition = {
   name: 'save_workflow',
-  description: 'Save a user-confirmed workflow definition to the registry. Only call this after the user has explicitly confirmed the workflow content. Pass the complete workflow JSON object serialized as a string to the workflow_json parameter.',
+  description: 'Save a user-confirmed workflow definition to the registry. Only call this after the user has explicitly confirmed every metadata field and the steps. workflow_json must contain non-blank name, label, description, and a non-empty plan.steps array; triggers is optional but, when provided, must be an array of strings.',
   supportsParallel: false,
   permissionLevel: 'interact',
   parameters: {
@@ -15,7 +15,7 @@ export const saveWorkflowFunction: FunctionDefinition = {
     properties: {
       workflow_json: {
         type: 'string',
-        description: 'Complete workflow definition as a JSON string. Must contain name and plan fields. Example: {"name":"search_product","label":"Search Product","plan":{"steps":[...]}}',
+        description: 'Complete workflow definition as a JSON string. Requires non-blank name, label, description, and plan.steps with at least one step. Optional triggers must be a string array. Example: {"name":"search_product","label":"Search Product","description":"Searches products","triggers":["find products"],"plan":{"steps":[{"action":"cdp_input","params":{"action":"click","selector":"button"}}]}}',
       },
     },
     required: ['workflow_json'],
@@ -35,8 +35,24 @@ export const saveWorkflowFunction: FunctionDefinition = {
       workflow = workflow.workflow;
     }
 
-    if (!workflow || typeof workflow !== 'object' || !workflow.name || !workflow.plan) {
-      return { success: false, error: 'Missing required workflow fields (name, plan)' };
+    if (!workflow || typeof workflow !== 'object') {
+      return { success: false, error: 'Missing required workflow object' };
+    }
+
+    for (const field of ['name', 'label', 'description'] as const) {
+      if (typeof workflow[field] !== 'string' || !workflow[field].trim()) {
+        return { success: false, error: `Workflow ${field} must be a non-blank string` };
+      }
+    }
+
+    if (!workflow.plan || typeof workflow.plan !== 'object'
+      || !Array.isArray(workflow.plan.steps) || workflow.plan.steps.length === 0) {
+      return { success: false, error: 'workflow.plan.steps must be a non-empty array' };
+    }
+
+    if (Object.prototype.hasOwnProperty.call(workflow, 'triggers')
+      && (!Array.isArray(workflow.triggers) || !workflow.triggers.every((trigger: unknown) => typeof trigger === 'string'))) {
+      return { success: false, error: 'workflow.triggers must be an array of strings when provided' };
     }
 
     // Validate plan actions through the resolver wired by the registry after static initialization.
