@@ -1,0 +1,135 @@
+import os from 'node:os';
+import path from 'node:path';
+import { mkdtempSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import WebSocket from 'ws';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js';
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const home = mkdtempSync(path.join(os.tmpdir(), 'actspan-e2e-'));
+const port = Number(process.env.ACTSPAN_E2E_PORT || 31921);
+const extensionId = 'afadkcbnpkhbofmbmlhjcppegjhkckdi';
+const url = `ws://127.0.0.1:${port}`;
+let failures = 0;
+const check = (name, condition, extra = '') => {
+    console.log(`${condition ? 'PASS' : 'FAIL'}: ${name}${extra ? ` ${extra}` : ''}`);
+    if (!condition) failures += 1;
+};
+const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+function handshake(frames, match) {
+    return new Promise((resolve, reject) => {
+        const socket = new WebSocket(url, { headers: frames.headers });
+        const seen = [];
+        const timer = setTimeout(() => { socket.close(); resolve({ frames: seen, close: 'timeout' }); }, 6000);
+        socket.on('open', () => { for (const frame of frames.send) socket.send(JSON.stringify(frame)); });
+        socket.on('message', raw => {
+            const message = JSON.parse(raw.toString());
+            seen.push(message);
+            if (message.type === 'hello_ok' || (match && match(message))) {
+                clearTimeout(timer);
+                resolve({ frames: seen, socket });
+            }
+        });
+        socket.on('close', code => { clearTimeout(timer); resolve({ frames: seen, close: code }); });
+        socket.on('error', error => { clearTimeout(timer); reject(error); });
+    });
+}
+
+const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [path.join(here, '..', 'index.js')],
+    cwd: path.join(here, '..'),
+    env: {
+        ...getDefaultEnvironment(),
+        ACTSPAN_API_URL: 'https://api.example.com',
+        ACTSPAN_API_KEY: 'e2e-key',
+        ACTSPAN_BRIDGE_URL: url,
+        ACTSPAN_EXTENSION_IDS: extensionId,
+        MOLE_MCP_LOG: path.join(home, 'server.log'),
+    },
+});
+const client = new Client({ name: 'actspan-e2e', version: '1.0.0' });
+await client.connect(transport);
+await wait(100);
+
+const tools = await client.listTools();
+check('MCP tools/list has only stable Actspan names', tools.tools.length === 18 && tools.tools.every(tool => tool.name.startsWith('actspan_')));
+const call = (name, args = {}) => client.callTool({ name, arguments: args });
+const statusText = async () => (await call('actspan_status')).content[0].text;
+const before = JSON.parse(await statusText());
+check('unpaired status reports connected=false', before.connected === false);
+check('Bridge is listening', before.hub_listening === true, `port=${before.port}`);
+
+const paired = await handshake({
+    headers: { Origin: `chrome-extension://${extensionId}` },
+    send: [{ type: 'pair' }],
+}, frame => frame.type === 'pair_ok');
+const pair = paired.frames.find(frame => frame.type === 'pair_ok');
+check('allowlisted extension can pair', typeof pair?.token === 'string' && pair.token.length > 0);
+const socket = paired.socket;
+socket.send(JSON.stringify({ type: 'hello', token: pair.token }));
+await wait(100);
+check('paired extension authenticates', paired.frames.some(frame => frame.type === 'hello_ok'));
+
+let revision = 1;
+let feishuRequest;
+let taskSubmitRequest;
+socket.on('message', raw => {
+    const message = JSON.parse(raw.toString());
+    if (!message.id || !message.context) return;
+    let result = { ok: true };
+    if (message.method === 'ping') result = { pong: true, version: 'e2e' };
+    if (message.method === 'feishu.push') {
+        feishuRequest = message;
+        result = { sent: 1, failed: 0, names: [message.params.webhookName || '研发群'] };
+    }
+    if (message.method === 'registry.list') result = { revision: revision++, skills: [], updatedAt: Date.now() };
+    if (message.method === 'registry.detail') result = { name: message.params.name, workflows: [] };
+    if (message.method === 'workflow.run' || message.method === 'task.submit') {
+        if (message.method === 'task.submit') taskSubmitRequest = message;
+        result = { taskId: message.context.taskId, sessionId: message.context.sessionId, registryRevision: 1, state: 'queued' };
+    }
+    if (message.method === 'task.status') result = { taskId: message.context.taskId, sessionId: message.context.sessionId, state: 'running' };
+    if (message.method === 'task.result') result = { taskId: message.context.taskId, sessionId: message.context.sessionId, state: 'succeeded', result: { done: true } };
+    if (message.method === 'task.cancel') result = { taskId: message.context.taskId, sessionId: message.context.sessionId, state: 'cancelled' };
+    socket.send(JSON.stringify({ id: message.id, ...message.context, ok: true, result }));
+});
+await wait(100);
+check('status round trip succeeds', (await statusText()).includes('pong'));
+const push = JSON.parse((await call('actspan_feishu_push', {
+    title: '任务完成', message: '处理结果已生成', webhookName: '研发群',
+})).content[0].text);
+check('Feishu push forwards an optional webhook name through the bridge',
+    push.sent === 1 && feishuRequest?.params?.webhookName === '研发群');
+const allPush = JSON.parse((await call('actspan_feishu_push', {
+    title: '广播', message: '发送到全部配置',
+})).content[0].text);
+check('Feishu push omits target name for the default-all behavior',
+    allPush.sent === 1 && feishuRequest?.params?.webhookName === undefined);
+const first = JSON.parse((await call('actspan_skills_list')).content[0].text);
+const second = JSON.parse((await call('actspan_skills_list')).content[0].text);
+check('next catalog lookup sees new revision', second.revision > first.revision);
+const detail = JSON.parse((await call('actspan_skill_detail', { name: 'demo' })).content[0].text);
+check('catalog detail round trip succeeds', detail.name === 'demo');
+const handle = JSON.parse((await call('actspan_workflow_run', { name: 'demo', input: {} })).content[0].text);
+check('workflow run returns async task handle', handle.state === 'queued' && handle.taskId && handle.sessionId);
+check('workflow handle defaults session ownership to task id', handle.sessionId === handle.taskId);
+const task = JSON.parse((await call('actspan_agent_status', { taskId: handle.taskId })).content[0].text);
+check('task status preserves task ownership context', task.taskId === handle.taskId && task.state === 'running');
+const agentHandle = JSON.parse((await call('actspan_agent_submit', {
+    input: { query: '读取当前页面标题' },
+})).content[0].text);
+check('agent submit forwards nested query to task runner',
+    agentHandle.state === 'queued' && taskSubmitRequest?.params?.query === '读取当前页面标题');
+
+const webPair = await handshake({ headers: { Origin: 'https://evil.example' }, send: [{ type: 'pair' }] }, frame => frame.type === 'pair_ok');
+check('web origin cannot pair', webPair.close === 4001);
+check('web rejection does not leak token', !webPair.frames.some(frame => frame.token === pair.token));
+const bad = await handshake({ headers: { Origin: `chrome-extension://${extensionId}` }, send: [{ type: 'hello', token: 'wrong' }] }, () => true);
+check('wrong token is rejected', bad.close === 4001);
+
+await client.close();
+console.log(failures ? `\n${failures} e2e checks failed` : '\nall e2e checks passed');
+process.exit(failures ? 1 : 0);

@@ -1,0 +1,22 @@
+{
+  "name": "@actspan/mcp-server",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Actspan local MCP server for the browser extension Bridge",
+  "bin": {
+    "actspan-mcp": "./index.js"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "start": "node index.js",
+    "test": "node --test test/catalog.mjs",
+    "test:e2e": "node test/e2e.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.11.0",
+    "ws": "8.18.0",
+    "zod": "3.24.0"
+  }
+}

@@ -1,0 +1,1285 @@
+/**
+ * Options 页面对话组件样式
+ * 支持两种模式：
+ *   默认（float）— 底部固定悬浮栏
+ *   page — 独立页面，输入在顶部，结果占满内容区
+ * 与 AntD 主题色统一：中性灰 + #0071e3 蓝色强调
+ */
+
+/* ============ 容器 ============ */
+
+.floating-chat-container {
+  position: fixed;
+  bottom: 0;
+  left: 220px;
+  right: 0;
+  z-index: 1000;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  max-height: 75vh;
+}
+
+/* ---- 页面模式：占满内容区 ---- */
+.floating-chat-container.floating-chat-page {
+  position: relative;
+  bottom: auto;
+  left: auto;
+  right: auto;
+  z-index: auto;
+  pointer-events: auto;
+  max-height: none;
+  height: calc(100vh - 0px);
+  display: flex;
+  flex-direction: column;
+}
+
+/* ============ 结果面板 ============ */
+
+.floating-chat-result-panel {
+  flex: 0 1 auto;
+  max-height: 60vh;
+  overflow-y: auto;
+  background: #ffffff;
+  border-top: 1px solid #e8e8ed;
+  pointer-events: auto;
+  padding: 16px 20px;
+  display: none;
+  overscroll-behavior: contain;
+}
+
+.floating-chat-result-panel.visible {
+  display: block;
+}
+
+/* 页面模式：结果区占满剩余空间 */
+.floating-chat-page .floating-chat-result-panel {
+  flex: 1 1 auto;
+  max-height: none;
+  display: block;
+  border-top: none;
+  border-bottom: none;
+  padding: 20px 24px;
+  background: #fafafa;
+}
+
+.floating-chat-result-panel::-webkit-scrollbar {
+  width: 5px;
+}
+
+.floating-chat-result-panel::-webkit-scrollbar-thumb {
+  background: #d2d2d7;
+  border-radius: 3px;
+}
+
+.floating-chat-result-panel::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ============ 输入栏 ============ */
+
+.floating-chat-input-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 52px;
+  padding: 0 16px;
+  background: #ffffff;
+  border-top: 1px solid #e8e8ed;
+  pointer-events: auto;
+}
+
+/* 页面模式：输入栏在顶部，底部边框 */
+.floating-chat-page .floating-chat-input-bar {
+  border-top: none;
+  border-bottom: 1px solid #e8e8ed;
+  height: 56px;
+  padding: 0 24px;
+}
+
+.floating-chat-logo {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+
+.floating-chat-input {
+  flex: 1;
+  height: 36px;
+  border: 1px solid #d2d2d7;
+  border-radius: 8px;
+  padding: 0 12px;
+  font-size: 14px;
+  color: #1d1d1f;
+  background: #f5f5f7;
+  outline: none;
+  transition: border-color 0.2s, background-color 0.2s;
+  font-family: -apple-system, "SF Pro Display", "SF Pro Text", "Helvetica Neue", "PingFang SC", sans-serif;
+}
+
+.floating-chat-input:focus {
+  border-color: #0071e3;
+  background: #ffffff;
+}
+
+.floating-chat-input:disabled {
+  color: #86868b;
+  cursor: not-allowed;
+  background: #f5f5f7;
+}
+
+.floating-chat-input::placeholder {
+  color: #86868b;
+}
+
+.floating-chat-hint {
+  font-size: 11px;
+  color: #86868b;
+  background: #f5f5f7;
+  border: 1px solid #e8e8ed;
+  border-radius: 4px;
+  padding: 2px 6px;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+/* ============ 操作按钮 ============ */
+
+.floating-chat-btn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid #d2d2d7;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #424245;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  flex-shrink: 0;
+  transition: background-color 0.15s, border-color 0.15s;
+}
+
+.floating-chat-btn:hover {
+  background: #f5f5f7;
+  border-color: #86868b;
+}
+
+.floating-chat-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.floating-chat-btn.visible {
+  display: flex;
+}
+
+.floating-chat-btn-new {
+  font-size: 18px;
+  font-weight: 300;
+}
+
+.floating-chat-btn-retry {
+  font-size: 16px;
+}
+
+.floating-chat-btn-stop {
+  font-size: 10px;
+  color: #d93025;
+  border-color: #d93025;
+}
+
+.floating-chat-btn-stop:hover {
+  background: #fef2f2;
+}
+
+/* ============ 底部状态栏 ============ */
+
+.floating-chat-footer {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 16px;
+  background: #fafafa;
+  border-top: 1px solid #f0f0f0;
+  pointer-events: auto;
+}
+
+/* 页面模式：状态栏加左 padding 对齐 */
+.floating-chat-page .floating-chat-footer {
+  padding: 0 24px;
+}
+
+.floating-chat-footer-icon {
+  font-size: 12px;
+  color: #0071e3;
+}
+
+.floating-chat-footer-text {
+  font-size: 12px;
+  color: #86868b;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.floating-chat-footer-time {
+  font-size: 11px;
+  color: #aeaeb2;
+  flex-shrink: 0;
+}
+
+/* ============ 结果区内容样式 ============ */
+
+/* AI 回答 */
+.mole-answer {
+  line-height: 1.7;
+  color: #1d1d1f;
+  font-size: 14px;
+}
+
+.mole-answer h3,
+.mole-answer h4,
+.mole-answer h5 {
+  margin: 16px 0 8px;
+  font-weight: 600;
+  color: #1d1d1f;
+}
+
+.mole-answer h3 { font-size: 16px; }
+.mole-answer h4 { font-size: 15px; }
+.mole-answer h5 { font-size: 14px; }
+
+.mole-answer p {
+  margin: 8px 0;
+}
+
+.mole-answer ul,
+.mole-answer ol {
+  margin: 8px 0;
+  padding-left: 20px;
+}
+
+.mole-answer li {
+  margin: 4px 0;
+}
+
+.mole-answer code {
+  background: #f5f5f7;
+  border: 1px solid #e8e8ed;
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 13px;
+  color: #d93025;
+  font-family: "SF Mono", "Menlo", "Monaco", monospace;
+}
+
+.mole-answer pre {
+  background: #1d1d1f;
+  color: #f5f5f7;
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin: 8px 0;
+  overflow-x: auto;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.mole-answer pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+  font-size: inherit;
+}
+
+.mole-answer a {
+  color: #0071e3;
+  text-decoration: none;
+}
+
+.mole-answer a:hover {
+  text-decoration: underline;
+}
+
+.mole-answer strong {
+  font-weight: 600;
+  color: #1d1d1f;
+}
+
+.mole-answer blockquote {
+  border-left: 3px solid #d2d2d7;
+  margin: 8px 0;
+  padding: 4px 12px;
+  color: #424245;
+}
+
+.mole-answer.frozen {
+  opacity: 0.6;
+}
+
+/* 状态提示 */
+.mole-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  color: #86868b;
+  font-size: 13px;
+}
+
+.mole-status .dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #0071e3;
+  flex-shrink: 0;
+}
+
+.mole-planning {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  color: #86868b;
+  font-size: 13px;
+}
+
+.mole-planning .dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #0071e3;
+  flex-shrink: 0;
+  animation: fc-dot-pulse 1.2s infinite;
+}
+
+/* 错误提示 */
+.mole-error {
+  padding: 10px 14px;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  color: #d93025;
+  font-size: 13px;
+  margin: 8px 0;
+}
+
+/* ============ 调度状态面板 ============ */
+
+.mole-agent-state-panel {
+  margin: 8px 0;
+  border: 1px solid #e8e8ed;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.mole-agent-state-panel.is-live {
+  border-color: #0071e3;
+  border-color: rgba(0, 113, 227, 0.3);
+}
+
+.mole-agent-state-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  cursor: pointer;
+  user-select: none;
+  background: #fafafa;
+  transition: background-color 0.15s;
+}
+
+.mole-agent-state-title:hover {
+  background: #f0f0f0;
+}
+
+.mole-agent-state-title-main {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #1d1d1f;
+}
+
+.mole-agent-state-title-main .arrow {
+  font-size: 10px;
+  color: #86868b;
+  transition: transform 0.2s;
+}
+
+.mole-agent-state-panel.open .mole-agent-state-title-main .arrow {
+  transform: rotate(90deg);
+}
+
+.mole-agent-state-summary {
+  font-size: 12px;
+  color: #86868b;
+  max-width: 50%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 运行态实时状态 */
+.mole-task-runtime-board {
+  padding: 0 14px;
+}
+
+.mole-runtime-now {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  font-size: 13px;
+  color: #424245;
+}
+
+.mole-runtime-now-text {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 内联 loading 动画 */
+.mole-inline-loader {
+  display: inline-flex;
+  gap: 3px;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.mole-inline-loader span {
+  display: inline-block;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #0071e3;
+  animation: fc-dot-bounce 1.2s infinite;
+}
+
+.mole-inline-loader span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.mole-inline-loader span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+/* 操作锚点 + 日志（面板展开时显示） */
+.mole-agent-state-ops-anchor,
+.mole-agent-state-log {
+  display: none;
+}
+
+.mole-agent-state-panel.open .mole-agent-state-ops-anchor,
+.mole-agent-state-panel.open .mole-agent-state-log {
+  display: block;
+}
+
+.mole-agent-state-log {
+  padding: 0 14px 8px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.mole-agent-state-item {
+  font-size: 11px;
+  color: #86868b;
+  padding: 2px 0;
+  border-bottom: 1px solid #f5f5f7;
+}
+
+/* ============ 工具调用折叠组 ============ */
+
+.mole-calls-group {
+  margin: 4px 0;
+}
+
+.mole-calls-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  cursor: pointer;
+  user-select: none;
+  border-radius: 6px;
+  transition: background-color 0.15s;
+}
+
+.mole-calls-summary:hover {
+  background: #f5f5f7;
+}
+
+.mole-calls-summary .arrow {
+  font-size: 10px;
+  color: #86868b;
+  transition: transform 0.2s;
+}
+
+.mole-calls-summary .arrow.open {
+  transform: rotate(90deg);
+}
+
+.mole-calls-icons {
+  display: flex;
+  gap: 2px;
+}
+
+.mole-calls-icons img {
+  width: 16px;
+  height: 16px;
+}
+
+.calls-text {
+  font-size: 12px;
+  color: #86868b;
+}
+
+.mole-calls-detail {
+  display: none;
+  padding: 4px 0 4px 16px;
+}
+
+.mole-calls-detail.open {
+  display: block;
+}
+
+/* 单个工具调用项 */
+.mole-call-item {
+  padding: 6px 0;
+  border-bottom: 1px solid #f5f5f7;
+}
+
+.mole-call-item:last-child {
+  border-bottom: none;
+}
+
+.mole-call-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.mole-call-header.has-body {
+  cursor: pointer;
+}
+
+.mole-func-icon {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+.mole-task-runtime-step-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #d2d2d7;
+  flex-shrink: 0;
+  margin: 0 6px;
+}
+
+.mole-call-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mole-call-title {
+  color: #1d1d1f;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mole-call-intent {
+  font-size: 11px;
+  color: #86868b;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mole-call-status {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  background: #f5f5f7;
+  color: #86868b;
+}
+
+.mole-call-item.tone-action .mole-call-status {
+  background: #eff6ff;
+  color: #0071e3;
+}
+
+.mole-call-item.tone-done .mole-call-status {
+  background: #f0fdf4;
+  color: #34a853;
+}
+
+.mole-call-item.tone-issue .mole-call-status {
+  background: #fef2f2;
+  color: #d93025;
+}
+
+.mole-call-body {
+  display: none;
+  padding: 6px 0 0 26px;
+  font-size: 12px;
+  color: #424245;
+}
+
+.mole-call-body.open {
+  display: block;
+}
+
+.mole-calls-group.frozen {
+  opacity: 0.5;
+}
+
+/* ============ 历史轮次折叠 ============ */
+
+.mole-round-history {
+  margin: 8px 0;
+  border: 1px solid #e8e8ed;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.mole-round-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  cursor: pointer;
+  user-select: none;
+  background: #fafafa;
+  font-size: 13px;
+  color: #86868b;
+  transition: background-color 0.15s;
+}
+
+.mole-round-summary:hover {
+  background: #f0f0f0;
+}
+
+.mole-round-summary .arrow {
+  font-size: 10px;
+  transition: transform 0.2s;
+}
+
+.mole-round-summary .arrow.open {
+  transform: rotate(90deg);
+}
+
+.mole-round-content {
+  display: none;
+  padding: 8px 12px;
+}
+
+.mole-round-content.open {
+  display: block;
+}
+
+/* ============ 确认卡片 ============ */
+
+.mole-approval-standalone {
+  margin: 12px 0;
+  border: 1px solid #e8e8ed;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.mole-approval-standalone.settled {
+  opacity: 0.7;
+}
+
+.mole-approval-header-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: #fafafa;
+  font-size: 13px;
+  font-weight: 500;
+  color: #1d1d1f;
+}
+
+.mole-approval-header-bar img {
+  width: 18px;
+  height: 18px;
+}
+
+.mole-approval-card {
+  padding: 12px 14px;
+}
+
+.mole-approval-message {
+  font-size: 14px;
+  color: #1d1d1f;
+  line-height: 1.6;
+  margin-bottom: 12px;
+}
+
+.mole-approval-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.mole-approval-btn {
+  padding: 5px 14px;
+  border-radius: 6px;
+  border: 1px solid #d2d2d7;
+  background: #ffffff;
+  color: #424245;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background-color 0.15s, border-color 0.15s;
+}
+
+.mole-approval-btn:hover {
+  background: #f5f5f7;
+}
+
+.mole-approval-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.mole-approval-btn.approve {
+  background: #0071e3;
+  color: #ffffff;
+  border-color: #0071e3;
+}
+
+.mole-approval-btn.approve:hover {
+  background: #0077ed;
+}
+
+.mole-approval-btn.reject {
+  color: #d93025;
+  border-color: #d93025;
+}
+
+.mole-approval-btn.trust-all {
+  color: #86868b;
+}
+
+.mole-approval-reject-input {
+  display: none;
+  margin-top: 8px;
+  gap: 8px;
+  align-items: center;
+}
+
+.mole-approval-reject-input.open {
+  display: flex;
+}
+
+.mole-approval-reject-text {
+  flex: 1;
+  height: 32px;
+  border: 1px solid #d2d2d7;
+  border-radius: 6px;
+  padding: 0 10px;
+  font-size: 13px;
+  outline: none;
+}
+
+.mole-approval-reject-text:focus {
+  border-color: #0071e3;
+}
+
+.mole-approval-result {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #86868b;
+}
+
+/* ============ 提问卡片 ============ */
+
+.mole-ask-user-standalone {
+  margin: 12px 0;
+  border: 1px solid #e8e8ed;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.mole-ask-user-standalone.settled {
+  opacity: 0.7;
+}
+
+.mole-ask-user-header-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: #fafafa;
+  font-size: 13px;
+  font-weight: 500;
+  color: #1d1d1f;
+}
+
+.mole-ask-user-header-bar img {
+  width: 18px;
+  height: 18px;
+}
+
+.mole-ask-user-card {
+  padding: 12px 14px;
+}
+
+.mole-ask-user-question {
+  font-size: 14px;
+  color: #1d1d1f;
+  line-height: 1.6;
+  margin-bottom: 12px;
+}
+
+.mole-ask-user-options {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.mole-ask-user-option {
+  padding: 5px 14px;
+  border-radius: 6px;
+  border: 1px solid #d2d2d7;
+  background: #ffffff;
+  color: #424245;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background-color 0.15s, border-color 0.15s;
+}
+
+.mole-ask-user-option:hover {
+  background: #f5f5f7;
+  border-color: #86868b;
+}
+
+.mole-ask-user-option.selected {
+  background: #0071e3;
+  color: #ffffff;
+  border-color: #0071e3;
+}
+
+.mole-ask-user-option:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.mole-ask-user-input-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.mole-ask-user-text {
+  flex: 1;
+  height: 32px;
+  border: 1px solid #d2d2d7;
+  border-radius: 6px;
+  padding: 0 10px;
+  font-size: 13px;
+  outline: none;
+}
+
+.mole-ask-user-text:focus {
+  border-color: #0071e3;
+}
+
+.mole-ask-user-text:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.mole-ask-user-submit {
+  padding: 5px 14px;
+  border-radius: 6px;
+  border: 1px solid #0071e3;
+  background: #0071e3;
+  color: #ffffff;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+
+.mole-ask-user-submit:hover {
+  background: #0077ed;
+}
+
+.mole-ask-user-submit:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.mole-ask-user-result {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #86868b;
+}
+
+/* ============ 截图区域 ============ */
+
+.mole-screenshot-section {
+  margin: 8px 0;
+  border: 1px solid #e8e8ed;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.mole-screenshot-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: #fafafa;
+}
+
+.mole-screenshot-label {
+  font-size: 13px;
+  color: #1d1d1f;
+}
+
+.mole-screenshot-sub {
+  font-size: 11px;
+  color: #86868b;
+}
+
+.mole-screenshot-open {
+  padding: 3px 10px;
+  border-radius: 4px;
+  border: 1px solid #d2d2d7;
+  background: #ffffff;
+  color: #424245;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.mole-screenshot-open:hover {
+  background: #f5f5f7;
+}
+
+.mole-screenshot-img-wrap {
+  padding: 8px 12px;
+  cursor: pointer;
+  position: relative;
+}
+
+.mole-screenshot-img {
+  max-width: 100%;
+  max-height: 200px;
+  border-radius: 4px;
+  object-fit: contain;
+}
+
+.mole-screenshot-hint {
+  font-size: 11px;
+  color: #86868b;
+  margin-top: 4px;
+  display: block;
+}
+
+.mole-screenshot-artifact {
+  padding: 8px 12px;
+  font-size: 12px;
+  color: #86868b;
+}
+
+/* ============ 搜索结果 ============ */
+
+.mole-search-section {
+  margin: 8px 0;
+}
+
+.mole-result-count {
+  font-size: 12px;
+  color: #86868b;
+  margin-bottom: 8px;
+}
+
+.mole-search-results {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mole-result-card {
+  display: flex;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid #e8e8ed;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+
+.mole-result-card:hover {
+  background: #f5f5f7;
+}
+
+.mole-result-thumb {
+  width: 60px;
+  height: 60px;
+  border-radius: 6px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.mole-result-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.mole-result-title {
+  font-size: 14px;
+  color: #0071e3;
+  text-decoration: none;
+  font-weight: 500;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mole-result-title:hover {
+  text-decoration: underline;
+}
+
+.mole-result-snippet {
+  font-size: 12px;
+  color: #424245;
+  margin-top: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.mole-result-source {
+  font-size: 11px;
+  color: #86868b;
+  margin-top: 4px;
+}
+
+/* ============ 推荐卡片 ============ */
+
+.mole-rec-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 0;
+}
+
+.mole-rec-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid #e8e8ed;
+  border-radius: 8px;
+  text-decoration: none;
+  color: inherit;
+  transition: background-color 0.15s;
+}
+
+.mole-rec-card:hover {
+  background: #f5f5f7;
+}
+
+.mole-rec-card-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.mole-rec-card-title {
+  font-size: 14px;
+  color: #1d1d1f;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mole-rec-card-meta {
+  font-size: 12px;
+  color: #86868b;
+  margin-top: 4px;
+}
+
+.mole-rec-card-price {
+  color: #d93025;
+  font-weight: 500;
+}
+
+.mole-rec-tag {
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: #eff6ff;
+  color: #0071e3;
+  flex-shrink: 0;
+}
+
+.mole-rec-arrow {
+  font-size: 18px;
+  color: #d2d2d7;
+  flex-shrink: 0;
+}
+
+/* ============ 验证/修复区域 ============ */
+
+.mole-verify-section,
+.mole-repair-section {
+  margin: 8px 0;
+  border: 1px solid #e8e8ed;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.mole-verify-header,
+.mole-repair-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: #fafafa;
+}
+
+.mole-verify-title,
+.mole-repair-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: #1d1d1f;
+}
+
+.mole-verify-sub,
+.mole-repair-sub {
+  font-size: 11px;
+  color: #86868b;
+  margin-top: 2px;
+}
+
+.mole-verify-badge,
+.mole-repair-badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.mole-verify-badge.ok,
+.mole-repair-badge.ok {
+  background: #f0fdf4;
+  color: #34a853;
+}
+
+.mole-verify-badge.fail,
+.mole-repair-badge.fail {
+  background: #fef2f2;
+  color: #d93025;
+}
+
+.mole-verify-list,
+.mole-repair-list {
+  padding: 6px 14px;
+}
+
+.mole-verify-item,
+.mole-repair-item {
+  padding: 4px 0;
+  font-size: 12px;
+  color: #424245;
+  border-bottom: 1px solid #f5f5f7;
+}
+
+.mole-verify-item:last-child,
+.mole-repair-item:last-child {
+  border-bottom: none;
+}
+
+.mole-verify-item.fail {
+  color: #d93025;
+}
+
+.mole-repair-item-head {
+  display: flex;
+  justify-content: space-between;
+}
+
+.mole-repair-candidates {
+  padding: 6px 14px;
+  border-top: 1px solid #f5f5f7;
+}
+
+.mole-repair-candidate {
+  padding: 4px 0;
+  font-size: 12px;
+  color: #424245;
+}
+
+/* ============ Review 输出 ============ */
+
+.mole-review-output {
+  margin: 8px 0;
+  padding: 12px 14px;
+  border: 1px solid #e8e8ed;
+  border-radius: 8px;
+}
+
+.mole-review-summary {
+  font-size: 14px;
+  color: #1d1d1f;
+  margin-bottom: 8px;
+}
+
+.mole-review-findings {
+  padding-left: 20px;
+  font-size: 13px;
+  color: #424245;
+}
+
+.mole-review-findings li {
+  margin: 6px 0;
+  line-height: 1.5;
+}
+
+.mole-review-priority {
+  font-size: 11px;
+  color: #0071e3;
+  font-weight: 500;
+}
+
+/* ============ 动画 ============ */
+
+@keyframes fc-dot-pulse {
+  0%, 80%, 100% { opacity: 0.4; }
+  40% { opacity: 1; }
+}
+
+@keyframes fc-dot-bounce {
+  0%, 80%, 100% { transform: translateY(0); }
+  40% { transform: translateY(-4px); }
+}

@@ -1,0 +1,82 @@
+{
+  "version": 2,
+  "updatedAt": "2026-03-20T00:00:00Z",
+  "skills": [
+    {
+      "name": "read-current-page",
+      "label": "页面阅读",
+      "description": "稳定理解当前页面内容、结构与关键区域的全局技能。",
+      "scope": "global",
+      "url_patterns": [],
+      "guide": "## 页面阅读\n\n当用户想快速看懂当前页面、总结重点、识别页面结构或找到关键操作区域时，优先使用此技能。\n\n### 使用原则\n- 先理解页面主题和结构，再决定是否进入执行。\n- 输出优先包含：页面主题、主要区域、关键信息、可操作区域。\n- 如果用户明确要求结构化抽取列表、字段、FAQ 或表格，改用结构化提取技能。\n\n### 推荐输出\n- 页面主题\n- 核心信息摘要\n- 主要模块 / 区域\n- 可操作入口（如搜索框、按钮、表单）",
+      "enabled": true,
+      "source": "builtin",
+      "version": 1,
+      "workflows": [
+        {
+          "name": "页面概览",
+          "label": "页面概览",
+          "description": "获取当前页面骨架结构，帮助 AI 先理解页面布局和关键区域。",
+          "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": []
+          },
+          "plan": {
+            "version": 1,
+            "steps": [
+              {
+                "action": "page_skeleton",
+                "note": "获取当前页面骨架结构，用极少 token 理解页面布局和关键区域。",
+                "params": {
+                  "max_depth": 6,
+                  "max_nodes": 160
+                },
+                "saveAs": "skeleton"
+              }
+            ],
+            "resultPath": "skeleton"
+          }
+        }
+      ]
+    },
+    {
+      "name": "extract-structured-data",
+      "label": "结构化提取",
+      "description": "稳定提取当前页面中的列表、字段和重复结构等结构化信息。",
+      "scope": "global",
+      "url_patterns": [],
+      "guide": "## 结构化提取\n\n当用户要求提取页面数据、整理字段、输出表格 / JSON / 列表时，优先使用此技能。\n\n### 使用原则\n- 先判断页面更像列表页、详情页、表格页还是 FAQ 页。\n- 优先提取稳定字段，不要混入无关文案。\n- 输出结果尽量字段统一，便于比较、导出和后续报告生成。\n- 如果用户只是想了解页面内容，不要求结构化输出，改用页面阅读技能。\n\n### 推荐输出\n- 列表项数组\n- 详情字段对象\n- 表格数据数组\n- FAQ 问答数组",
+      "enabled": true,
+      "source": "builtin",
+      "version": 1,
+      "workflows": [
+        {
+          "name": "提取页面数据",
+          "label": "提取页面数据",
+          "description": "自动识别当前页面中的表格、列表或重复结构，并提取为结构化结果。",
+          "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": []
+          },
+          "plan": {
+            "version": 1,
+            "steps": [
+              {
+                "action": "extract_data",
+                "note": "自动识别表格、列表或重复结构，并提取结构化数据。",
+                "params": {
+                  "mode": "auto",
+                  "max_items": 100
+                },
+                "saveAs": "dataset"
+              }
+            ],
+            "resultPath": "dataset"
+          }
+        }
+      ]
+    }
+  ]
+}

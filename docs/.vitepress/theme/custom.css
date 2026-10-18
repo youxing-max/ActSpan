@@ -1,0 +1,22 @@
+/* Actspan: navy, action blue, and white. */
+:root {
+  --vp-c-brand-1: #2563eb;
+  --vp-c-brand-2: #1d4ed8;
+  --vp-c-brand-3: #14253a;
+  --vp-c-brand-soft: rgba(37, 99, 235, 0.12);
+  --vp-home-hero-name-color: #14253a;
+  --vp-home-hero-name-background: none;
+  --vp-home-hero-image-background-image: none;
+  --vp-home-hero-image-filter: none;
+}
+
+.dark {
+  --vp-c-brand-1: #93b9ff;
+  --vp-c-brand-2: #b5cfff;
+  --vp-c-brand-3: #dbe7ff;
+  --vp-c-brand-soft: rgba(147, 185, 255, 0.16);
+  --vp-button-brand-text: #14253a;
+  --vp-button-brand-hover-text: #14253a;
+  --vp-button-brand-active-text: #14253a;
+  --vp-home-hero-name-color: #ffffff;
+}

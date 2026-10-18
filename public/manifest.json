@@ -1,0 +1,51 @@
+{
+  "manifest_version": 3,
+  "name": "Actspan",
+  "version": "1.1.0",
+  "description": "Actspan — your AI assistant for live browser tasks and workflows.",
+  "permissions": [
+    "tabs",
+    "activeTab",
+    "storage",
+    "notifications",
+    "alarms",
+    "scripting",
+    "clipboardRead",
+    "clipboardWrite",
+    "bookmarks",
+    "history",
+    "downloads",
+    "webRequest",
+    "debugger",
+    "sidePanel"
+  ],
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "action": {
+    "default_popup": "index.html"
+  },
+  "options_page": "options.html",
+  "background": {
+    "service_worker": "background.js"
+  },
+  "icons": {
+    "16": "actspan-icon-16.png",
+    "48": "actspan-icon-48.png",
+    "128": "actspan-icon-128.png"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "actspan-logo.svg",
+        "skills/**/*"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
+    }
+  ]
+}

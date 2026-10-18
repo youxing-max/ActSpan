@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Actspan</title>
+  <desc id="desc">A blue route carries an action between two open frames, representing an agent connected to a live browser.</desc>
+  <rect width="512" height="512" fill="#FFFFFF"/>
+  <path d="M199 119H116V393H199M313 119H396V393H313" fill="none" stroke="#14253A" stroke-width="42" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M179 319h48c18 0 29-11 29-29v-69c0-18 11-29 29-29h48m-27-28 28 28-28 28" fill="none" stroke="#2563EB" stroke-width="36" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="179" cy="319" r="18" fill="#2563EB"/>
+</svg>
