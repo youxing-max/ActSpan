@@ -292,8 +292,10 @@ Channel.on('__recorder_submit', (_data, _sender, sendResponse) => {
                 '2. 合并连续的输入动作',
                 '3. 为每步添加中文说明（note 字段）',
                 '4. 识别用户输入的变量部分，用 {{param_name}} 替代，并在 parameters 中定义',
+                '5. 生成便于用户调用的 triggers 字符串数组（关键词或短语）',
                 '',
                 '重要：',
+                '- name 必须是英文下划线格式的机器名；label 是面向用户的显示名；description 是一句话描述；triggers 必须是字符串数组',
                 '- action 必须从上述清单中选取，不要使用 click/type/navigate 等原始录制动作名',
                 '- 页面导航（URL 变化）使用 tab_navigate，不是 cdp_input',
                 '- 元素点击/填写/选择使用 cdp_input',
@@ -303,7 +305,8 @@ Channel.on('__recorder_submit', (_data, _sender, sendResponse) => {
                 '{',
                 '  "name": "workflow_名称（英文下划线格式）",',
                 '  "label": "显示名称（中文）",',
-                '  "description": "工作流描述（中文）",',
+                '  "description": "一句话工作流描述（中文）",',
+                '  "triggers": ["调用关键词或短语"],',
                 '  "url_patterns": ["匹配的 URL 模式"],',
                 '  "parameters": { JSON Schema 格式的参数定义 },',
                 '  "readable_steps": "人类可读的步骤描述（Markdown 编号列表，含参数标注）",',
@@ -367,9 +370,10 @@ Channel.on('__recorder_submit', (_data, _sender, sendResponse) => {
             session.context.push({
                 role: 'system',
                 content: [
-                    '以下是用户刚刚录制并经过审计的工作流 JSON，用户即将确认或修改。',
-                    '用户确认后，请调用 save_workflow 工具保存。',
-                    '用户如果要求修改步骤，请在 JSON 上进行调整后重新展示，并等待用户再次确认。',
+                    '以下是用户刚刚录制并经过审计的工作流 JSON，用户尚未确认，禁止直接保存。',
+                    '保存前必须向用户展示并询问是否修改全部元数据：机器名 name、显示名 label、一句话 description、调用关键词 triggers、parameters 和 plan.steps。',
+                    '用户要求修改任何字段后，必须基于最新 JSON 再展示完整修订摘要，并等待用户明确确认；未明确确认前不得调用 save_workflow。',
+                    '只有用户明确确认全部内容后，才调用 save_workflow 工具保存完整 JSON。',
                     '',
                     '```json',
                     JSON.stringify(workflowJson, null, 2),
@@ -385,15 +389,23 @@ Channel.on('__recorder_submit', (_data, _sender, sendResponse) => {
 
             const paramEntries = Object.entries(workflowJson.parameters?.properties || {});
             const paramLine = paramEntries.length > 0
-                ? `\n**参数**：${paramEntries.map(([k, v]: [string, Record<string, unknown>]) => `\`${k}\` — ${(v as Record<string, unknown>).description || k}`).join('、')}`
-                : '';
+                ? `**参数**：${paramEntries.map(([k, v]: [string, Record<string, unknown>]) => `\`${k}\` — ${(v as Record<string, unknown>).description || k}`).join('、')}`
+                : '**参数**：无';
+            const triggerLine = Array.isArray(workflowJson.triggers) && workflowJson.triggers.length > 0
+                ? workflowJson.triggers.map(trigger => `\`${trigger}\``).join('、')
+                : '无';
 
             const aiSummary = [
-                '我帮你整理了刚才录制的流程：\n',
-                readableSteps,
+                '我帮你整理了刚才录制的流程，请先审核以下待确认摘要：',
+                `**名称**：机器名 \`${workflowJson.name || '未命名'}\`；显示名 **${workflowJson.label || '未命名'}**`,
+                `**描述**：${workflowJson.description || '未填写'}`,
+                `**调用关键词**：${triggerLine}`,
                 paramLine,
-                '\n需要修改哪些步骤吗？确认无误我就保存为工作流。',
-            ].filter(Boolean).join('\n');
+                '**步骤**：',
+                readableSteps,
+                '',
+                '你可以修改名称、描述、调用关键词、参数或步骤。每次修改后我会展示修订摘要；仅在你明确确认全部内容后才保存。',
+            ].join('\n');
 
             session.context.push({
                 role: 'assistant',
