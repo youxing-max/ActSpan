@@ -53,7 +53,7 @@ export interface TabTakeoverState {
 
 // ============ 全局状态 ============
 
-export interface MoleState {
+export interface ActspanState {
   // 面板状态
   isOpen: boolean;
   isDragging: boolean;
@@ -114,7 +114,7 @@ export interface MoleState {
 
 // ============ Action 类型 ============
 
-export type MoleAction =
+export type ActspanAction =
   | { type: 'TOGGLE_OPEN'; payload?: boolean }
   | { type: 'SET_DRAGGING'; payload: boolean }
   | { type: 'SET_POSITION'; payload: { side: Side; currentY: number } }
@@ -125,7 +125,7 @@ export type MoleAction =
   | { type: 'SET_RECENT_TASKS'; payload: RecentCompletedTaskItem[] }
   | { type: 'SET_PILL_STATE'; payload: { state: 'idle' | 'running' | 'done' | 'error'; taskId: string } }
   | { type: 'SET_REPLAY_MODE'; payload: boolean }
-  | { type: 'SET_REPLAY_STATE'; payload: Partial<Pick<MoleState, 'replayActiveRunId' | 'replayActiveQuery' | 'replayKnownEventCount' | 'replayAppliedEventCount' | 'replayLastTimestamp'>> }
+  | { type: 'SET_REPLAY_STATE'; payload: Partial<Pick<ActspanState, 'replayActiveRunId' | 'replayActiveQuery' | 'replayKnownEventCount' | 'replayAppliedEventCount' | 'replayLastTimestamp'>> }
   | { type: 'SET_SELF_TAB_ID'; payload: number | null }
   | { type: 'SET_SESSION_ORIGIN_TAB'; payload: number | undefined }
   | { type: 'SET_TAKEOVER'; payload: TabTakeoverState | null }
@@ -147,7 +147,7 @@ export type MoleAction =
 
 // ============ 初始状态 ============
 
-export const initialMoleState: MoleState = {
+export const initialActspanState: ActspanState = {
   isOpen: false,
   isDragging: false,
   side: 'right',

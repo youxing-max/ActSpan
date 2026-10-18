@@ -52,7 +52,11 @@ async function main(config) {
 
     const run = (fn) => async (args) => {
         try {
-            return ok(await fn(args || {}));
+            const result = await fn(args || {});
+            if (result && typeof result === 'object' && result.success === false) {
+                return fail(result.error || result.message || result.data?.message || '操作失败');
+            }
+            return ok(result);
         } catch (error) {
             return fail(error);
         }
@@ -66,8 +70,16 @@ async function main(config) {
     };
 
     const server = new McpServer({ name: 'actspan-mcp', version: '1.0.0' });
+    const registerTool = (name, definition, handler) => {
+        if (typeof server.registerTool === 'function') {
+            server.registerTool(name, definition, handler);
+            return;
+        }
+        server.tool(name, definition.description, definition.inputSchema, handler);
+    };
 
-    server.registerTool('actspan_status', {
+
+    registerTool('actspan_status', {
         title: 'Actspan bridge status',
         description: 'Check whether the local Actspan browser extension Bridge is connected.',
         inputSchema: {},
@@ -91,7 +103,7 @@ async function main(config) {
         }
         return { ...await callBridge('ping', {}, 5000), connected: true, ...owner };
     }));
-    server.registerTool('actspan_feishu_push', {
+    registerTool('actspan_feishu_push', {
         title: 'Push Feishu notification',
         description: 'Send a notification through enabled Feishu/Lark bot webhooks configured in the extension. Optional webhookName must match exactly; omit it to send to all enabled Feishu webhooks. No browser tab or confirmation prompt is required.',
         inputSchema: {
@@ -101,11 +113,11 @@ async function main(config) {
         },
     }, run((args) => callBridge('feishu.push', args, 30000)));
 
-    server.registerTool('actspan_tabs_list', {
+    registerTool('actspan_tabs_list', {
         title: 'List browser tabs', description: 'List browser tabs visible to the current Actspan task.', inputSchema: {},
     }, run((args) => callBridge('tabs.list', args)));
 
-    server.registerTool('actspan_tab_open', {
+    registerTool('actspan_tab_open', {
         title: 'Open tab', description: 'Open a browser tab for the current task.',
         inputSchema: {
             ...taskParams,
@@ -114,18 +126,18 @@ async function main(config) {
         },
     }, run((args) => callBridge('tab.open', args, 30000, args)));
 
-    server.registerTool('actspan_tab_close', {
+    registerTool('actspan_tab_close', {
         title: 'Close tab', description: 'Close a tab owned by the current task.',
         inputSchema: { ...taskParams, tabId: z.number().int() },
     }, run((args) => callBridge('tab.close', args, 10000, args)));
 
-    server.registerTool('actspan_tab_navigate', {
+    registerTool('actspan_tab_navigate', {
         title: 'Navigate tab', description: 'Navigate a tab owned by the current task.',
         inputSchema: { ...taskParams, tabId: tabIdParam, url: z.string().url() },
     }, run((args) => callBridge('tab.navigate', args, 30000, args)));
 
-    server.registerTool('actspan_page_read', {
-        title: 'Read page', description: 'Read text or HTML from a page in the current task.',
+    registerTool('actspan_page_read', {
+        title: 'Read page', description: 'Read text or HTML from a task-owned tab; when tabId is omitted, read the active tab.',
         inputSchema: {
             ...taskParams,
             tabId: tabIdParam,
@@ -134,12 +146,12 @@ async function main(config) {
         },
     }, run((args) => callBridge('page.read', args, 30000, args)));
 
-    server.registerTool('actspan_page_click', {
+    registerTool('actspan_page_click', {
         title: 'Click page element', description: 'Click a DOM element in a tab owned by the current task.',
         inputSchema: { ...taskParams, tabId: tabIdParam, selector: z.string().min(1) },
     }, run((args) => callBridge('page.click', args, 30000, args)));
 
-    server.registerTool('actspan_page_type', {
+    registerTool('actspan_page_type', {
         title: 'Type into page', description: 'Type into a DOM input in a tab owned by the current task.',
         inputSchema: {
             ...taskParams,
@@ -150,13 +162,13 @@ async function main(config) {
         },
     }, run((args) => callBridge('page.type', args, 30000, args)));
 
-    server.registerTool('actspan_page_eval', {
+    registerTool('actspan_page_eval', {
         title: 'Evaluate page expression', description: 'Evaluate a page expression; policy approval remains enforced by the extension.',
         inputSchema: { ...taskParams, tabId: tabIdParam, expression: z.string().min(1) },
     }, run((args) => callBridge('page.eval', args, 30000, args)));
 
-    server.registerTool('actspan_screenshot', {
-        title: 'Capture screenshot', description: 'Capture a screenshot from a tab owned by the current task.',
+    registerTool('actspan_screenshot', {
+        title: 'Capture screenshot', description: 'Capture a screenshot from a task-owned tab; when tabId is omitted, capture the active tab.',
         inputSchema: { ...taskParams, tabId: tabIdParam },
     }, async (args) => {
         try {
@@ -167,11 +179,11 @@ async function main(config) {
         }
     });
 
-    server.registerTool('actspan_skills_list', {
+    registerTool('actspan_skills_list', {
         title: 'List skills and workflows', description: 'Read the current Actspan registry revision and skill summaries.', inputSchema: {},
     }, run(() => catalog.list(createRequestContext({ clientId, taskId: defaultTaskId, sessionId }))));
 
-    server.registerTool('actspan_skill_detail', {
+    registerTool('actspan_skill_detail', {
         title: 'Get skill detail', description: 'Read a complete skill and its structured workflow contracts.',
         inputSchema: { name: z.string().min(1) },
     }, run((args) => catalog.detail(args.name, createRequestContext({ clientId, taskId: defaultTaskId, sessionId }))));
@@ -183,7 +195,7 @@ async function main(config) {
         const result = await callBridge('workflow.run', params, 60000, { taskId, sessionId: taskSessionId });
         return normalizeTaskHandle(result, { taskId, sessionId: taskSessionId });
     });
-    server.registerTool('actspan_workflow_run', {
+    registerTool('actspan_workflow_run', {
         title: 'Run workflow', description: 'Start a structured workflow and return an asynchronous task handle.',
         inputSchema: {
             ...taskParams,
@@ -199,7 +211,7 @@ async function main(config) {
         const result = await callBridge('task.submit', params, 60000, { taskId, sessionId: taskSessionId });
         return normalizeTaskHandle(result, { taskId, sessionId: taskSessionId });
     });
-    server.registerTool('actspan_agent_submit', {
+    registerTool('actspan_agent_submit', {
         title: 'Submit agent task', description: 'Start an open-ended browser task and return an asynchronous task handle.',
         inputSchema: { ...taskParams, input: z.record(z.unknown()).default({}), query: z.string().optional() },
     }, agentSubmit);
@@ -213,13 +225,13 @@ async function main(config) {
             sessionId: taskSessionId,
         });
     });
-    server.registerTool('actspan_agent_status', {
+    registerTool('actspan_agent_status', {
         title: 'Get agent task status', description: 'Read an agent task state by taskId.', inputSchema: taskParams,
     }, taskCall('task.status'));
-    server.registerTool('actspan_agent_result', {
+    registerTool('actspan_agent_result', {
         title: 'Get agent task result', description: 'Read the retained result of an agent task by taskId.', inputSchema: taskParams,
     }, taskCall('task.result'));
-    server.registerTool('actspan_agent_cancel', {
+    registerTool('actspan_agent_cancel', {
         title: 'Cancel agent task', description: 'Cancel an agent task by taskId.', inputSchema: taskParams,
     }, taskCall('task.cancel'));
 

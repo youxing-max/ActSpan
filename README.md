@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/clark-maybe/mole-extension/blob/master/LICENSE">
+  <a href="https://github.com/youxing-max/ActSpan/blob/master/LICENSE">
     <img src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg" alt="License">
   </a>
 </p>
@@ -37,13 +37,13 @@
 ## 快速开始
 
 ```bash
-git clone https://github.com/clark-maybe/mole-extension.git
-cd mole-extension
+git clone https://github.com/youxing-max/ActSpan.git
+cd ActSpan
 npm install
 npm run build
 ```
 
-构建完成后，在 Chrome 中加载 `build_version/mole-extension/` 下的扩展目录即可使用。详见[快速开始文档](docs/guide/getting-started.md)。
+构建完成后，在 Chrome 中加载 `build_version/actspan-extension/` 下的扩展目录即可使用。详见[快速开始文档](docs/guide/getting-started.md)。
 
 ## 工作原理
 

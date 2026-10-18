@@ -26,12 +26,12 @@ export const inlineMarkdown = (escaped: string): string => {
   let result = escaped
     // 1. 显式图片语法 ![alt](url) — 最先处理
     .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (_, alt, url) =>
-      ph(`<img src="${url}" alt="${alt}" class="mole-md-img" loading="lazy">`))
+      ph(`<img src="${url}" alt="${alt}" class="actspan-md-img" loading="lazy">`))
     // 2. 链接语法 [text](url) — 图片 URL 渲染为 <img>，去掉文本内多余反引号
     .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, rawText: string, url: string) => {
       const text = rawText.replace(/^`+|`+$/g, '');
       return ph(IMG_EXT_RE.test(url)
-        ? `<img src="${url}" alt="${text}" class="mole-md-img" loading="lazy">`
+        ? `<img src="${url}" alt="${text}" class="actspan-md-img" loading="lazy">`
         : `<a href="${url}" target="_blank" rel="noopener">${text}</a>`);
     });
 
@@ -76,9 +76,9 @@ const buildLinkChip = (href: string, urlText: string): string => {
     const domain = new URL(cleanUrl).hostname.replace(/^www\./, '');
     const favicon = `https://www.google.com/s2/favicons?domain=${domain}&sz=32`;
     const short = shortenUrl(cleanUrl);
-    return `<a href="${href}" target="_blank" rel="noopener" class="mole-link-chip" data-url="${cleanUrl}" title="${escapeHtml(cleanUrl)}">`
-      + `<img src="${favicon}" class="mole-link-favicon" onerror="this.style.display='none'">`
-      + `<span class="mole-link-text">${escapeHtml(short)}</span></a>`;
+    return `<a href="${href}" target="_blank" rel="noopener" class="actspan-link-chip" data-url="${cleanUrl}" title="${escapeHtml(cleanUrl)}">`
+      + `<img src="${favicon}" class="actspan-link-favicon" onerror="this.style.display='none'">`
+      + `<span class="actspan-link-text">${escapeHtml(short)}</span></a>`;
   } catch {
     return `<a href="${href}" target="_blank" rel="noopener">${urlText}</a>`;
   }
@@ -116,7 +116,7 @@ const postProcessHtml = (html: string): string => {
     /<a\s+href="([^"]+)"[^>]*>([^<]*)<\/a>/g,
     (match, url, text) => {
       if (IMG_EXT_RE.test(url)) {
-        return `<img src="${url}" alt="${text || 'image'}" class="mole-md-img" loading="lazy">`;
+        return `<img src="${url}" alt="${text || 'image'}" class="actspan-md-img" loading="lazy">`;
       }
       return match;
     },

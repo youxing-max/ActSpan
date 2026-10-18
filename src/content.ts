@@ -1,5 +1,5 @@
 /**
- * Mole Content Script
+ * Actspan Content Script
  * 注入到每个页面，创建悬浮球 UI
  */
 import _console from './lib/console';

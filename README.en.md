@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/clark-maybe/mole-extension/blob/master/LICENSE">
+  <a href="https://github.com/youxing-max/ActSpan/blob/master/LICENSE">
     <img src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg" alt="License">
   </a>
 </p>
@@ -37,13 +37,13 @@ After you ask a question, Actspan quietly calls tools, searches the web, parses 
 ## Quick Start
 
 ```bash
-git clone https://github.com/clark-maybe/mole-extension.git
-cd mole-extension
+git clone https://github.com/youxing-max/ActSpan.git
+cd ActSpan
 npm install
 npm run build
 ```
 
-After building, load the extension directory under `build_version/` in Chrome. See the [Getting Started Guide](docs/en/guide/getting-started.md) for details.
+After building, load the `build_version/actspan-extension/` directory in Chrome. See the [Getting Started Guide](docs/en/guide/getting-started.md) for details.
 
 ## How It Works
 

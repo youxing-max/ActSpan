@@ -193,10 +193,10 @@ const injectedExtractDispatcher = (
       // 统计直接子元素的 tagName+className 组合
       const childGroups = new Map<string, Element[]>();
       for (const child of Array.from(container.children)) {
-        // 跳过 script/style/mole-root 等非内容元素
+        // 跳过 script/style/actspan-root 等非内容元素
         const tag = child.tagName.toLowerCase();
         if (['script', 'style', 'link', 'meta', 'br', 'hr'].includes(tag)) continue;
-        if (child.id === 'mole-root') continue;
+        if (child.id === 'actspan-root') continue;
 
         const key = tag + (child.className ? '.' + String(child.className).split(/\s+/).sort().join('.') : '');
         const group = childGroups.get(key) || [];

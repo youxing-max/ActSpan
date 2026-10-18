@@ -7,13 +7,13 @@
 import Channel from '../lib/channel';
 
 /** 覆盖层容器 ID */
-const OVERLAY_ID = 'mole-recorder-overlay';
+const OVERLAY_ID = 'actspan-recorder-overlay';
 /** 内联样式标签 ID */
-const STYLE_ID = 'mole-recorder-overlay-style';
+const STYLE_ID = 'actspan-recorder-overlay-style';
 /** 步数文字元素的 data 属性标识 */
-const STEP_ATTR = 'data-mole-step';
+const STEP_ATTR = 'data-actspan-step';
 /** 时间文字元素的 data 属性标识 */
-const TIME_ATTR = 'data-mole-time';
+const TIME_ATTR = 'data-actspan-time';
 
 /** 回调 */
 let onCompleteCallback: (() => void) | null = null;
@@ -41,30 +41,30 @@ const OVERLAY_CSS = `
 }
 
 /* 四角 L 形标记 */
-#${OVERLAY_ID} .mole-corner {
+#${OVERLAY_ID} .actspan-corner {
   position: absolute;
   width: 48px;
   height: 48px;
 }
-#${OVERLAY_ID} .mole-corner-tl {
+#${OVERLAY_ID} .actspan-corner-tl {
   top: 6px; left: 6px;
   border-top: 3px solid rgba(239, 68, 68, 0.75);
   border-left: 3px solid rgba(239, 68, 68, 0.75);
   border-radius: 6px 0 0 0;
 }
-#${OVERLAY_ID} .mole-corner-tr {
+#${OVERLAY_ID} .actspan-corner-tr {
   top: 6px; right: 6px;
   border-top: 3px solid rgba(239, 68, 68, 0.75);
   border-right: 3px solid rgba(239, 68, 68, 0.75);
   border-radius: 0 6px 0 0;
 }
-#${OVERLAY_ID} .mole-corner-bl {
+#${OVERLAY_ID} .actspan-corner-bl {
   bottom: 6px; left: 6px;
   border-bottom: 3px solid rgba(239, 68, 68, 0.75);
   border-left: 3px solid rgba(239, 68, 68, 0.75);
   border-radius: 0 0 0 6px;
 }
-#${OVERLAY_ID} .mole-corner-br {
+#${OVERLAY_ID} .actspan-corner-br {
   bottom: 6px; right: 6px;
   border-bottom: 3px solid rgba(239, 68, 68, 0.75);
   border-right: 3px solid rgba(239, 68, 68, 0.75);
@@ -72,7 +72,7 @@ const OVERLAY_CSS = `
 }
 
 /* 右上角录制指示器 */
-#${OVERLAY_ID} .mole-rec-indicator {
+#${OVERLAY_ID} .actspan-rec-indicator {
   position: fixed;
   top: 12px;
   right: 16px;
@@ -91,31 +91,31 @@ const OVERLAY_CSS = `
 }
 
 /* 红色呼吸圆点 */
-#${OVERLAY_ID} .mole-rec-dot {
+#${OVERLAY_ID} .actspan-rec-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
   background: #ef4444;
   flex-shrink: 0;
-  animation: mole-overlay-pulse 1.5s ease-in-out infinite;
+  animation: actspan-overlay-pulse 1.5s ease-in-out infinite;
 }
 
 /* 步数 + 时间信息 */
-#${OVERLAY_ID} .mole-rec-info {
+#${OVERLAY_ID} .actspan-rec-info {
   display: flex;
   align-items: center;
   gap: 6px;
 }
-#${OVERLAY_ID} .mole-rec-time {
+#${OVERLAY_ID} .actspan-rec-time {
   opacity: 0.6;
   font-variant-numeric: tabular-nums;
 }
-#${OVERLAY_ID} .mole-rec-sep {
+#${OVERLAY_ID} .actspan-rec-sep {
   opacity: 0.3;
 }
 
 /* 按钮公共样式 */
-#${OVERLAY_ID} .mole-rec-btn {
+#${OVERLAY_ID} .actspan-rec-btn {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -130,25 +130,25 @@ const OVERLAY_CSS = `
   transition: background 0.15s, border-color 0.15s;
   outline: none;
 }
-#${OVERLAY_ID} .mole-rec-btn svg {
+#${OVERLAY_ID} .actspan-rec-btn svg {
   width: 10px;
   height: 10px;
   fill: currentColor;
 }
 
 /* 完成按钮 */
-#${OVERLAY_ID} .mole-rec-btn.complete:hover {
+#${OVERLAY_ID} .actspan-rec-btn.complete:hover {
   background: rgba(34, 197, 94, 0.5);
   border-color: rgba(34, 197, 94, 0.7);
 }
 
 /* 取消按钮 */
-#${OVERLAY_ID} .mole-rec-btn.cancel:hover {
+#${OVERLAY_ID} .actspan-rec-btn.cancel:hover {
   background: rgba(255, 255, 255, 0.18);
   border-color: rgba(255, 255, 255, 0.4);
 }
 
-@keyframes mole-overlay-pulse {
+@keyframes actspan-overlay-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.3; }
 }
@@ -175,32 +175,32 @@ export function showRecorderOverlay(onComplete?: () => void, onCancel?: () => vo
   // 四角标记
   for (const pos of ['tl', 'tr', 'bl', 'br']) {
     const corner = document.createElement('div');
-    corner.className = `mole-corner mole-corner-${pos}`;
+    corner.className = `actspan-corner actspan-corner-${pos}`;
     container.appendChild(corner);
   }
 
   // 录制指示器
   const indicator = document.createElement('div');
-  indicator.className = 'mole-rec-indicator';
+  indicator.className = 'actspan-rec-indicator';
 
   // 红色圆点
   const dot = document.createElement('div');
-  dot.className = 'mole-rec-dot';
+  dot.className = 'actspan-rec-dot';
 
   // 信息区：步数 + 分隔 + 时间
   const info = document.createElement('span');
-  info.className = 'mole-rec-info';
+  info.className = 'actspan-rec-info';
 
   const stepText = document.createElement('span');
   stepText.setAttribute(STEP_ATTR, '');
   stepText.textContent = '0 步';
 
   const sep = document.createElement('span');
-  sep.className = 'mole-rec-sep';
+  sep.className = 'actspan-rec-sep';
   sep.textContent = '·';
 
   const timeText = document.createElement('span');
-  timeText.className = 'mole-rec-time';
+  timeText.className = 'actspan-rec-time';
   timeText.setAttribute(TIME_ATTR, '');
   timeText.textContent = '00:00';
 
@@ -210,7 +210,7 @@ export function showRecorderOverlay(onComplete?: () => void, onCancel?: () => vo
 
   // 完成按钮（绿色 hover）
   const completeBtn = document.createElement('button');
-  completeBtn.className = 'mole-rec-btn complete';
+  completeBtn.className = 'actspan-rec-btn complete';
   completeBtn.innerHTML = '<svg viewBox="0 0 10 10"><polyline points="2,5 4.5,7.5 8,2.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>完成';
   completeBtn.addEventListener('click', (e) => {
     e.preventDefault();
@@ -220,7 +220,7 @@ export function showRecorderOverlay(onComplete?: () => void, onCancel?: () => vo
 
   // 取消按钮
   const cancelBtn = document.createElement('button');
-  cancelBtn.className = 'mole-rec-btn cancel';
+  cancelBtn.className = 'actspan-rec-btn cancel';
   cancelBtn.textContent = '取消';
   cancelBtn.addEventListener('click', (e) => {
     e.preventDefault();

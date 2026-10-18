@@ -6,7 +6,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { getStyles } from './float-ball/styles';
-import { MoleRoot } from './float-ball/MoleRoot';
+import { ActspanRoot } from './float-ball/ActspanRoot';
 import { DISABLED_DOMAINS_KEY, LEGACY_DISABLED_DOMAINS_KEY, isMac } from './float-ball/constants';
 import { readMigratedStorage } from '../lib/legacy-storage';
 
@@ -39,7 +39,7 @@ export const initFloatBallReact = async () => {
 
   // 创建 Shadow DOM 宿主
   const host = document.createElement('div');
-  host.id = 'mole-root';
+  host.id = 'actspan-root';
   host.style.cssText = 'position: fixed; top: 0; left: 0; width: 0; height: 0; overflow: visible; z-index: 2147483647; pointer-events: none;';
   const shadow = host.attachShadow({ mode: 'closed' });
 
@@ -50,7 +50,7 @@ export const initFloatBallReact = async () => {
 
   // React 挂载容器
   const reactRoot = document.createElement('div');
-  reactRoot.id = 'mole-react-root';
+  reactRoot.id = 'actspan-react-root';
   shadow.appendChild(reactRoot);
 
   // 插入页面
@@ -86,7 +86,7 @@ export const initFloatBallReact = async () => {
 
   // React 挂载
   const root = ReactDOM.createRoot(reactRoot);
-  root.render(<MoleRoot />);
+  root.render(<ActspanRoot />);
 
   // 截图时隐藏/恢复悬浮球（React 版补充，旧版 float-ball.ts 中有对应逻辑）
   import('../lib/channel').then(({ default: Channel }) => {
@@ -118,7 +118,7 @@ export const initFloatBallReact = async () => {
   // ESC 键（宿主文档）
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
-      window.dispatchEvent(new CustomEvent('mole-escape'));
+      window.dispatchEvent(new CustomEvent('actspan-escape'));
     }
   });
 
@@ -126,7 +126,7 @@ export const initFloatBallReact = async () => {
   document.addEventListener('mousedown', (e) => {
     const path = e.composedPath();
     if (!path.includes(host)) {
-      window.dispatchEvent(new CustomEvent('mole-click-outside'));
+      window.dispatchEvent(new CustomEvent('actspan-click-outside'));
     }
   });
 };

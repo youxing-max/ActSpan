@@ -5,13 +5,13 @@
 
 import React, { useEffect, useCallback, useState } from 'react';
 import Channel from '../../../lib/channel';
-import { useMole } from '../context/useMole';
+import { useActspan } from '../context/useActspan';
 import { FUNCTION_ICONS } from '../icons';
 import { escapeHtml } from '../markdown';
 import { formatClock, formatInterval } from '../text-utils';
 
 export const BgTasksPanel: React.FC = () => {
-  const { state, dispatch } = useMole();
+  const { state, dispatch } = useActspan();
   const { bgTasksData } = state;
   const [isOpen, setIsOpen] = useState(false);
 
@@ -53,16 +53,16 @@ export const BgTasksPanel: React.FC = () => {
   if (count === 0) return null;
 
   return (
-    <div className={`mole-bg-tasks-panel visible${isOpen ? ' open' : ''}`}>
+    <div className={`actspan-bg-tasks-panel visible${isOpen ? ' open' : ''}`}>
       {/* 头部 */}
-      <div className="mole-bg-tasks-header" onClick={() => setIsOpen(!isOpen)}>
-        <span className="mole-bg-tasks-title">后台任务</span>
-        <span className="mole-bg-tasks-count">{count}</span>
-        <span className="mole-bg-tasks-toggle">▶</span>
+      <div className="actspan-bg-tasks-header" onClick={() => setIsOpen(!isOpen)}>
+        <span className="actspan-bg-tasks-title">后台任务</span>
+        <span className="actspan-bg-tasks-count">{count}</span>
+        <span className="actspan-bg-tasks-toggle">▶</span>
       </div>
 
       {/* 列表 */}
-      <div className="mole-bg-tasks-list">
+      <div className="actspan-bg-tasks-list">
         {/* 定时器任务 */}
         {timers?.map((t: any) => {
           const icon = FUNCTION_ICONS['timer'] || '';
@@ -87,16 +87,16 @@ export const BgTasksPanel: React.FC = () => {
           }
 
           return (
-            <div key={`timer-${t.id}`} className="mole-bg-task-item" data-kind="timer" data-id={t.id}>
-              <span className="mole-bg-task-icon">
+            <div key={`timer-${t.id}`} className="actspan-bg-task-item" data-kind="timer" data-id={t.id}>
+              <span className="actspan-bg-task-icon">
                 {icon && <img src={icon} alt="" />}
               </span>
-              <div className="mole-bg-task-info">
-                <span className="mole-bg-task-name" title={String(t.action || '')}>{displayName}</span>
-                <span className="mole-bg-task-meta">{meta}</span>
+              <div className="actspan-bg-task-info">
+                <span className="actspan-bg-task-name" title={String(t.action || '')}>{displayName}</span>
+                <span className="actspan-bg-task-meta">{meta}</span>
               </div>
               <button
-                className="mole-bg-task-close"
+                className="actspan-bg-task-close"
                 type="button"
                 title="关闭"
                 onClick={(e) => { e.stopPropagation(); handleClose('timer', String(t.id)); }}
@@ -115,16 +115,16 @@ export const BgTasksPanel: React.FC = () => {
           else if (j.lastSuccess === false) meta += ' · 上次失败';
 
           return (
-            <div key={`resident-${j.id}`} className="mole-bg-task-item" data-kind="resident" data-id={j.id}>
-              <span className="mole-bg-task-icon">
+            <div key={`resident-${j.id}`} className="actspan-bg-task-item" data-kind="resident" data-id={j.id}>
+              <span className="actspan-bg-task-icon">
                 {icon && <img src={icon} alt="" />}
               </span>
-              <div className="mole-bg-task-info">
-                <span className="mole-bg-task-name">{String(j.name || '')}</span>
-                <span className="mole-bg-task-meta">{meta}</span>
+              <div className="actspan-bg-task-info">
+                <span className="actspan-bg-task-name">{String(j.name || '')}</span>
+                <span className="actspan-bg-task-meta">{meta}</span>
               </div>
               <button
-                className="mole-bg-task-close"
+                className="actspan-bg-task-close"
                 type="button"
                 title="关闭"
                 onClick={(e) => { e.stopPropagation(); handleClose('resident', String(j.id)); }}

@@ -22,29 +22,29 @@ export const RecordModal: React.FC<RecordModalProps> = ({ visible, onConfirm, on
   if (!visible) return null;
 
   return (
-    <div className="mole-record-modal-overlay" onClick={onCancel}>
-      <div className="mole-record-modal" onClick={(e) => e.stopPropagation()}>
-        <div className="mole-record-modal-title">开始录制操作流程</div>
+    <div className="actspan-record-modal-overlay" onClick={onCancel}>
+      <div className="actspan-record-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="actspan-record-modal-title">开始录制操作流程</div>
 
-        <div className="mole-record-modal-hints">
+        <div className="actspan-record-modal-hints">
           {HINTS.map((hint, i) => (
-            <div className="mole-record-modal-hint" key={i}>
-              <span className="mole-record-modal-hint-icon">{hint.icon}</span>
+            <div className="actspan-record-modal-hint" key={i}>
+              <span className="actspan-record-modal-hint-icon">{hint.icon}</span>
               <span>{hint.text}</span>
             </div>
           ))}
         </div>
 
-        <div className="mole-record-modal-actions">
+        <div className="actspan-record-modal-actions">
           <button
-            className="mole-record-modal-btn cancel"
+            className="actspan-record-modal-btn cancel"
             type="button"
             onClick={onCancel}
           >
             取消
           </button>
           <button
-            className="mole-record-modal-btn confirm"
+            className="actspan-record-modal-btn confirm"
             type="button"
             onClick={onConfirm}
           >

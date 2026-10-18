@@ -12,6 +12,7 @@ export const TASK_STATES = new Set([
 
 export const TOOL_NAMES = Object.freeze([
     'actspan_status',
+    'actspan_feishu_push',
     'actspan_tabs_list',
     'actspan_tab_open',
     'actspan_tab_close',

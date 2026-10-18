@@ -5,7 +5,7 @@
 
 import Channel from '../lib/channel';
 import { chatComplete } from '../ai/llm-client';
-import { buildSessionSyncPayload, createSession, createSessionPushEvent, persistRuntimeSessions } from './session-manager';
+import { buildSessionSyncPayload, createSession, createSessionPushEvent, flushFeishuCompletionNotifications, persistRuntimeSessions } from './session-manager';
 import { readMigratedStorage } from '../lib/legacy-storage';
 import { isRecorderOwnerTab, isRecorderStateForTab, shouldTransferRecorderToTab } from './recorder-state';
 import { buildRecorderAuditPrompt } from './workflow-recorder-prompt';
@@ -457,7 +457,18 @@ Channel.on('__recorder_submit', (_data, sender, sendResponse) => {
                 updatedAt: Date.now(),
             };
             Channel.broadcast('__session_sync', buildSessionSyncPayload(session));
-            pushEvent({ type: 'turn_completed', content: JSON.stringify({ sessionId: session.id }) });
+            pushEvent({
+                type: 'turn_completed',
+                content: JSON.stringify({
+                    sessionId: session.id,
+                    status: 'done',
+                    endedAt: session.endedAt,
+                    durationMs: session.durationMs,
+                    taskKind: 'regular',
+                    lastAgentMessage: aiSummary,
+                }),
+            });
+            await flushFeishuCompletionNotifications(session);
             persistRuntimeSessions();
 
             sendResponse?.({ success: true });

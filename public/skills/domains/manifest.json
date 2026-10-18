@@ -268,7 +268,7 @@
               "open_chat_page": { "type": "boolean", "description": "是否导航到聊天页面（已在聊天页则不需要）", "default": false },
               "chat_url": { "type": "string", "description": "聊天页 URL（open_chat_page=true 时使用）" },
               "show_takeover_badge": { "type": "boolean", "description": "是否显示接管状态提示", "default": false },
-              "takeover_badge_text": { "type": "string", "description": "接管提示文字", "default": "Mole 接管中" },
+              "takeover_badge_text": { "type": "string", "description": "接管提示文字", "default": "ActSpan 接管中" },
               "auto_send": { "type": "boolean", "description": "是否自动发送回复", "default": false },
               "reply_text": { "type": "string", "description": "自动回复内容（auto_send=true 时必填）" }
             }
@@ -295,7 +295,7 @@
                 "when": "{{show_takeover_badge}}",
                 "params": {
                   "action": "evaluate",
-                  "code": "return (() => {\n  const badgeId = 'mole-takeover-badge';\n  const text = '{{takeover_badge_text}}' || 'Mole 接管中';\n  let badge = document.getElementById(badgeId);\n  if (!badge) {\n    badge = document.createElement('div');\n    badge.id = badgeId;\n    badge.style.position = 'fixed';\n    badge.style.right = '20px';\n    badge.style.bottom = '20px';\n    badge.style.zIndex = '2147483647';\n    badge.style.padding = '10px 12px';\n    badge.style.borderRadius = '999px';\n    badge.style.background = 'rgba(22, 163, 74, 0.9)';\n    badge.style.color = '#fff';\n    badge.style.fontSize = '12px';\n    badge.style.fontWeight = '600';\n    badge.style.boxShadow = '0 10px 30px rgba(0,0,0,0.22)';\n    badge.style.pointerEvents = 'none';\n    document.body.appendChild(badge);\n  }\n  badge.textContent = text;\n  badge.setAttribute('data-updated-at', String(Date.now()));\n  return { badgeId, text, pageUrl: location.href, pageTitle: document.title };\n})();"
+                  "code": "return (() => {\n  const badgeId = 'actspan-takeover-badge';\n  const text = '{{takeover_badge_text}}' || 'ActSpan 接管中';\n  let badge = document.getElementById(badgeId);\n  if (!badge) {\n    badge = document.createElement('div');\n    badge.id = badgeId;\n    badge.style.position = 'fixed';\n    badge.style.right = '20px';\n    badge.style.bottom = '20px';\n    badge.style.zIndex = '2147483647';\n    badge.style.padding = '10px 12px';\n    badge.style.borderRadius = '999px';\n    badge.style.background = 'rgba(22, 163, 74, 0.9)';\n    badge.style.color = '#fff';\n    badge.style.fontSize = '12px';\n    badge.style.fontWeight = '600';\n    badge.style.boxShadow = '0 10px 30px rgba(0,0,0,0.22)';\n    badge.style.pointerEvents = 'none';\n    document.body.appendChild(badge);\n  }\n  badge.textContent = text;\n  return { ok: true, badgeId, text };\n})();"
                 },
                 "onError": "continue"
               },

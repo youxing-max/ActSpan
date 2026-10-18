@@ -4,8 +4,8 @@
  */
 
 import React, { useRef, useEffect, useCallback } from 'react';
-import { MoleProvider } from '../content/float-ball/context/MoleContext';
-import { useMole } from '../content/float-ball/context/useMole';
+import { ActspanProvider } from '../content/float-ball/context/ActspanContext';
+import { useActspan } from '../content/float-ball/context/useActspan';
 import { useAIStream } from '../content/float-ball/hooks/useAIStream';
 import { useSecondTick } from '../content/float-ball/hooks/useGlobalEvents';
 import { InputBar } from '../content/float-ball/components/InputBar';
@@ -18,9 +18,9 @@ import { ImageViewer } from '../content/float-ball/components/ImageViewer';
 import Channel from '../lib/channel';
 import { formatClock, formatDuration } from '../content/float-ball/text-utils';
 
-/** Tab 感知 hook：追踪当前活跃标签页，并同步到 MoleContext.selfTabId */
+/** Tab 感知 hook：追踪当前活跃标签页，并同步到 ActspanContext.selfTabId */
 const useActiveTab = () => {
-    const { dispatch } = useMole();
+    const { dispatch } = useActspan();
 
     useEffect(() => {
         const updateTabId = (tabId: number) => {
@@ -41,7 +41,7 @@ const useActiveTab = () => {
 
 /** Side Panel 键盘事件 hook */
 const useSidePanelEvents = () => {
-    const { state, dispatch } = useMole();
+    const { state, dispatch } = useActspan();
     const stateRef = useRef(state);
     stateRef.current = state;
 
@@ -72,7 +72,7 @@ const useSidePanelEvents = () => {
 
 /** Side Panel 内部组件 */
 const SidePanelInner: React.FC = () => {
-    const { state, dispatch } = useMole();
+    const { state, dispatch } = useActspan();
     const resultRef = useRef<HTMLDivElement>(null);
     useActiveTab();
 
@@ -247,8 +247,8 @@ const SidePanelInner: React.FC = () => {
 
 export const SidePanelApp: React.FC = () => {
     return (
-        <MoleProvider>
+        <ActspanProvider>
             <SidePanelInner />
-        </MoleProvider>
+        </ActspanProvider>
     );
 };

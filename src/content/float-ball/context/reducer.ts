@@ -3,11 +3,11 @@
  */
 
 import { INPUT_HISTORY_KEY } from '../constants';
-import { type MoleState, type MoleAction, type RoundItem, initialMoleState } from './types';
+import { type ActspanState, type ActspanAction, type RoundItem, initialActspanState } from './types';
 
 const INPUT_HISTORY_MAX = 50;
 
-export const moleReducer = (state: MoleState, action: MoleAction): MoleState => {
+export const actspanReducer = (state: ActspanState, action: ActspanAction): ActspanState => {
   switch (action.type) {
     case 'TOGGLE_OPEN':
       return { ...state, isOpen: action.payload ?? !state.isOpen };
@@ -129,7 +129,7 @@ export const moleReducer = (state: MoleState, action: MoleAction): MoleState => 
       return { ...state, userDismissed: action.payload };
 
     case 'RESET':
-      return { ...initialMoleState };
+      return { ...initialActspanState };
 
     default:
       return state;

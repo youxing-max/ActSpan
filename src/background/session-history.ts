@@ -15,7 +15,7 @@ import type {
     SessionAgentTransitionItem,
 } from './session-types';
 import { MAX_SESSION_HISTORY, SESSION_HISTORY_STORAGE_KEY, LEGACY_SESSION_HISTORY_STORAGE_KEY } from '../session-history/constants';
-import { SESSION_CONTEXT_COMPRESSION_TAG } from './session-types';
+import { LEGACY_SESSION_CONTEXT_COMPRESSION_TAG, SESSION_CONTEXT_COMPRESSION_TAG } from './session-types';
 import { readMigratedStorage } from '../lib/legacy-storage';
 import { setLocalStorage } from './session-persistence';
 import { parseTurnLifecycleEventPayload, parseEventObject } from './session-event';
@@ -69,7 +69,7 @@ function extractLatestAssistantMessageFromContext(context: InputItem[] | undefin
         const item = context[index];
         if (!('role' in item) || item.role !== 'assistant') continue;
         const text = getTextContent(item.content).trim();
-        if (!text || text.startsWith(SESSION_CONTEXT_COMPRESSION_TAG)) continue;
+        if (!text || text.startsWith(SESSION_CONTEXT_COMPRESSION_TAG) || text.startsWith(LEGACY_SESSION_CONTEXT_COMPRESSION_TAG)) continue;
         return text;
     }
     return undefined;

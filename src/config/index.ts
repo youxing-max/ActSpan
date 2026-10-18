@@ -1,4 +1,4 @@
-/** Mole 配置 */
+/** Actspan 配置 */
 
 /** 最大日志数 */
 export const MAX_LOG_NUM = 1000;

@@ -12,7 +12,7 @@ Actspan is compatible with LLM services that provide the OpenAI Responses API fo
 | API Key | Your API key | - |
 | Model | Model name to use | `gpt-6.1-sol` |
 
-Settings are stored in `chrome.storage.local` under the key `mole_ai_settings`.
+Settings are stored in `chrome.storage.local` under the key `actspan_ai_settings`.
 
 ### Supported Models / Services
 

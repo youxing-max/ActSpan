@@ -5,7 +5,7 @@
 
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { SHORTCUT_TEXT, DISABLED_DOMAINS_KEY } from '../constants';
-import { useMole } from '../context/useMole';
+import { useActspan } from '../context/useActspan';
 import { useDrag } from '../hooks/useDrag';
 import { usePosition } from '../hooks/usePosition';
 import Channel from '../../../lib/channel';
@@ -57,7 +57,7 @@ const PillActionCard: React.FC<{
 
   return (
     <div
-      className={`mole-pill-action-card${visible ? ' visible' : ''}`}
+      className={`actspan-pill-action-card${visible ? ' visible' : ''}`}
       onMouseDown={(e) => e.stopPropagation()}
       onClick={(e) => e.stopPropagation()}
       onMouseEnter={enterHover}
@@ -101,7 +101,7 @@ const PillActionCard: React.FC<{
 };
 
 export const Trigger: React.FC<{ onRecordClick: () => void }> = ({ onRecordClick }) => {
-  const { state, dispatch } = useMole();
+  const { state, dispatch } = useActspan();
   const { side, currentY, savePosition, getTriggerX } = usePosition();
   const [isHovering, setIsHovering] = useState(false);
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -239,7 +239,7 @@ export const Trigger: React.FC<{ onRecordClick: () => void }> = ({ onRecordClick
 
   // CSS class 拼接
   const triggerClass = [
-    'mole-trigger',
+    'actspan-trigger',
     `side-${side}`,
     state.isOpen ? 'active' : '',
     state.isRecording ? 'recording' : '',
@@ -252,7 +252,7 @@ export const Trigger: React.FC<{ onRecordClick: () => void }> = ({ onRecordClick
   return (
     <div className={triggerClass} ref={triggerRef}>
       <div
-        className="mole-pill"
+        className="actspan-pill"
         onMouseDown={onMouseDown}
         onMouseEnter={enterHover}
         onMouseLeave={leaveHover}
@@ -261,15 +261,15 @@ export const Trigger: React.FC<{ onRecordClick: () => void }> = ({ onRecordClick
         {(() => {
           const bgCount = (state.bgTasksData?.timers?.length || 0) + (state.bgTasksData?.residentJobs?.length || 0);
           return bgCount > 0
-            ? <span className="mole-bg-task-badge visible">{bgCount}</span>
-            : <span className="mole-bg-task-badge" />;
+            ? <span className="actspan-bg-task-badge visible">{bgCount}</span>
+            : <span className="actspan-bg-task-badge" />;
         })()}
-        <div className="mole-pill-info">
-          <span className="mole-shortcut">{statusText}</span>
-          <span className="mole-pill-meta">{metaText}</span>
+        <div className="actspan-pill-info">
+          <span className="actspan-shortcut">{statusText}</span>
+          <span className="actspan-pill-meta">{metaText}</span>
         </div>
         <button
-          className="mole-close-btn"
+          className="actspan-close-btn"
           type="button"
           title="关闭悬浮球"
           aria-label="关闭悬浮球"
@@ -286,11 +286,11 @@ export const Trigger: React.FC<{ onRecordClick: () => void }> = ({ onRecordClick
       </div>
 
       {/* 通知气泡 */}
-      <div className="mole-pill-notice" />
+      <div className="actspan-pill-notice" />
 
       {/* 设置按钮 */}
       <button
-        className="mole-settings-btn"
+        className="actspan-settings-btn"
         type="button"
         title="打开设置"
         aria-label="打开设置"
@@ -305,9 +305,9 @@ export const Trigger: React.FC<{ onRecordClick: () => void }> = ({ onRecordClick
       </button>
 
       {/* 录制按钮 + tooltip */}
-      <div className="mole-record-wrap">
+      <div className="actspan-record-wrap">
         <button
-          className="mole-record-btn"
+          className="actspan-record-btn"
           type="button"
           aria-label="录制工作流"
           onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
@@ -319,7 +319,7 @@ export const Trigger: React.FC<{ onRecordClick: () => void }> = ({ onRecordClick
             <circle cx="12" cy="12" r="6" fill="currentColor" />
           </svg>
         </button>
-        <span className="mole-record-tooltip">录制工作流</span>
+        <span className="actspan-record-tooltip">录制工作流</span>
       </div>
 
       {/* 迷你操作卡片 */}
@@ -333,32 +333,32 @@ export const Trigger: React.FC<{ onRecordClick: () => void }> = ({ onRecordClick
 
       {/* 关闭菜单 */}
       <div
-        className={`mole-close-menu${state.closeMenuVisible ? ' visible' : ''}`}
+        className={`actspan-close-menu${state.closeMenuVisible ? ' visible' : ''}`}
         onMouseEnter={enterHover}
         onMouseLeave={leaveHover}
       >
         <button
-          className="mole-close-menu-item"
+          className="actspan-close-menu-item"
           type="button"
           onClick={handleCloseCurrent}
         >
-          <span className="mole-close-menu-icon">✕</span>
+          <span className="actspan-close-menu-icon">✕</span>
           本次关闭
         </button>
-        <div className="mole-close-menu-divider" />
+        <div className="actspan-close-menu-divider" />
         <button
-          className="mole-close-menu-item mole-close-menu-domain"
+          className="actspan-close-menu-item actspan-close-menu-domain"
           type="button"
           onClick={handleCloseDomain}
         >
           <img
-            className="mole-close-menu-favicon"
+            className="actspan-close-menu-favicon"
             src={`https://www.google.com/s2/favicons?domain=${currentHostname}&sz=32`}
             alt=""
           />
-          <span className="mole-close-menu-domain-info">
-            <span className="mole-close-menu-domain-label">不再显示</span>
-            <span className="mole-close-menu-domain-host">{currentHostname}</span>
+          <span className="actspan-close-menu-domain-info">
+            <span className="actspan-close-menu-domain-label">不再显示</span>
+            <span className="actspan-close-menu-domain-host">{currentHostname}</span>
           </span>
         </button>
       </div>

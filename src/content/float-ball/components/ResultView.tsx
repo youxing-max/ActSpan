@@ -6,7 +6,7 @@
  */
 
 import React, { useRef, useEffect, useState, useCallback, useMemo } from 'react';
-import { useMole } from '../context/useMole';
+import { useActspan } from '../context/useActspan';
 import { markdownToHtml } from '../markdown';
 import Channel from '../../../lib/channel';
 import type { RoundItem } from '../context/types';
@@ -31,9 +31,9 @@ const CallsGroup: React.FC<{
   if (calls.length === 0) return null;
 
   return (
-    <div className="mole-calls-group mole-agent-state-ops">
+    <div className="actspan-calls-group actspan-agent-state-ops">
       <div
-        className="mole-calls-summary"
+        className="actspan-calls-summary"
         onClick={() => setIsOpen(!isOpen)}
         style={{ cursor: 'pointer' }}
       >
@@ -41,21 +41,21 @@ const CallsGroup: React.FC<{
         <span className="calls-text">查看执行过程 · 共 {calls.length} 条</span>
       </div>
       {isOpen && (
-        <div className="mole-calls-detail open">
+        <div className="actspan-calls-detail open">
           {calls.map((call, idx) => (
-            <div key={idx} className={`mole-call-item tone-${isRunning && idx === calls.length - 1 ? 'action' : 'done'}`}>
-              <div className="mole-call-header">
+            <div key={idx} className={`actspan-call-item tone-${isRunning && idx === calls.length - 1 ? 'action' : 'done'}`}>
+              <div className="actspan-call-header">
                 {call.icon
-                  ? <img className="mole-func-icon" src={call.icon} alt="" />
-                  : <span className="mole-task-runtime-step-dot" />
+                  ? <img className="actspan-func-icon" src={call.icon} alt="" />
+                  : <span className="actspan-task-runtime-step-dot" />
                 }
-                <span className="mole-call-main">
-                  <span className="mole-call-title">{call.text}</span>
+                <span className="actspan-call-main">
+                  <span className="actspan-call-title">{call.text}</span>
                   {call.userSummary && (
-                    <span className="mole-call-intent">{call.userSummary}</span>
+                    <span className="actspan-call-intent">{call.userSummary}</span>
                   )}
                 </span>
-                <span className={`mole-call-status${isRunning && idx === calls.length - 1 ? ' running' : ''}`}>
+                <span className={`actspan-call-status${isRunning && idx === calls.length - 1 ? ' running' : ''}`}>
                   {isRunning && idx === calls.length - 1 ? '···' : '✓'}
                 </span>
               </div>
@@ -87,25 +87,25 @@ const AgentStatePanel: React.FC<{
     : statusText;
 
   return (
-    <div className={`mole-agent-state-panel${isRunning ? ' is-live' : ''}${isOpen ? ' open' : ''}`}>
+    <div className={`actspan-agent-state-panel${isRunning ? ' is-live' : ''}${isOpen ? ' open' : ''}`}>
       <div
-        className="mole-agent-state-title"
+        className="actspan-agent-state-title"
         onClick={() => setIsOpen(!isOpen)}
         style={{ cursor: 'pointer' }}
       >
-        <span className="mole-agent-state-title-main">
+        <span className="actspan-agent-state-title-main">
           <span className={`arrow${isOpen ? ' open' : ''}`}>▶</span>
           <span>进展</span>
         </span>
-        <span className="mole-agent-state-summary">{summaryText}</span>
+        <span className="actspan-agent-state-summary">{summaryText}</span>
       </div>
       {isOpen && (
         <>
-          <div className="mole-task-runtime-board">
+          <div className="actspan-task-runtime-board">
             {isRunning && (
-              <div className="mole-runtime-now">
-                <span className="mole-inline-loader"><span /><span /><span /></span>
-                <span className="mole-runtime-now-text">{statusText}</span>
+              <div className="actspan-runtime-now">
+                <span className="actspan-inline-loader"><span /><span /><span /></span>
+                <span className="actspan-runtime-now-text">{statusText}</span>
               </div>
             )}
           </div>
@@ -125,24 +125,24 @@ const HistoryRound: React.FC<{ round: RoundItem; index: number }> = ({ round }) 
     : (round.status === 'error' ? round.errorMsg || '执行失败' : '已完成');
 
   return (
-    <div className="mole-round-history">
+    <div className="actspan-round-history">
       {/* 用户消息气泡 */}
-      <div className="mole-user-msg">{round.query}</div>
+      <div className="actspan-user-msg">{round.query}</div>
       {/* 折叠摘要 */}
-      <div className="mole-round-summary" onClick={() => setIsOpen(!isOpen)}>
+      <div className="actspan-round-summary" onClick={() => setIsOpen(!isOpen)}>
         <span className={`arrow${isOpen ? ' open' : ''}`}>▶</span>
-        <span className="mole-round-preview">{preview}</span>
+        <span className="actspan-round-preview">{preview}</span>
       </div>
       {isOpen && (
-        <div className="mole-round-content open">
+        <div className="actspan-round-content open">
           {round.callStack.length > 0 && (
             <CallsGroup calls={round.callStack} isRunning={false} />
           )}
           {html && (
-            <div className="mole-answer" dangerouslySetInnerHTML={{ __html: html }} />
+            <div className="actspan-answer" dangerouslySetInnerHTML={{ __html: html }} />
           )}
           {round.status === 'error' && round.errorMsg && (
-            <div className="mole-error">⚠ {round.errorMsg}</div>
+            <div className="actspan-error">⚠ {round.errorMsg}</div>
           )}
         </div>
       )}
@@ -151,7 +151,7 @@ const HistoryRound: React.FC<{ round: RoundItem; index: number }> = ({ round }) 
 };
 
 export const ResultView: React.FC = () => {
-  const { state } = useMole();
+  const { state } = useActspan();
   const resultRef = useRef<HTMLDivElement>(null);
   const answerRef = useRef<HTMLDivElement>(null);
   const prevTaskIdRef = useRef('');
@@ -209,7 +209,7 @@ export const ResultView: React.FC = () => {
     if (oldCount === 0) {
       el.innerHTML = html;
       for (const child of Array.from(el.children)) {
-        (child as HTMLElement).classList.add('mole-answer-new');
+        (child as HTMLElement).classList.add('actspan-answer-new');
       }
       return;
     }
@@ -237,12 +237,12 @@ export const ResultView: React.FC = () => {
     // 追加新出现的块级元素，带淡入动画
     for (let i = oldCount; i < newCount; i++) {
       const newChild = temp.children[i].cloneNode(true) as HTMLElement;
-      newChild.classList.add('mole-answer-new');
+      newChild.classList.add('actspan-answer-new');
       el.appendChild(newChild);
     }
 
     // 异步获取 link chip 的页面标题
-    const chips = el.querySelectorAll<HTMLAnchorElement>('a.mole-link-chip');
+    const chips = el.querySelectorAll<HTMLAnchorElement>('a.actspan-link-chip');
     for (const chip of chips) {
       if (chip.dataset.titleFetched) continue;
       chip.dataset.titleFetched = '1';
@@ -250,7 +250,7 @@ export const ResultView: React.FC = () => {
       if (!url) continue;
       Channel.send('__fetch_page_title', { url }, (resp: any) => {
         if (resp?.title && chip.isConnected) {
-          const textEl = chip.querySelector('.mole-link-text');
+          const textEl = chip.querySelector('.actspan-link-text');
           if (textEl) textEl.textContent = resp.title;
         }
       });
@@ -273,7 +273,7 @@ export const ResultView: React.FC = () => {
   const rounds = task.rounds || [];
 
   return (
-    <div className="mole-result visible" ref={resultRef} onScroll={handleScroll}>
+    <div className="actspan-result visible" ref={resultRef} onScroll={handleScroll}>
       {/* 历史轮次 */}
       {rounds.map((round, idx) => (
         <HistoryRound key={idx} round={round} index={idx} />
@@ -281,7 +281,7 @@ export const ResultView: React.FC = () => {
 
       {/* 当前轮用户消息（仅多轮时显示） */}
       {rounds.length > 0 && task.query && (
-        <div className="mole-user-msg">{task.query}</div>
+        <div className="actspan-user-msg">{task.query}</div>
       )}
 
       {/* 进展面板 */}
@@ -298,19 +298,19 @@ export const ResultView: React.FC = () => {
 
       {/* AI 文本回复 — ref 管理 DOM 实现增量更新 */}
       <div
-        className="mole-answer"
+        className="actspan-answer"
         ref={answerRef}
         style={!task.lastAIText ? { display: 'none' } : undefined}
       />
 
       {/* 错误信息 */}
       {task.status === 'error' && task.errorMsg && (
-        <div className="mole-error">⚠ {task.errorMsg}</div>
+        <div className="actspan-error">⚠ {task.errorMsg}</div>
       )}
 
       {/* 完成但无文本 */}
       {task.status === 'done' && !task.lastAIText && (
-        <div className="mole-status"><span className="dot" />已完成处理。</div>
+        <div className="actspan-status"><span className="dot" />已完成处理。</div>
       )}
     </div>
   );

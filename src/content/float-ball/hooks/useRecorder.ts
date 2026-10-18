@@ -6,7 +6,7 @@
 
 import { useCallback, useEffect, useRef } from 'react';
 import Channel from '../../../lib/channel';
-import { useMole } from '../context/useMole';
+import { useActspan } from '../context/useActspan';
 import { buildTaskTitle } from '../text-utils';
 import {
   showRecorderOverlay,
@@ -63,7 +63,7 @@ const getElementSemanticHint = (el: Element): string => {
 // ============ Hook ============
 
 export const useRecorder = () => {
-  const { state, dispatch } = useMole();
+  const { state, dispatch } = useActspan();
   const stateRef = useRef(state);
   stateRef.current = state;
 
@@ -128,7 +128,7 @@ export const useRecorder = () => {
         if (!stateRef.current.isRecording) return;
         if (stepCountRef.current >= MAX_RECORDER_STEPS) return;
         const target = e.target as Element;
-        if (!target || target.closest('#mole-root') || target.closest('#mole-recorder-overlay')) return;
+        if (!target || target.closest('#actspan-root') || target.closest('#actspan-recorder-overlay')) return;
 
         const selector = buildSimpleSelector(target);
         const semanticHint = getElementSemanticHint(target);
@@ -153,7 +153,7 @@ export const useRecorder = () => {
         if (!stateRef.current.isRecording) return;
         if (stepCountRef.current >= MAX_RECORDER_STEPS) return;
         const target = e.target as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
-        if (!target || target.closest('#mole-root') || target.closest('#mole-recorder-overlay')) return;
+        if (!target || target.closest('#actspan-root') || target.closest('#actspan-recorder-overlay')) return;
 
         if (target !== lastInputTargetRef.current && lastInputTargetRef.current && lastInputValueRef.current) {
           flushInputStep();
@@ -172,7 +172,7 @@ export const useRecorder = () => {
         if (!stateRef.current.isRecording) return;
         if (stepCountRef.current >= MAX_RECORDER_STEPS) return;
         const form = e.target as HTMLFormElement;
-        if (!form || form.closest('#mole-root')) return;
+        if (!form || form.closest('#actspan-root')) return;
 
         flushInputStep();
 

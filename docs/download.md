@@ -24,7 +24,7 @@ import { data as release } from './release.data'
 
 ### 第 2 步：解压
 
-解压下载的 zip 文件，得到一个名为 `mole-extension/` 的文件夹。
+解压下载的 zip 文件，得到一个名为 `actspan-extension/` 的文件夹。
 
 ::: tip 提示
 macOS 双击 zip 文件即可解压。Windows 右键 → "全部解压缩"。
@@ -45,7 +45,7 @@ chrome://extensions/
 ### 第 5 步：加载扩展
 
 1. 点击左上角出现的 **"加载已解压的扩展程序"** 按钮
-2. 在文件选择对话框中，找到并选择 **解压后的文件夹**（如 `mole-extension/`）
+2. 在文件选择对话框中，找到并选择 **解压后的文件夹**（如 `actspan-extension/`）
 3. 点击 **"选择文件夹"**（Windows）或 **"打开"**（macOS）
 
 ### 第 6 步：确认安装

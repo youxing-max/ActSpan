@@ -5,7 +5,7 @@
 
 import React, { useRef, useCallback, useEffect } from 'react';
 import Channel from '../../../lib/channel';
-import { useMole } from '../context/useMole';
+import { useActspan } from '../context/useActspan';
 import { buildTaskTitle } from '../text-utils';
 import type { TaskItem } from '../context/types';
 
@@ -33,7 +33,7 @@ const createNewTask = (query: string, id?: string): TaskItem => ({
 });
 
 export const InputBar: React.FC<InputBarProps> = ({ resultRef }) => {
-  const { state, dispatch } = useMole();
+  const { state, dispatch } = useActspan();
   const inputRef = useRef<HTMLInputElement>(null);
   const task = state.currentTask;
   const isRunning = task?.status === 'running';
@@ -213,34 +213,34 @@ export const InputBar: React.FC<InputBarProps> = ({ resultRef }) => {
   const logoUrl = chrome.runtime.getURL('actspan-logo.svg');
 
   return (
-    <div className="mole-input-row">
-      <img className="mole-input-icon" src={logoUrl} alt="" />
+    <div className="actspan-input-row">
+      <img className="actspan-input-icon" src={logoUrl} alt="" />
       <input
         ref={inputRef}
-        className="mole-input"
+        className="actspan-input"
         type="text"
         placeholder={placeholder}
         autoComplete="off"
         disabled={isRunning || isAuditing}
         onKeyDown={handleKeyDown}
       />
-      <span className="mole-input-hint" style={{ display: isRunning ? 'none' : '' }}>ESC</span>
+      <span className="actspan-input-hint" style={{ display: isRunning ? 'none' : '' }}>ESC</span>
       <button
-        className={`mole-new-btn${task && !isRunning ? ' visible' : ''}`}
+        className={`actspan-new-btn${task && !isRunning ? ' visible' : ''}`}
         title="新对话"
         onClick={handleNew}
       >
         +
       </button>
       <button
-        className={`mole-retry-btn${canResume ? ' visible' : ''}`}
+        className={`actspan-retry-btn${canResume ? ' visible' : ''}`}
         title="重试"
         onClick={handleRetry}
       >
         ↻
       </button>
       <button
-        className={`mole-stop-btn${isRunning ? ' visible' : ''}`}
+        className={`actspan-stop-btn${isRunning ? ' visible' : ''}`}
         title="终止任务"
         onClick={handleStop}
       >

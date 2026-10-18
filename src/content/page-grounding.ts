@@ -278,8 +278,8 @@ const buildSelectorCandidates = (el: Element): string[] => {
     }
   }
 
-  if (htmlEl.dataset?.moleHandle) {
-    selectors.unshift(`[data-mole-handle="${escapeCssValue(htmlEl.dataset.moleHandle)}"]`);
+  if (htmlEl.dataset?.actspanHandle) {
+    selectors.unshift(`[data-actspan-handle="${escapeCssValue(htmlEl.dataset.actspanHandle)}"]`);
   }
 
   return Array.from(new Set(selectors)).slice(0, 2);
@@ -292,7 +292,7 @@ const buildSelectorCandidates = (el: Element): string[] => {
 const buildElementDescriptor = (el: Element, score: number = 0, matchReasons?: string[], cache?: Map<Element, CachedElementInfo>) => {
   const htmlEl = el as HTMLElement;
   const handleId = getOrCreateElementHandle(el);
-  htmlEl.dataset.moleHandle = handleId;
+  htmlEl.dataset.actspanHandle = handleId;
   const role = el.getAttribute('role') || undefined;
   const placeholder = el.getAttribute('placeholder') || undefined;
   const href = el instanceof HTMLAnchorElement ? el.href || undefined : undefined;
@@ -770,7 +770,7 @@ const initElementHandleAction = () => {
 // ============ 视觉标注 ============
 
 /** 标注容器的 data 属性标识 */
-const ANNOTATION_CONTAINER_ATTR = 'data-mole-annotations';
+const ANNOTATION_CONTAINER_ATTR = 'data-actspan-annotations';
 
 /** 标注编号上限 */
 const MAX_ANNOTATION_COUNT = 50;
@@ -832,7 +832,7 @@ const annotateInteractiveElements = (): { success: boolean; annotations?: Annota
     const info = cache.get(el)!;
     const rect = info.rect;
     const elementId = getOrCreateElementHandle(el);
-    (el as HTMLElement).dataset.moleHandle = elementId;
+    (el as HTMLElement).dataset.actspanHandle = elementId;
 
     // 半透明高亮边框
     const highlight = document.createElement('div');

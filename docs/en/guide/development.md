@@ -116,15 +116,15 @@ src/
 
 ```bash
 # 1. Clone and install
-git clone https://github.com/clark-maybe/mole-extension.git
-cd mole-extension
+git clone https://github.com/youxing-max/ActSpan.git
+cd ActSpan
 npm install
 
 # 2. Build the extension
 npm run build
 
 # 3. Load into Chrome
-# Open chrome://extensions/ → Developer mode → Load unpacked → Select build directory
+# Open chrome://extensions/ → Developer mode → Load unpacked → Select `build_version/actspan-extension/`
 
 # 4. Watch mode development
 npm run dev

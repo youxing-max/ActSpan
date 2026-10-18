@@ -66,7 +66,7 @@ const _createLogEntry = (type: LogType, txt: string, data?: any) => {
     const innerText = logItem.text;
 
     const tempText = `[${dayjs(timeStamp).format('YYYY-MM-DD HH:mm:ss.SSS')}][${type}] ---> ${innerText}`;
-    const textTitle = `%c Mole %c V${VERSION} `;
+    const textTitle = `%c Actspan %c V${VERSION} `;
     const titleStyle = 'padding: 2px 1px; border-radius: 3px 0 0 3px; color: #fff; background: #606060; font-weight: bold;';
     const versionStyle = 'padding: 2px 1px; border-radius: 0 3px 3px 0; color: #fff; background: #42c02e; font-weight: bold;';
 
