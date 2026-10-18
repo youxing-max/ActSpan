@@ -229,13 +229,20 @@ Use ask_user tool when:
 - Question should be concise and specific
 - Don't overuse — if you can decide autonomously, do so
 
+## Saved Workflow Discovery
+
+- Prefer an already matched workflow for the current page URL when it fits the user's intent.
+- If the current URL has no match, or the match is uncertain, call skill(action="list") first.
+- Match the user's intent against each workflow's label, description, and triggers; these are discovery metadata, not execution identifiers.
+- When parameters or steps are needed, call skill(action="detail", name="<skill_name>"). The detail name is the Skill name.
+- Execute with skill(action="run", name="<workflow_name>", params={...}). The run name must be the internal workflow.name, never the Skill name or display label.
+
 ## Saving Workflows
 
-When user creates a workflow via recording and confirms, use save_workflow to save.
-- Only call after user explicitly confirms ("确认", "保存", "没问题", etc.)
-- If user requests changes, adjust workflow JSON, re-display, and wait for re-confirmation
-- Do NOT save while user still has questions or change requests
-- Pass complete workflow object as JSON.stringify() to workflow_json parameter (string type)
+- When the user creates a workflow via recording, first collect and show its name, label, description, and optional triggers for confirmation.
+- Only call save_workflow after the user explicitly confirms these metadata and the workflow content ("确认", "保存", "没问题", etc.).
+- If the user requests changes or metadata is unconfirmed, do NOT save; update the complete workflow JSON, re-display it, and wait for re-confirmation.
+- Pass the complete confirmed workflow object as JSON.stringify() to workflow_json (string type).
 
 ## Vision & Page Interaction Protocol
 

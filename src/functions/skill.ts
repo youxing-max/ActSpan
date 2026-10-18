@@ -47,6 +47,15 @@ const extractDefaults = (schema: Record<string, any>): Record<string, any> => {
   return defaults;
 };
 
+/** 构建单个 workflow 的轻量元数据（不包含执行计划） */
+const buildWorkflowMetadata = (wf: WorkflowEntry): Record<string, unknown> => ({
+  name: wf.name,
+  label: wf.label,
+  description: wf.description,
+  ...(Array.isArray(wf.triggers) && wf.triggers.length > 0 ? { triggers: wf.triggers } : {}),
+  parameters: wf.parameters,
+});
+
 /** 构建单个 workflow 的参数简述 */
 const buildWorkflowDescription = (wf: WorkflowEntry): string => {
   const paramProps = wf.parameters?.properties;
@@ -60,7 +69,9 @@ const buildWorkflowDescription = (wf: WorkflowEntry): string => {
     });
     if (parts.length > 0) paramHint = ` | params: ${parts.join(', ')}`;
   }
-  return `- ${wf.name}: ${wf.description}${paramHint}`;
+  const triggers = Array.isArray(wf.triggers) && wf.triggers.length > 0
+    ? ` | triggers: ${wf.triggers.join(', ')}` : '';
+  return `- ${wf.label} (workflow name: ${wf.name}): ${wf.description}${triggers}${paramHint}`;
 };
 
 /**
@@ -76,14 +87,12 @@ const buildWorkflowDescription = (wf: WorkflowEntry): string => {
  * - globalCatalog: 全局 Skill 目录（轻量，注入系统提示词）
  */
 export const buildSkillContext = async (tabUrl: string): Promise<{
-  schema: ToolSchema | null;
+  schema: ToolSchema;
   domainGuides: SkillGuideEntry[];
   globalCatalog: SkillCatalogEntry[];
 }> => {
   await ensureSkillRegistryReady();
   const matchedSkills = matchSkills(tabUrl, (await registryService.listAll()).skills);
-
-  if (matchedSkills.length === 0) return { schema: null, domainGuides: [], globalCatalog: [] };
 
   // 1. 分离全局和域级
   const globalSkills = matchedSkills.filter(s => s.scope === 'global');
@@ -160,8 +169,8 @@ export const buildSkillContext = async (tabUrl: string): Promise<{
         },
         name: {
           type: 'string',
-          ...(domainWfNames.length > 0 ? {} : {}), // 不设 enum，允许全局 workflow 名称
           description: 'Workflow name when action=run, skill name when action=detail.',
+          ...(domainWfNames.length > 0 ? {} : {}), // 不设 enum，允许全局 workflow 名称
         },
         params: {
           type: 'object',
@@ -172,7 +181,6 @@ export const buildSkillContext = async (tabUrl: string): Promise<{
           description: 'Target tab ID. Uses the current active tab if omitted.',
         },
       },
-      required: ['name'],
     },
   };
 
@@ -197,7 +205,7 @@ const handleList = async (tabUrl?: string): Promise<FunctionResult> => {
     description: s.description,
     scope: s.scope,
     workflowCount: s.workflows.length,
-    workflows: s.workflows.map(w => w.name),
+    workflows: s.workflows.map(buildWorkflowMetadata),
   }));
 
   return {
@@ -206,7 +214,7 @@ const handleList = async (tabUrl?: string): Promise<FunctionResult> => {
       revision: snapshot.revision,
       totalSkills: result.length,
       skills: result,
-      hint: 'Use skill(action="detail", name="skill_name") to view the full guide and parameter details of a specific skill.',
+      hint: 'Use skill(action="detail", name="<skill_name>") to view metadata, guide, parameters, and steps. Use the workflow name from the list with skill(action="run", name="<workflow_name>", params={...}).',
     },
   };
 };
@@ -221,10 +229,7 @@ const handleDetail = async (skillName: string): Promise<FunctionResult> => {
   }
 
   const workflowDetails = skill.workflows.map(wf => ({
-    name: wf.name,
-    label: wf.label,
-    description: wf.description,
-    parameters: wf.parameters,
+    ...buildWorkflowMetadata(wf),
     version: wf.version,
     updatedAt: wf.updatedAt,
     steps: wf.steps || wf.plan.steps,
@@ -245,7 +250,7 @@ const handleDetail = async (skillName: string): Promise<FunctionResult> => {
       scope: skill.scope,
       guide: skill.guide || '(no guide)',
       workflows: workflowDetails,
-      hint: 'Use skill(name="workflow_name", params={...}) to execute a specific workflow.',
+      hint: 'detail 的 name 传 Skill name；执行时使用 skill(action="run", name="<workflow_name>", params={...})，其中 name 必须是内部 workflow name（workflow.name），不能使用 Skill name 或 label。',
     },
   };
 };
@@ -342,7 +347,6 @@ export const skillFunction: FunctionDefinition = {
         description: 'Target tab ID.',
       },
     },
-    required: ['name'],
   },
 
   execute: async (

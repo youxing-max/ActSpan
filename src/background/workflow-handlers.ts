@@ -34,6 +34,7 @@ Channel.on('__site_workflows_match', (data, _sender, sendResponse) => {
                 name: w.name,
                 label: w.label,
                 description: w.description,
+                ...(Array.isArray(w.triggers) && w.triggers.length > 0 ? { triggers: w.triggers } : {}),
                 skillLabel: s.label,
                 hasRequiredParams: Array.isArray(w.parameters?.required) && w.parameters.required.length > 0,
             }))
