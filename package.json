@@ -21,6 +21,7 @@
     "build:content": "vite build --config vite.config.content.ts",
     "build:background": "vite build --config vite.config.background.ts",
     "build": "npm run build:popup && npm run build:content && npm run build:sidepanel && npm run build:background && echo 'Build completed!'",
+    "test": "node --test src/*.test.mjs src/**/*.test.mjs",
     "test:omp-compat": "node mcp-server/test/omp-compat.mjs",
     "lint": "eslint . --report-unused-disable-directives",
     "preview": "vite preview",
