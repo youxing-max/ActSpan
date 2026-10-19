@@ -47,19 +47,19 @@ export const AskUserCard: React.FC<AskUserCardProps> = ({
   const headerText = settled ? '已回答' : 'Actspan 有个问题';
 
   return (
-    <div className={`mole-ask-user-standalone${settled ? ' settled' : ''}`}>
-      <div className="mole-ask-user-header-bar">
+    <div className={`actspan-ask-user-standalone${settled ? ' settled' : ''}`}>
+      <div className="actspan-ask-user-header-bar">
         <img src={LOGO_ASK_USER} alt="" />
         <span>{headerText}</span>
       </div>
-      <div className={`mole-ask-user-card${settled ? ' settled' : ''}`} data-request-id={requestId}>
-        <div className="mole-ask-user-question">{question}</div>
+      <div className={`actspan-ask-user-card${settled ? ' settled' : ''}`} data-request-id={requestId}>
+        <div className="actspan-ask-user-question">{question}</div>
         {options && options.length > 0 && (
-          <div className="mole-ask-user-options">
+          <div className="actspan-ask-user-options">
             {options.map((opt, idx) => (
               <button
                 key={idx}
-                className={`mole-ask-user-option${settled && answer === opt ? ' selected' : ''}`}
+                className={`actspan-ask-user-option${settled && answer === opt ? ' selected' : ''}`}
                 disabled={settled}
                 onClick={() => handleOptionClick(opt)}
               >
@@ -69,19 +69,19 @@ export const AskUserCard: React.FC<AskUserCardProps> = ({
           </div>
         )}
         {allowFreeText && !settled && (
-          <div className="mole-ask-user-input-row">
+          <div className="actspan-ask-user-input-row">
             <input
-              className="mole-ask-user-text"
+              className="actspan-ask-user-text"
               placeholder={options && options.length > 0 ? '或者直接输入...' : '请输入你的回答...'}
               value={textInput}
               onChange={e => setTextInput(e.target.value)}
               onKeyDown={handleKeyDown}
             />
-            <button className="mole-ask-user-submit" onClick={handleSubmitText}>发送</button>
+            <button className="actspan-ask-user-submit" onClick={handleSubmitText}>发送</button>
           </div>
         )}
         {settled && (
-          <div className="mole-ask-user-result">已回答：{answer}</div>
+          <div className="actspan-ask-user-result">已回答：{answer}</div>
         )}
       </div>
     </div>

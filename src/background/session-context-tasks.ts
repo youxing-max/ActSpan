@@ -18,6 +18,7 @@ import {
     COMPACT_USER_CONTEXT_LIMIT,
     COMPACT_USER_CONTEXT_CHAR_LIMIT,
     SESSION_CONTEXT_COMPRESSION_TAG,
+    LEGACY_SESSION_CONTEXT_COMPRESSION_TAG,
     REVIEW_TASK_INSTRUCTIONS,
     COMPACT_TASK_INSTRUCTIONS,
     DEFAULT_REVIEW_TASK_QUERY,
@@ -280,7 +281,7 @@ function buildReviewTaskQuery(normalizedQuery: string): string {
 function isSessionCompressionMessage(item: InputItem): boolean {
     if (!('role' in item) || item.role !== 'assistant') return false;
     const text = getTextContent(item.content);
-    return text.startsWith(SESSION_CONTEXT_COMPRESSION_TAG);
+    return text.startsWith(SESSION_CONTEXT_COMPRESSION_TAG) || text.startsWith(LEGACY_SESSION_CONTEXT_COMPRESSION_TAG);
 }
 
 /** 裁剪文本到指定最大长度 */

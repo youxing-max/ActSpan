@@ -116,15 +116,15 @@ src/
 
 ```bash
 # 1. 克隆并安装
-git clone https://github.com/clark-maybe/mole-extension.git
-cd mole-extension
+git clone https://github.com/youxing-max/ActSpan.git
+cd ActSpan
 npm install
 
 # 2. 构建扩展
 npm run build
 
 # 3. 加载到 Chrome
-# 打开 chrome://extensions/ → 开发者模式 → 加载已解压 → 选择 `build_version/mole-extension/`
+# 打开 chrome://extensions/ → 开发者模式 → 加载已解压 → 选择 `build_version/actspan-extension/`
 
 # 4. 监听模式开发
 npm run dev

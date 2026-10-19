@@ -98,7 +98,7 @@ export const initFloatBall = async () => {
   }
   // Shadow DOM
   const host = document.createElement('div');
-  host.id = 'mole-root';
+  host.id = 'actspan-root';
   // 宿主元素固定定位 + 脱离文档流，避免页面滚动条和祖先 transform 影响内部 fixed 子元素
   host.style.cssText = 'position: fixed; top: 0; left: 0; width: 0; height: 0; overflow: visible; z-index: 2147483647; pointer-events: none;';
   const shadow = host.attachShadow({ mode: 'closed' });
@@ -109,10 +109,10 @@ export const initFloatBall = async () => {
 
   // ---- 胶囊触发器 ----
   const trigger = document.createElement('div');
-  trigger.className = 'mole-trigger side-right';
+  trigger.className = 'actspan-trigger side-right';
 
   const pill = document.createElement('div');
-  pill.className = 'mole-pill';
+  pill.className = 'actspan-pill';
 
   const logo = document.createElement('img');
   logo.src = chrome.runtime.getURL('actspan-logo.svg');
@@ -120,23 +120,23 @@ export const initFloatBall = async () => {
   logo.draggable = false;
 
   const shortcutEl = document.createElement('span');
-  shortcutEl.className = 'mole-shortcut';
+  shortcutEl.className = 'actspan-shortcut';
   shortcutEl.textContent = '';
 
   const pillMetaEl = document.createElement('span');
-  pillMetaEl.className = 'mole-pill-meta';
+  pillMetaEl.className = 'actspan-pill-meta';
   pillMetaEl.textContent = `${SHORTCUT_TEXT} 打开`;
 
   const pillInfoEl = document.createElement('div');
-  pillInfoEl.className = 'mole-pill-info';
+  pillInfoEl.className = 'actspan-pill-info';
   pillInfoEl.appendChild(shortcutEl);
   pillInfoEl.appendChild(pillMetaEl);
 
   const pillNoticeEl = document.createElement('div');
-  pillNoticeEl.className = 'mole-pill-notice';
+  pillNoticeEl.className = 'actspan-pill-notice';
 
   const settingsBtn = document.createElement('button');
-  settingsBtn.className = 'mole-settings-btn';
+  settingsBtn.className = 'actspan-settings-btn';
   settingsBtn.type = 'button';
   settingsBtn.title = '打开设置';
   settingsBtn.setAttribute('aria-label', '打开设置');
@@ -151,12 +151,12 @@ export const initFloatBall = async () => {
 
   // 后台任务角标
   const bgTaskBadgeEl = document.createElement('span');
-  bgTaskBadgeEl.className = 'mole-bg-task-badge';
+  bgTaskBadgeEl.className = 'actspan-bg-task-badge';
   pill.appendChild(bgTaskBadgeEl);
 
   // ---- 关闭按钮（角标式，内嵌于 pill）----
   const closeBtn = document.createElement('button');
-  closeBtn.className = 'mole-close-btn';
+  closeBtn.className = 'actspan-close-btn';
   closeBtn.type = 'button';
   closeBtn.title = '关闭悬浮球';
   closeBtn.setAttribute('aria-label', '关闭悬浮球');
@@ -175,21 +175,21 @@ export const initFloatBall = async () => {
 
   // ---- 悬浮球迷你操作卡片（确认/提问，不展开面板即可操作）----
   const pillActionCard = document.createElement('div');
-  pillActionCard.className = 'mole-pill-action-card';
+  pillActionCard.className = 'actspan-pill-action-card';
   trigger.appendChild(pillActionCard);
 
   // ---- 关闭菜单 ----
   const currentHostname = window.location.hostname;
   const closeMenuEl = document.createElement('div');
-  closeMenuEl.className = 'mole-close-menu';
+  closeMenuEl.className = 'actspan-close-menu';
 
   const closeMenuItemCurrent = document.createElement('button');
-  closeMenuItemCurrent.className = 'mole-close-menu-item';
+  closeMenuItemCurrent.className = 'actspan-close-menu-item';
   closeMenuItemCurrent.type = 'button';
   closeMenuItemCurrent.textContent = '仅当前关闭';
 
   const closeMenuItemDomain = document.createElement('button');
-  closeMenuItemDomain.className = 'mole-close-menu-item';
+  closeMenuItemDomain.className = 'actspan-close-menu-item';
   closeMenuItemDomain.type = 'button';
   closeMenuItemDomain.textContent = `在 ${currentHostname} 上禁用`;
 
@@ -199,7 +199,7 @@ export const initFloatBall = async () => {
 
   // ---- 录制按钮（hover 时在 settingsBtn 旁出现） ----
   const recordBtn = document.createElement('button');
-  recordBtn.className = 'mole-record-btn';
+  recordBtn.className = 'actspan-record-btn';
   recordBtn.type = 'button';
   recordBtn.title = '录制流程';
   recordBtn.setAttribute('aria-label', '录制流程');
@@ -214,93 +214,93 @@ export const initFloatBall = async () => {
 
   // ---- 全局搜索框 ----
   const overlay = document.createElement('div');
-  overlay.className = 'mole-overlay';
+  overlay.className = 'actspan-overlay';
 
   const searchbox = document.createElement('div');
-  searchbox.className = 'mole-searchbox state-idle';
+  searchbox.className = 'actspan-searchbox state-idle';
 
   const logoUrl = chrome.runtime.getURL('actspan-logo.svg');
   searchbox.innerHTML = `
-    <div class="mole-input-row">
-      <img class="mole-input-icon" src="${logoUrl}" alt="" />
-      <input class="mole-input" type="text" placeholder="有什么想让我做的？" autocomplete="off" />
-      <span class="mole-input-hint">ESC</span>
-      <button class="mole-new-btn" title="新对话">+</button>
-      <button class="mole-retry-btn" title="重试">↻</button>
-      <button class="mole-stop-btn" title="终止任务">■</button>
+    <div class="actspan-input-row">
+      <img class="actspan-input-icon" src="${logoUrl}" alt="" />
+      <input class="actspan-input" type="text" placeholder="有什么想让我做的？" autocomplete="off" />
+      <span class="actspan-input-hint">ESC</span>
+      <button class="actspan-new-btn" title="新对话">+</button>
+      <button class="actspan-retry-btn" title="重试">↻</button>
+      <button class="actspan-stop-btn" title="终止任务">■</button>
     </div>
-    <div class="mole-divider"></div>
-    <div class="mole-result"></div>
-    <div class="mole-divider mole-divider-bottom"></div>
-    <div class="mole-footer">
-      <span class="mole-footer-icon">✦</span>
-      <span class="mole-footer-text">Actspan · AI 助手</span>
-      <span class="mole-footer-time"></span>
+    <div class="actspan-divider"></div>
+    <div class="actspan-result"></div>
+    <div class="actspan-divider actspan-divider-bottom"></div>
+    <div class="actspan-footer">
+      <span class="actspan-footer-icon">✦</span>
+      <span class="actspan-footer-text">Actspan · AI 助手</span>
+      <span class="actspan-footer-time"></span>
     </div>
   `;
 
   overlay.appendChild(searchbox);
 
   const imageViewerEl = document.createElement('div');
-  imageViewerEl.className = 'mole-image-viewer';
+  imageViewerEl.className = 'actspan-image-viewer';
   imageViewerEl.innerHTML = `
-    <div class="mole-image-viewer-content">
-      <button class="mole-image-viewer-close" type="button" aria-label="关闭预览">\u00D7</button>
-      <div class="mole-image-viewer-stage">
-        <button class="mole-image-viewer-nav prev" type="button" aria-label="上一张">\u2039</button>
-        <img class="mole-image-viewer-img" alt="截图预览" />
-        <button class="mole-image-viewer-nav next" type="button" aria-label="下一张">\u203A</button>
+    <div class="actspan-image-viewer-content">
+      <button class="actspan-image-viewer-close" type="button" aria-label="关闭预览">\u00D7</button>
+      <div class="actspan-image-viewer-stage">
+        <button class="actspan-image-viewer-nav prev" type="button" aria-label="上一张">\u2039</button>
+        <img class="actspan-image-viewer-img" alt="截图预览" />
+        <button class="actspan-image-viewer-nav next" type="button" aria-label="下一张">\u203A</button>
       </div>
-      <div class="mole-image-viewer-meta"></div>
+      <div class="actspan-image-viewer-meta"></div>
     </div>
   `;
   overlay.appendChild(imageViewerEl);
 
   shadow.appendChild(overlay);
 
-  const inputEl = searchbox.querySelector('.mole-input') as HTMLInputElement;
-  const resultEl = searchbox.querySelector('.mole-result') as HTMLDivElement;
-  const footerTextEl = searchbox.querySelector('.mole-footer-text') as HTMLSpanElement;
-  const footerTimeEl = searchbox.querySelector('.mole-footer-time') as HTMLSpanElement;
-  const dividerBottomEl = searchbox.querySelector('.mole-divider-bottom') as HTMLDivElement;
+  const inputEl = searchbox.querySelector('.actspan-input') as HTMLInputElement;
+  const resultEl = searchbox.querySelector('.actspan-result') as HTMLDivElement;
+  const footerTextEl = searchbox.querySelector('.actspan-footer-text') as HTMLSpanElement;
+  const footerTimeEl = searchbox.querySelector('.actspan-footer-time') as HTMLSpanElement;
+  const dividerBottomEl = searchbox.querySelector('.actspan-divider-bottom') as HTMLDivElement;
 
   // 后台任务面板（插入到 dividerBottom 之前）
   const bgTasksPanelEl = document.createElement('div');
-  bgTasksPanelEl.className = 'mole-bg-tasks-panel';
+  bgTasksPanelEl.className = 'actspan-bg-tasks-panel';
   searchbox.insertBefore(bgTasksPanelEl, dividerBottomEl);
 
   // ---- 录制状态栏（插入到 footer 之前） ----
   const recorderBarEl = document.createElement('div');
-  recorderBarEl.className = 'mole-recorder-bar';
+  recorderBarEl.className = 'actspan-recorder-bar';
   recorderBarEl.innerHTML = `
-    <span class="mole-recorder-bar-dot"></span>
-    <span class="mole-recorder-bar-info">录制中 \u00B7 0 步</span>
-    <button class="mole-recorder-bar-stop" type="button">停止录制</button>
+    <span class="actspan-recorder-bar-dot"></span>
+    <span class="actspan-recorder-bar-info">录制中 \u00B7 0 步</span>
+    <button class="actspan-recorder-bar-stop" type="button">停止录制</button>
   `;
-  const footerEl = searchbox.querySelector('.mole-footer') as HTMLDivElement;
+  const footerEl = searchbox.querySelector('.actspan-footer') as HTMLDivElement;
   searchbox.insertBefore(recorderBarEl, footerEl);
 
   // ---- 结果标记遮罩已移除（改为对话式确认） ----
 
-  const hintEl = searchbox.querySelector('.mole-input-hint') as HTMLSpanElement;
-  const imageViewerCloseEl = imageViewerEl.querySelector('.mole-image-viewer-close') as HTMLButtonElement;
-  const imageViewerImgEl = imageViewerEl.querySelector('.mole-image-viewer-img') as HTMLImageElement;
-  const imageViewerMetaEl = imageViewerEl.querySelector('.mole-image-viewer-meta') as HTMLDivElement;
-  const imageViewerPrevEl = imageViewerEl.querySelector('.mole-image-viewer-nav.prev') as HTMLButtonElement;
-  const imageViewerNextEl = imageViewerEl.querySelector('.mole-image-viewer-nav.next') as HTMLButtonElement;
-  const newBtn = searchbox.querySelector('.mole-new-btn') as HTMLButtonElement;
-  const retryBtn = searchbox.querySelector('.mole-retry-btn') as HTMLButtonElement;
-  const stopBtn = searchbox.querySelector('.mole-stop-btn') as HTMLButtonElement;
+  const hintEl = searchbox.querySelector('.actspan-input-hint') as HTMLSpanElement;
+  const imageViewerCloseEl = imageViewerEl.querySelector('.actspan-image-viewer-close') as HTMLButtonElement;
+  const imageViewerImgEl = imageViewerEl.querySelector('.actspan-image-viewer-img') as HTMLImageElement;
+  const imageViewerMetaEl = imageViewerEl.querySelector('.actspan-image-viewer-meta') as HTMLDivElement;
+  const imageViewerPrevEl = imageViewerEl.querySelector('.actspan-image-viewer-nav.prev') as HTMLButtonElement;
+  const imageViewerNextEl = imageViewerEl.querySelector('.actspan-image-viewer-nav.next') as HTMLButtonElement;
+  const newBtn = searchbox.querySelector('.actspan-new-btn') as HTMLButtonElement;
+  const retryBtn = searchbox.querySelector('.actspan-retry-btn') as HTMLButtonElement;
+  const stopBtn = searchbox.querySelector('.actspan-stop-btn') as HTMLButtonElement;
 
   // ---- "定位到任务页签" 按钮（非发起页签时显示） ----
   const focusTabBtn = document.createElement('button');
-  focusTabBtn.className = 'mole-focus-tab-btn';
+  focusTabBtn.className = 'actspan-focus-tab-btn';
   focusTabBtn.type = 'button';
   focusTabBtn.title = '定位到任务页签';
   focusTabBtn.textContent = '定位到任务页签';
   focusTabBtn.style.display = 'none';
   // 插入到 input-row 中
-  const inputRow = searchbox.querySelector('.mole-input-row');
+  const inputRow = searchbox.querySelector('.actspan-input-row');
   if (inputRow) inputRow.appendChild(focusTabBtn);
 
   focusTabBtn.addEventListener('click', (e) => {
@@ -976,7 +976,7 @@ export const initFloatBall = async () => {
   const clearPillNotice = () => {
     trigger.classList.remove('notice-visible');
     pillNoticeEl.textContent = '';
-    pillNoticeEl.className = 'mole-pill-notice';
+    pillNoticeEl.className = 'actspan-pill-notice';
   };
 
   const showPillNotice = (text: string, tone: 'success' | 'error' | 'info') => {
@@ -990,7 +990,7 @@ export const initFloatBall = async () => {
       pillAnnounceTimer = null;
     }
     pillNoticeEl.textContent = text;
-    pillNoticeEl.className = `mole-pill-notice tone-${tone}`;
+    pillNoticeEl.className = `actspan-pill-notice tone-${tone}`;
     trigger.classList.add('notice-visible', 'announce');
     pillNoticeTimer = window.setTimeout(() => {
       clearPillNotice();
@@ -1159,14 +1159,14 @@ export const initFloatBall = async () => {
     let html = '';
 
     // 头部
-    html += `<div class="mole-bg-tasks-header">`;
-    html += `<span class="mole-bg-tasks-title">后台任务</span>`;
-    html += `<span class="mole-bg-tasks-count">${count}</span>`;
-    html += `<span class="mole-bg-tasks-toggle">\u25B6</span>`;
+    html += `<div class="actspan-bg-tasks-header">`;
+    html += `<span class="actspan-bg-tasks-title">后台任务</span>`;
+    html += `<span class="actspan-bg-tasks-count">${count}</span>`;
+    html += `<span class="actspan-bg-tasks-toggle">\u25B6</span>`;
     html += `</div>`;
 
     // 列表
-    html += `<div class="mole-bg-tasks-list">`;
+    html += `<div class="actspan-bg-tasks-list">`;
 
     // 定时器任务
     if (bgTasksData?.timers) {
@@ -1195,13 +1195,13 @@ export const initFloatBall = async () => {
             meta += ` \u00B7 下次 ${formatClock(t.nextRunAt)}`;
           }
         }
-        html += `<div class="mole-bg-task-item" data-kind="timer" data-id="${escapeHtml(String(t.id))}">`;
-        html += `<span class="mole-bg-task-icon">${icon ? `<img src="${icon}" alt="" />` : ''}</span>`;
-        html += `<div class="mole-bg-task-info">`;
-        html += `<span class="mole-bg-task-name" title="${fullAction}">${nameHtml}</span>`;
-        html += `<span class="mole-bg-task-meta">${escapeHtml(meta)}</span>`;
+        html += `<div class="actspan-bg-task-item" data-kind="timer" data-id="${escapeHtml(String(t.id))}">`;
+        html += `<span class="actspan-bg-task-icon">${icon ? `<img src="${icon}" alt="" />` : ''}</span>`;
+        html += `<div class="actspan-bg-task-info">`;
+        html += `<span class="actspan-bg-task-name" title="${fullAction}">${nameHtml}</span>`;
+        html += `<span class="actspan-bg-task-meta">${escapeHtml(meta)}</span>`;
         html += `</div>`;
-        html += `<button class="mole-bg-task-close" type="button" title="关闭">\u00D7</button>`;
+        html += `<button class="actspan-bg-task-close" type="button" title="关闭">\u00D7</button>`;
         html += `</div>`;
       }
     }
@@ -1217,13 +1217,13 @@ export const initFloatBall = async () => {
         } else if (j.lastSuccess === false) {
           meta += ' \u00B7 上次失败';
         }
-        html += `<div class="mole-bg-task-item" data-kind="resident" data-id="${escapeHtml(String(j.id))}">`;
-        html += `<span class="mole-bg-task-icon">${icon ? `<img src="${icon}" alt="" />` : ''}</span>`;
-        html += `<div class="mole-bg-task-info">`;
-        html += `<span class="mole-bg-task-name">${name}</span>`;
-        html += `<span class="mole-bg-task-meta">${escapeHtml(meta)}</span>`;
+        html += `<div class="actspan-bg-task-item" data-kind="resident" data-id="${escapeHtml(String(j.id))}">`;
+        html += `<span class="actspan-bg-task-icon">${icon ? `<img src="${icon}" alt="" />` : ''}</span>`;
+        html += `<div class="actspan-bg-task-info">`;
+        html += `<span class="actspan-bg-task-name">${name}</span>`;
+        html += `<span class="actspan-bg-task-meta">${escapeHtml(meta)}</span>`;
         html += `</div>`;
-        html += `<button class="mole-bg-task-close" type="button" title="关闭">\u00D7</button>`;
+        html += `<button class="actspan-bg-task-close" type="button" title="关闭">\u00D7</button>`;
         html += `</div>`;
       }
     }
@@ -1239,14 +1239,14 @@ export const initFloatBall = async () => {
     const target = e.target as HTMLElement;
 
     // 头部点击：折叠/展开
-    if (target.closest('.mole-bg-tasks-header')) {
+    if (target.closest('.actspan-bg-tasks-header')) {
       bgTasksPanelEl.classList.toggle('open');
       return;
     }
 
     // 关闭按钮点击
-    if (!target.classList.contains('mole-bg-task-close')) return;
-    const item = target.closest('.mole-bg-task-item') as HTMLElement | null;
+    if (!target.classList.contains('actspan-bg-task-close')) return;
+    const item = target.closest('.actspan-bg-task-item') as HTMLElement | null;
     if (!item) return;
     const kind = item.getAttribute('data-kind');
     const id = item.getAttribute('data-id');
@@ -1388,7 +1388,7 @@ export const initFloatBall = async () => {
   const recorderClickHandler = (e: MouseEvent) => {
     if (!isRecording) return;
     const target = e.target as Element;
-    if (!target || target.closest('#mole-root')) return;
+    if (!target || target.closest('#actspan-root')) return;
 
     const selector = buildSimpleSelector(target);
     const semanticHint = getElementSemanticHint(target);
@@ -1411,7 +1411,7 @@ export const initFloatBall = async () => {
   const recorderInputHandler = (e: Event) => {
     if (!isRecording) return;
     const target = e.target as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
-    if (!target || target.closest('#mole-root')) return;
+    if (!target || target.closest('#actspan-root')) return;
 
     // 上一个元素的输入已结束，立即提交
     if (target !== lastInputTarget && lastInputTarget && lastInputValue) {
@@ -1431,7 +1431,7 @@ export const initFloatBall = async () => {
   const recorderSubmitHandler = (e: Event) => {
     if (!isRecording) return;
     const form = e.target as HTMLFormElement;
-    if (!form || form.closest('#mole-root')) return;
+    if (!form || form.closest('#actspan-root')) return;
 
     flushInputStep(); // 先提交未完成的输入
 
@@ -1470,7 +1470,7 @@ export const initFloatBall = async () => {
 
   /** 更新录制状态栏 */
   const updateRecorderBar = () => {
-    const barInfo = recorderBarEl.querySelector('.mole-recorder-bar-info') as HTMLSpanElement;
+    const barInfo = recorderBarEl.querySelector('.actspan-recorder-bar-info') as HTMLSpanElement;
     if (!barInfo) return;
     if (isRecording) {
       const elapsed = Math.max(0, Date.now() - recorderStartedAt);
@@ -1535,7 +1535,7 @@ export const initFloatBall = async () => {
   };
 
   // 录制状态栏停止按钮
-  const recorderBarStopBtn = recorderBarEl.querySelector('.mole-recorder-bar-stop') as HTMLButtonElement;
+  const recorderBarStopBtn = recorderBarEl.querySelector('.actspan-recorder-bar-stop') as HTMLButtonElement;
   recorderBarStopBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     stopRecording();
@@ -1869,7 +1869,7 @@ export const initFloatBall = async () => {
         const message = typeof response?.message === 'string' && response.message.trim()
           ? response.message.trim()
           : '恢复失败';
-        appendToResult(`<div class="mole-error">\u26A0 ${escapeHtml(message)}</div>`);
+        appendToResult(`<div class="actspan-error">\u26A0 ${escapeHtml(message)}</div>`);
         updateInputUI();
       }
       // 恢复成功后，__session_sync 会自动更新 UI 为 running 状态
@@ -1910,16 +1910,16 @@ export const initFloatBall = async () => {
       if (workflows.length === 0) return;
 
       // 如果 resultEl 中已经有 workflow-hints 卡片或其他内容，跳过
-      if (resultEl.querySelector('.mole-workflow-hints')) return;
+      if (resultEl.querySelector('.actspan-workflow-hints')) return;
       if (resultEl.innerHTML.trim()) return;
 
       const chipsHtml = workflows.map(w =>
-        `<div class="mole-workflow-chip" data-name="${escapeHtml(w.name)}" data-label="${escapeHtml(w.label)}" data-has-required="${w.hasRequiredParams ? '1' : '0'}" title="${escapeHtml(w.description)}"><span class="mole-workflow-chip-label">${escapeHtml(w.label)}</span></div>`
+        `<div class="actspan-workflow-chip" data-name="${escapeHtml(w.name)}" data-label="${escapeHtml(w.label)}" data-has-required="${w.hasRequiredParams ? '1' : '0'}" title="${escapeHtml(w.description)}"><span class="actspan-workflow-chip-label">${escapeHtml(w.label)}</span></div>`
       ).join('');
 
-      resultEl.innerHTML = `<div class="mole-workflow-hints">
-        <div class="mole-workflow-hints-title">试试快捷指令</div>
-        <div class="mole-workflow-chips">${chipsHtml}</div>
+      resultEl.innerHTML = `<div class="actspan-workflow-hints">
+        <div class="actspan-workflow-hints-title">试试快捷指令</div>
+        <div class="actspan-workflow-chips">${chipsHtml}</div>
       </div>`;
       showResult();
     });
@@ -1927,7 +1927,7 @@ export const initFloatBall = async () => {
 
   const setStatus = (html: string) => {
     // 移除之前的状态提示（不影响历史内容）
-    resultEl.querySelectorAll('.mole-status, .mole-planning').forEach(el => el.remove());
+    resultEl.querySelectorAll('.actspan-status, .actspan-planning').forEach(el => el.remove());
     // 追加新状态
     const wrapper = document.createElement('div');
     wrapper.innerHTML = html;
@@ -1953,29 +1953,29 @@ export const initFloatBall = async () => {
 
   const archiveCurrentRoundView = (previewQuery?: string) => {
     const looseNodes = Array.from(resultEl.childNodes).filter(
-      node => !(node instanceof HTMLElement && node.classList.contains('mole-round-history')),
+      node => !(node instanceof HTMLElement && node.classList.contains('actspan-round-history')),
     );
     if (looseNodes.length === 0) return;
 
-    const prevAnswer = resultEl.querySelector('.mole-answer:not(.frozen)');
+    const prevAnswer = resultEl.querySelector('.actspan-answer:not(.frozen)');
     if (prevAnswer) prevAnswer.classList.add('frozen');
-    const prevGroup = resultEl.querySelector('.mole-calls-group:not(.frozen)');
+    const prevGroup = resultEl.querySelector('.actspan-calls-group:not(.frozen)');
     if (prevGroup) prevGroup.classList.add('frozen');
-    const prevStatePanel = resultEl.querySelector('.mole-agent-state-panel:not(.frozen)');
+    const prevStatePanel = resultEl.querySelector('.actspan-agent-state-panel:not(.frozen)');
     if (prevStatePanel) prevStatePanel.classList.add('frozen');
 
     const roundHistory = document.createElement('div');
-    roundHistory.className = 'mole-round-history';
+    roundHistory.className = 'actspan-round-history';
 
     const summaryBar = document.createElement('div');
-    summaryBar.className = 'mole-round-summary';
+    summaryBar.className = 'actspan-round-summary';
     summaryBar.innerHTML = `
       <span class="arrow">\u25B6</span>
-      <span class="mole-round-preview">${escapeHtml(buildRoundPreviewText(previewQuery || ''))}</span>
+      <span class="actspan-round-preview">${escapeHtml(buildRoundPreviewText(previewQuery || ''))}</span>
     `;
 
     const roundContent = document.createElement('div');
-    roundContent.className = 'mole-round-content';
+    roundContent.className = 'actspan-round-content';
     for (const node of looseNodes) {
       roundContent.appendChild(node);
     }
@@ -1987,13 +1987,13 @@ export const initFloatBall = async () => {
 
   /** 异步获取 link chip 的页面标题 */
   const fetchLinkTitles = (container: HTMLElement) => {
-    const chips = container.querySelectorAll<HTMLAnchorElement>('a.mole-link-chip');
+    const chips = container.querySelectorAll<HTMLAnchorElement>('a.actspan-link-chip');
     for (const chip of chips) {
       const url = chip.dataset.url;
       if (!url) continue;
       Channel.send('__fetch_page_title', { url }, (resp: any) => {
         if (resp?.title && chip.isConnected) {
-          const textEl = chip.querySelector('.mole-link-text');
+          const textEl = chip.querySelector('.actspan-link-text');
           if (textEl) {
             textEl.textContent = resp.title;
           }
@@ -2004,10 +2004,10 @@ export const initFloatBall = async () => {
 
   const updateAnswer = (text: string) => {
     // 查找当前轮次的 answer 元素（排除已冻结的历史轮次）
-    let answerEl = resultEl.querySelector('.mole-answer:not(.frozen)');
+    let answerEl = resultEl.querySelector('.actspan-answer:not(.frozen)');
     if (!answerEl) {
       answerEl = document.createElement('div');
-      answerEl.className = 'mole-answer';
+      answerEl.className = 'actspan-answer';
       resultEl.appendChild(answerEl);
       showResult();
     }
@@ -2022,18 +2022,18 @@ export const initFloatBall = async () => {
   /** 确保当前轮次的过程折叠区存在（排除已冻结的历史轮次） */
   const ensureCallsGroup = (): { summary: HTMLElement; detail: HTMLElement } => {
     const panel = ensureAgentStatePanel();
-    const anchor = panel.querySelector('.mole-agent-state-ops-anchor') as HTMLElement | null;
-    let group = panel.querySelector('.mole-calls-group:not(.frozen)') as HTMLElement | null;
+    const anchor = panel.querySelector('.actspan-agent-state-ops-anchor') as HTMLElement | null;
+    let group = panel.querySelector('.actspan-calls-group:not(.frozen)') as HTMLElement | null;
     if (!group) {
       group = document.createElement('div');
-      group.className = 'mole-calls-group mole-agent-state-ops';
+      group.className = 'actspan-calls-group actspan-agent-state-ops';
       group.innerHTML = `
-        <div class="mole-calls-summary">
+        <div class="actspan-calls-summary">
           <span class="arrow open">▶</span>
-          <span class="mole-calls-icons"></span>
+          <span class="actspan-calls-icons"></span>
           <span class="calls-text">查看执行过程</span>
         </div>
-        <div class="mole-calls-detail open"></div>
+        <div class="actspan-calls-detail open"></div>
       `;
       if (anchor) {
         anchor.appendChild(group);
@@ -2044,25 +2044,25 @@ export const initFloatBall = async () => {
     }
 
     return {
-      summary: group.querySelector('.mole-calls-summary')! as HTMLElement,
-      detail: group.querySelector('.mole-calls-detail')! as HTMLElement,
+      summary: group.querySelector('.actspan-calls-summary')! as HTMLElement,
+      detail: group.querySelector('.actspan-calls-detail')! as HTMLElement,
     };
   };
 
   /** 更新当前轮次的折叠摘要条 */
   const updateCallsSummary = () => {
     if (!currentTask) return;
-    const group = resultEl.querySelector('.mole-agent-state-panel:not(.frozen) .mole-calls-group');
+    const group = resultEl.querySelector('.actspan-agent-state-panel:not(.frozen) .actspan-calls-group');
     if (!group) {
       renderTaskRuntimeBoard();
       return;
     }
-    const iconsEl = group.querySelector('.mole-calls-icons') as HTMLElement | null;
+    const iconsEl = group.querySelector('.actspan-calls-icons') as HTMLElement | null;
     const textEl = group.querySelector('.calls-text') as HTMLElement | null;
-    const detailEl = group.querySelector('.mole-calls-detail') as HTMLElement | null;
+    const detailEl = group.querySelector('.actspan-calls-detail') as HTMLElement | null;
     const uniqueIcons = [...new Set(currentTask.callStack.map(c => c.icon).filter(Boolean))].slice(0, 3);
     if (iconsEl) iconsEl.innerHTML = uniqueIcons.map(src => `<img src="${src}" />`).join('');
-    const count = detailEl ? detailEl.querySelectorAll('.mole-call-item').length : 0;
+    const count = detailEl ? detailEl.querySelectorAll('.actspan-call-item').length : 0;
     if (textEl) textEl.textContent = count > 0 ? `查看执行过程 · 共 ${count} 条` : '查看执行过程';
     renderTaskRuntimeBoard();
   };
@@ -2080,7 +2080,7 @@ export const initFloatBall = async () => {
     const normalized = String(text || '').replace(/\s+/g, ' ').trim();
     if (!normalized) return null;
     const { detail } = ensureCallsGroup();
-    const items = Array.from(detail.querySelectorAll('.mole-call-item')) as HTMLElement[];
+    const items = Array.from(detail.querySelectorAll('.actspan-call-item')) as HTMLElement[];
     const last = items.length > 0 ? items[items.length - 1] : null;
     if (options?.dedupe !== false && last?.getAttribute('data-process-text') === normalized) {
       return last;
@@ -2091,19 +2091,19 @@ export const initFloatBall = async () => {
     const subtext = String(options?.subtext || '').trim();
     const statusLabel = tone === 'issue' ? '调整中' : tone === 'done' ? '完成' : tone === 'action' ? '执行中' : '处理中';
     const item = document.createElement('div');
-    item.className = `mole-call-item tone-${tone}`;
+    item.className = `actspan-call-item tone-${tone}`;
     item.setAttribute('data-process-text', normalized);
     if (options?.callId) item.setAttribute('data-call-id', options.callId);
     item.innerHTML = `
-      <div class="mole-call-header">
-        ${icon ? `<img class="mole-func-icon" src="${icon}" />` : '<span class="mole-task-runtime-step-dot"></span>'}
-        <span class="mole-call-main">
-          <span class="mole-call-title">${escapeHtml(normalized)}</span>
-          ${subtext ? `<span class="mole-call-intent">${escapeHtml(subtext)}</span>` : ''}
+      <div class="actspan-call-header">
+        ${icon ? `<img class="actspan-func-icon" src="${icon}" />` : '<span class="actspan-task-runtime-step-dot"></span>'}
+        <span class="actspan-call-main">
+          <span class="actspan-call-title">${escapeHtml(normalized)}</span>
+          ${subtext ? `<span class="actspan-call-intent">${escapeHtml(subtext)}</span>` : ''}
         </span>
-        <span class="mole-call-status">${escapeHtml(statusLabel)}</span>
+        <span class="actspan-call-status">${escapeHtml(statusLabel)}</span>
       </div>
-      <div class="mole-call-body"></div>
+      <div class="actspan-call-body"></div>
     `;
     detail.appendChild(item);
     while (detail.children.length > 24) {
@@ -2121,19 +2121,19 @@ export const initFloatBall = async () => {
     if (!(target instanceof HTMLElement)) return;
     target.classList.remove('tone-status', 'tone-action', 'tone-issue', 'tone-done');
     target.classList.add(`tone-${options.tone || 'status'}`);
-    const statusEl = target.querySelector('.mole-call-status');
+    const statusEl = target.querySelector('.actspan-call-status');
     if (statusEl) {
       statusEl.textContent = options.statusLabel || (options.tone === 'done' ? '完成' : options.tone === 'issue' ? '失败' : '处理中');
     }
     if (typeof options.subtext === 'string') {
-      const subtextEl = target.querySelector('.mole-call-intent');
+      const subtextEl = target.querySelector('.actspan-call-intent');
       if (subtextEl) {
         subtextEl.textContent = options.subtext;
       } else if (options.subtext.trim()) {
-        const mainEl = target.querySelector('.mole-call-main');
+        const mainEl = target.querySelector('.actspan-call-main');
         if (mainEl) {
           const next = document.createElement('span');
-          next.className = 'mole-call-intent';
+          next.className = 'actspan-call-intent';
           next.textContent = options.subtext;
           mainEl.appendChild(next);
         }
@@ -2154,23 +2154,23 @@ export const initFloatBall = async () => {
   };
 
   const buildAgentStatePanelMarkup = (): string => `
-    <div class="mole-agent-state-title">
-      <span class="mole-agent-state-title-main"><span class="arrow">▶</span><span>进展</span></span>
-      <span class="mole-agent-state-summary">等待任务开始</span>
+    <div class="actspan-agent-state-title">
+      <span class="actspan-agent-state-title-main"><span class="arrow">▶</span><span>进展</span></span>
+      <span class="actspan-agent-state-summary">等待任务开始</span>
     </div>
-    <div class="mole-task-runtime-board"></div>
-    <div class="mole-todo-board"></div>
-    <div class="mole-agent-state-ops-anchor"></div>
-    <div class="mole-agent-state-log"></div>
+    <div class="actspan-task-runtime-board"></div>
+    <div class="actspan-todo-board"></div>
+    <div class="actspan-agent-state-ops-anchor"></div>
+    <div class="actspan-agent-state-log"></div>
   `;
 
   const ensureAgentStatePanel = (): HTMLElement => {
-    let panel = resultEl.querySelector('.mole-agent-state-panel:not(.frozen)') as HTMLElement | null;
+    let panel = resultEl.querySelector('.actspan-agent-state-panel:not(.frozen)') as HTMLElement | null;
     if (!panel) {
       panel = document.createElement('div');
-      panel.className = 'mole-agent-state-panel';
+      panel.className = 'actspan-agent-state-panel';
       panel.innerHTML = buildAgentStatePanelMarkup();
-      const statusEl = resultEl.querySelector('.mole-status, .mole-planning');
+      const statusEl = resultEl.querySelector('.actspan-status, .actspan-planning');
       if (statusEl) {
         statusEl.after(panel);
       } else {
@@ -2178,8 +2178,8 @@ export const initFloatBall = async () => {
       }
       showResult();
     } else {
-      const board = panel.querySelector('.mole-task-runtime-board');
-      const summary = panel.querySelector('.mole-agent-state-summary');
+      const board = panel.querySelector('.actspan-task-runtime-board');
+      const summary = panel.querySelector('.actspan-agent-state-summary');
       if (!board || !summary) {
         panel.innerHTML = buildAgentStatePanelMarkup();
       }
@@ -2191,11 +2191,11 @@ export const initFloatBall = async () => {
   const ensureAgentStateLog = (): HTMLElement => {
     const panel = ensureAgentStatePanel();
     renderTaskRuntimeBoard();
-    return panel.querySelector('.mole-agent-state-log') as HTMLElement;
+    return panel.querySelector('.actspan-agent-state-log') as HTMLElement;
   };
 
   const clearTransientStatus = () => {
-    resultEl.querySelectorAll('.mole-status, .mole-planning').forEach((el) => el.remove());
+    resultEl.querySelectorAll('.actspan-status, .actspan-planning').forEach((el) => el.remove());
   };
 
   const syncLiveStatusText = (raw: unknown) => {
@@ -2247,9 +2247,9 @@ export const initFloatBall = async () => {
   const renderTaskRuntimeBoard = () => {
     const panel = currentTask
       ? ensureAgentStatePanel()
-      : resultEl.querySelector('.mole-agent-state-panel:not(.frozen)') as HTMLElement | null;
-    const board = panel?.querySelector('.mole-task-runtime-board') as HTMLElement | null;
-    const summaryEl = panel?.querySelector('.mole-agent-state-summary') as HTMLElement | null;
+      : resultEl.querySelector('.actspan-agent-state-panel:not(.frozen)') as HTMLElement | null;
+    const board = panel?.querySelector('.actspan-task-runtime-board') as HTMLElement | null;
+    const summaryEl = panel?.querySelector('.actspan-agent-state-summary') as HTMLElement | null;
     if (!board) return;
 
     const isRunning = currentTask?.status === 'running';
@@ -2281,9 +2281,9 @@ export const initFloatBall = async () => {
     );
 
     board.innerHTML = `
-      <div class="mole-runtime-now">
-        ${isRunning ? '<span class="mole-inline-loader"><span></span><span></span><span></span></span>' : ''}
-        <span class="mole-runtime-now-text">${escapeHtml(clipRuntimeText(currentStatusText, 120))}</span>
+      <div class="actspan-runtime-now">
+        ${isRunning ? '<span class="actspan-inline-loader"><span></span><span></span><span></span></span>' : ''}
+        <span class="actspan-runtime-now-text">${escapeHtml(clipRuntimeText(currentStatusText, 120))}</span>
       </div>
     `;
   };
@@ -2307,7 +2307,7 @@ export const initFloatBall = async () => {
       // 保底：非 JSON 直接按原文展示
     }
     const item = document.createElement('div');
-    item.className = 'mole-agent-state-item';
+    item.className = 'actspan-agent-state-item';
     item.textContent = lineText;
     logEl.appendChild(item);
 
@@ -2361,19 +2361,19 @@ export const initFloatBall = async () => {
     if (!summary && findings.length === 0) return;
 
     const section = document.createElement('div');
-    section.className = 'mole-review-output';
+    section.className = 'actspan-review-output';
     let html = '';
     if (summary) {
-      html += `<div class="mole-review-summary">${escapeHtml(summary)}</div>`;
+      html += `<div class="actspan-review-summary">${escapeHtml(summary)}</div>`;
     }
     if (findings.length > 0) {
-      html += '<ol class="mole-review-findings">';
+      html += '<ol class="actspan-review-findings">';
       for (const item of findings) {
         const issue = escapeHtml(String(item?.issue || '未命名问题'));
         const impact = escapeHtml(String(item?.impact || '影响待补充'));
         const suggestion = escapeHtml(String(item?.suggestion || '建议待补充'));
         const priority = typeof item?.priority === 'string' && item.priority
-          ? `<span class="mole-review-priority">[${escapeHtml(item.priority)}]</span> `
+          ? `<span class="actspan-review-priority">[${escapeHtml(item.priority)}]</span> `
           : '';
         html += `<li>${priority}<strong>${issue}</strong><br/>影响：${impact}<br/>建议：${suggestion}</li>`;
       }
@@ -2419,14 +2419,14 @@ export const initFloatBall = async () => {
     if (completedAsError) {
       const latestError = currentTask!.errorMsg || '当前处理已结束';
       if (!previousErrorMsg || previousErrorMsg !== latestError) {
-        appendToResult(`<div class="mole-error">\u26A0 ${escapeHtml(latestError)}</div>`);
+        appendToResult(`<div class="actspan-error">\u26A0 ${escapeHtml(latestError)}</div>`);
       }
     } else if (currentTask!.lastAIText?.trim()) {
-      const statusEls = resultEl.querySelectorAll('.mole-status, .mole-planning');
+      const statusEls = resultEl.querySelectorAll('.actspan-status, .actspan-planning');
       statusEls.forEach(el => el.remove());
       updateAnswer(currentTask!.lastAIText);
     } else {
-      appendToResult('<div class="mole-status"><span class="dot"></span>已完成处理。</div>');
+      appendToResult('<div class="actspan-status"><span class="dot"></span>已完成处理。</div>');
     }
     renderTaskRuntimeBoard();
     updateInputUI();
@@ -2439,7 +2439,7 @@ export const initFloatBall = async () => {
     const { ignored } = applyTurnLifecycleToTask(lifecycle);
     if (ignored) return;
     if (!previousErrorMsg || previousErrorMsg !== currentTask!.errorMsg) {
-      appendToResult(`<div class="mole-error">\u26A0 ${escapeHtml(currentTask!.errorMsg)}</div>`);
+      appendToResult(`<div class="actspan-error">\u26A0 ${escapeHtml(currentTask!.errorMsg)}</div>`);
     }
     renderTaskRuntimeBoard();
     updateInputUI();
@@ -2456,7 +2456,7 @@ export const initFloatBall = async () => {
       renderReviewOutputPayload(lifecycle.reviewOutput);
     }
     if (lifecycle.status === 'error' && lifecycle.message) {
-      appendToResult(`<div class="mole-error">\u26A0 ${escapeHtml(lifecycle.message)}</div>`);
+      appendToResult(`<div class="actspan-error">\u26A0 ${escapeHtml(lifecycle.message)}</div>`);
       updateInputUI();
     } else if (lifecycle.message) {
       const friendlyText = toFriendlyPlanningText(lifecycle.message);
@@ -2470,9 +2470,9 @@ export const initFloatBall = async () => {
       const parsed = JSON.parse(content);
       const numTurns = Number.isFinite(Number(parsed?.numTurns)) ? Math.max(1, Math.floor(Number(parsed.numTurns))) : 1;
       const source = String(parsed?.source || '').trim().toLowerCase();
-      appendToResult(`<div class="mole-status"><span class="dot"></span>已回滚最近 ${numTurns} 轮${source === 'undo' ? '（撤销）' : ''}。</div>`);
+      appendToResult(`<div class="actspan-status"><span class="dot"></span>已回滚最近 ${numTurns} 轮${source === 'undo' ? '（撤销）' : ''}。</div>`);
     } catch {
-      appendToResult('<div class="mole-status"><span class="dot"></span>已回滚最近会话轮次。</div>');
+      appendToResult('<div class="actspan-status"><span class="dot"></span>已回滚最近会话轮次。</div>');
     }
     if (currentTask) {
       currentTask.status = 'done';
@@ -2526,12 +2526,12 @@ export const initFloatBall = async () => {
     }
     // API Key 未配置：提示用户前往 Options 页面
     if (currentTask!.failureCode === 'E_AUTH_REQUIRED' || parsedError.message.includes('请先登录')) {
-      appendToResult(`<div class="mole-error">\u26A0 请在 Options 页面配置 API Key</div>`);
+      appendToResult(`<div class="actspan-error">\u26A0 请在 Options 页面配置 API Key</div>`);
       updateInputUI();
       saveSnapshot();
       return;
     }
-    appendToResult(`<div class="mole-error">\u26A0 ${escapeHtml(parsedError.message)}</div>`);
+    appendToResult(`<div class="actspan-error">\u26A0 ${escapeHtml(parsedError.message)}</div>`);
     updateInputUI();
     saveSnapshot();
   };
@@ -2568,22 +2568,22 @@ export const initFloatBall = async () => {
 
     // 在 resultEl 中直接追加独立确认卡片
     const wrapper = document.createElement('div');
-    wrapper.className = 'mole-approval-standalone';
+    wrapper.className = 'actspan-approval-standalone';
     wrapper.innerHTML = `
-      <div class="mole-approval-header-bar">
+      <div class="actspan-approval-header-bar">
         <img src="${LOGO_REQUEST_CONFIRMATION}" />
         <span>需要你的确认</span>
       </div>
-      <div class="mole-approval-card" data-request-id="${requestId}">
-        <div class="mole-approval-message">${escapeHtml(message)}</div>
-        <div class="mole-approval-actions">
-          <button class="mole-approval-btn approve">批准</button>
-          <button class="mole-approval-btn reject">拒绝</button>
-          <button class="mole-approval-btn trust-all">本次不再询问</button>
+      <div class="actspan-approval-card" data-request-id="${requestId}">
+        <div class="actspan-approval-message">${escapeHtml(message)}</div>
+        <div class="actspan-approval-actions">
+          <button class="actspan-approval-btn approve">批准</button>
+          <button class="actspan-approval-btn reject">拒绝</button>
+          <button class="actspan-approval-btn trust-all">本次不再询问</button>
         </div>
-        <div class="mole-approval-reject-input">
-          <input class="mole-approval-reject-text" placeholder="拒绝理由（可选）" />
-          <button class="mole-approval-reject-confirm mole-approval-btn reject">确认拒绝</button>
+        <div class="actspan-approval-reject-input">
+          <input class="actspan-approval-reject-text" placeholder="拒绝理由（可选）" />
+          <button class="actspan-approval-reject-confirm actspan-approval-btn reject">确认拒绝</button>
         </div>
       </div>
     `;
@@ -2608,20 +2608,20 @@ export const initFloatBall = async () => {
       (btn as HTMLButtonElement).disabled = true;
     });
     // 隐藏拒绝输入框
-    const rejectInput = card.querySelector('.mole-approval-reject-input') as HTMLElement;
+    const rejectInput = card.querySelector('.actspan-approval-reject-input') as HTMLElement;
     if (rejectInput) rejectInput.classList.remove('open');
 
     // 添加结果提示
     const resultText = document.createElement('div');
-    resultText.className = 'mole-approval-result';
+    resultText.className = 'actspan-approval-result';
     resultText.textContent = approved ? '✓ 已批准' : '✗ 已拒绝';
     card.appendChild(resultText);
 
     // 更新独立卡片外层状态
-    const standalone = card.closest('.mole-approval-standalone') as HTMLElement;
+    const standalone = card.closest('.actspan-approval-standalone') as HTMLElement;
     if (standalone) {
       standalone.classList.add('settled');
-      const titleEl = standalone.querySelector('.mole-approval-header-bar span') as HTMLElement;
+      const titleEl = standalone.querySelector('.actspan-approval-header-bar span') as HTMLElement;
       if (titleEl) titleEl.textContent = approved ? '已批准' : '已拒绝';
     }
 
@@ -2634,26 +2634,26 @@ export const initFloatBall = async () => {
   /** 取消确认卡片 */
   const handleApprovalCancel = (requestId: string) => {
     if (!requestId) return;
-    const card = resultEl.querySelector(`.mole-approval-card[data-request-id="${requestId}"]`) as HTMLElement;
+    const card = resultEl.querySelector(`.actspan-approval-card[data-request-id="${requestId}"]`) as HTMLElement;
     if (!card || card.classList.contains('settled')) return;
 
     card.classList.add('settled');
     card.querySelectorAll('button').forEach(btn => {
       (btn as HTMLButtonElement).disabled = true;
     });
-    const rejectInput = card.querySelector('.mole-approval-reject-input') as HTMLElement;
+    const rejectInput = card.querySelector('.actspan-approval-reject-input') as HTMLElement;
     if (rejectInput) rejectInput.classList.remove('open');
 
     const resultText = document.createElement('div');
-    resultText.className = 'mole-approval-result';
+    resultText.className = 'actspan-approval-result';
     resultText.textContent = '已取消';
     card.appendChild(resultText);
 
     // 更新独立卡片外层状态
-    const standalone = card.closest('.mole-approval-standalone') as HTMLElement;
+    const standalone = card.closest('.actspan-approval-standalone') as HTMLElement;
     if (standalone) {
       standalone.classList.add('settled');
-      const titleEl = standalone.querySelector('.mole-approval-header-bar span') as HTMLElement;
+      const titleEl = standalone.querySelector('.actspan-approval-header-bar span') as HTMLElement;
       if (titleEl) titleEl.textContent = '已取消';
     }
 
@@ -2680,28 +2680,28 @@ export const initFloatBall = async () => {
 
     // 构建选项按钮 HTML
     const optionsHtml = options && options.length > 0
-      ? `<div class="mole-ask-user-options">
-          ${options.map((opt, idx) => `<button class="mole-ask-user-option" data-index="${idx}">${escapeHtml(opt)}</button>`).join('')}
+      ? `<div class="actspan-ask-user-options">
+          ${options.map((opt, idx) => `<button class="actspan-ask-user-option" data-index="${idx}">${escapeHtml(opt)}</button>`).join('')}
         </div>`
       : '';
 
     // 构建文本输入行 HTML
     const inputRowHtml = allowFreeText !== false
-      ? `<div class="mole-ask-user-input-row">
-          <input class="mole-ask-user-text" placeholder="${options && options.length > 0 ? '或者直接输入...' : '请输入你的回答...'}" />
-          <button class="mole-ask-user-submit">发送</button>
+      ? `<div class="actspan-ask-user-input-row">
+          <input class="actspan-ask-user-text" placeholder="${options && options.length > 0 ? '或者直接输入...' : '请输入你的回答...'}" />
+          <button class="actspan-ask-user-submit">发送</button>
         </div>`
       : '';
 
     const wrapper = document.createElement('div');
-    wrapper.className = 'mole-ask-user-standalone';
+    wrapper.className = 'actspan-ask-user-standalone';
     wrapper.innerHTML = `
-      <div class="mole-ask-user-header-bar">
+      <div class="actspan-ask-user-header-bar">
         <img src="${LOGO_ASK_USER}" />
         <span>Actspan 有个问题</span>
       </div>
-      <div class="mole-ask-user-card" data-request-id="${requestId}">
-        <div class="mole-ask-user-question">${escapeHtml(question)}</div>
+      <div class="actspan-ask-user-card" data-request-id="${requestId}">
+        <div class="actspan-ask-user-question">${escapeHtml(question)}</div>
         ${optionsHtml}
         ${inputRowHtml}
       </div>
@@ -2721,7 +2721,7 @@ export const initFloatBall = async () => {
 
   /** 禁用提问卡片并显示回答结果 */
   const disableAskUserCard = (requestId: string, answer: string, source: 'option' | 'text') => {
-    const card = resultEl.querySelector(`.mole-ask-user-card[data-request-id="${requestId}"]`) as HTMLElement;
+    const card = resultEl.querySelector(`.actspan-ask-user-card[data-request-id="${requestId}"]`) as HTMLElement;
     if (!card || card.classList.contains('settled')) return;
 
     card.classList.add('settled');
@@ -2730,12 +2730,12 @@ export const initFloatBall = async () => {
     card.querySelectorAll('button').forEach(btn => {
       (btn as HTMLButtonElement).disabled = true;
     });
-    const textInput = card.querySelector('.mole-ask-user-text') as HTMLInputElement;
+    const textInput = card.querySelector('.actspan-ask-user-text') as HTMLInputElement;
     if (textInput) textInput.disabled = true;
 
     // 高亮选中的选项
     if (source === 'option') {
-      card.querySelectorAll('.mole-ask-user-option').forEach(btn => {
+      card.querySelectorAll('.actspan-ask-user-option').forEach(btn => {
         if (btn.textContent === answer) {
           btn.classList.add('selected');
         }
@@ -2744,15 +2744,15 @@ export const initFloatBall = async () => {
 
     // 添加结果提示
     const resultText = document.createElement('div');
-    resultText.className = 'mole-ask-user-result';
+    resultText.className = 'actspan-ask-user-result';
     resultText.textContent = `已回答：${answer}`;
     card.appendChild(resultText);
 
     // 更新外层卡片状态
-    const standalone = card.closest('.mole-ask-user-standalone') as HTMLElement;
+    const standalone = card.closest('.actspan-ask-user-standalone') as HTMLElement;
     if (standalone) {
       standalone.classList.add('settled');
-      const titleEl = standalone.querySelector('.mole-ask-user-header-bar span') as HTMLElement;
+      const titleEl = standalone.querySelector('.actspan-ask-user-header-bar span') as HTMLElement;
       if (titleEl) titleEl.textContent = '已回答';
     }
 
@@ -2765,25 +2765,25 @@ export const initFloatBall = async () => {
   /** 取消提问卡片 */
   const handleAskUserCancel = (requestId: string) => {
     if (!requestId) return;
-    const card = resultEl.querySelector(`.mole-ask-user-card[data-request-id="${requestId}"]`) as HTMLElement;
+    const card = resultEl.querySelector(`.actspan-ask-user-card[data-request-id="${requestId}"]`) as HTMLElement;
     if (!card || card.classList.contains('settled')) return;
 
     card.classList.add('settled');
     card.querySelectorAll('button').forEach(btn => {
       (btn as HTMLButtonElement).disabled = true;
     });
-    const textInput = card.querySelector('.mole-ask-user-text') as HTMLInputElement;
+    const textInput = card.querySelector('.actspan-ask-user-text') as HTMLInputElement;
     if (textInput) textInput.disabled = true;
 
     const resultText = document.createElement('div');
-    resultText.className = 'mole-ask-user-result';
+    resultText.className = 'actspan-ask-user-result';
     resultText.textContent = '已取消';
     card.appendChild(resultText);
 
-    const standalone = card.closest('.mole-ask-user-standalone') as HTMLElement;
+    const standalone = card.closest('.actspan-ask-user-standalone') as HTMLElement;
     if (standalone) {
       standalone.classList.add('settled');
-      const titleEl = standalone.querySelector('.mole-ask-user-header-bar span') as HTMLElement;
+      const titleEl = standalone.querySelector('.actspan-ask-user-header-bar span') as HTMLElement;
       if (titleEl) titleEl.textContent = '已取消';
     }
 
@@ -2808,8 +2808,8 @@ export const initFloatBall = async () => {
   };
 
   const findTargetCallItem = (callId: string): Element | null => {
-    const activeGroup = resultEl.querySelector('.mole-calls-group:not(.frozen)');
-    const callItems = activeGroup ? activeGroup.querySelectorAll('.mole-call-item') : resultEl.querySelectorAll('.mole-call-item');
+    const activeGroup = resultEl.querySelector('.actspan-calls-group:not(.frozen)');
+    const callItems = activeGroup ? activeGroup.querySelectorAll('.actspan-call-item') : resultEl.querySelectorAll('.actspan-call-item');
     if (callId) {
       const matched = Array.from(callItems).find((item) => item.getAttribute('data-call-id') === callId);
       if (matched) return matched;
@@ -2819,10 +2819,10 @@ export const initFloatBall = async () => {
 
   const appendToolArtifactSection = (section: HTMLElement, callId: string) => {
     const targetItem = findTargetCallItem(callId);
-    const body = targetItem?.querySelector('.mole-call-body');
+    const body = targetItem?.querySelector('.actspan-call-body');
     if (body instanceof HTMLElement) {
       body.appendChild(section);
-      const header = targetItem?.querySelector('.mole-call-header');
+      const header = targetItem?.querySelector('.actspan-call-header');
       if (header instanceof HTMLElement) {
         header.classList.add('has-body');
       }
@@ -2906,7 +2906,7 @@ export const initFloatBall = async () => {
   };
 
   const handleSearchResultsEvent = (content: string) => {
-    const statusEls = resultEl.querySelectorAll('.mole-status');
+    const statusEls = resultEl.querySelectorAll('.actspan-status');
     statusEls.forEach(el => el.remove());
 
     try {
@@ -2915,25 +2915,25 @@ export const initFloatBall = async () => {
       const eventCallId = typeof searchData.callId === 'string' ? searchData.callId : '';
 
       const section = document.createElement('div');
-      section.className = 'mole-search-section';
+      section.className = 'actspan-search-section';
 
-      let html = `<div class="mole-result-count">找到 ${items.length} 条结果 \u00B7 关键词「${escapeHtml(searchData.keyword || '')}」</div>`;
-      html += '<div class="mole-search-results">';
+      let html = `<div class="actspan-result-count">找到 ${items.length} 条结果 \u00B7 关键词「${escapeHtml(searchData.keyword || '')}」</div>`;
+      html += '<div class="actspan-search-results">';
       for (const item of items) {
         const thumbHtml = item.imageUrl
-          ? `<img class="mole-result-thumb" src="${escapeHtml(item.imageUrl)}" alt="" referrerpolicy="no-referrer" />`
+          ? `<img class="actspan-result-thumb" src="${escapeHtml(item.imageUrl)}" alt="" referrerpolicy="no-referrer" />`
           : '';
-        html += `<div class="mole-result-card" data-url="${escapeHtml(item.url)}">`;
+        html += `<div class="actspan-result-card" data-url="${escapeHtml(item.url)}">`;
         html += thumbHtml;
-        html += '<div class="mole-result-body">';
-        html += `<a class="mole-result-title" href="${escapeHtml(item.url)}" target="_blank" rel="noopener">${escapeHtml(item.title)}</a>`;
+        html += '<div class="actspan-result-body">';
+        html += `<a class="actspan-result-title" href="${escapeHtml(item.url)}" target="_blank" rel="noopener">${escapeHtml(item.title)}</a>`;
         if (item.price) {
-          html += `<div class="mole-result-snippet" style="color:#d70015;font-weight:500">${escapeHtml(item.price)}${item.shop ? ' \u00B7 ' + escapeHtml(item.shop) : ''}</div>`;
+          html += `<div class="actspan-result-snippet" style="color:#d70015;font-weight:500">${escapeHtml(item.price)}${item.shop ? ' \u00B7 ' + escapeHtml(item.shop) : ''}</div>`;
         } else if (item.snippet) {
-          html += `<div class="mole-result-snippet">${escapeHtml(item.snippet)}</div>`;
+          html += `<div class="actspan-result-snippet">${escapeHtml(item.snippet)}</div>`;
         }
         if (item.source) {
-          html += `<div class="mole-result-source">${escapeHtml(item.source)}</div>`;
+          html += `<div class="actspan-result-source">${escapeHtml(item.source)}</div>`;
         }
         html += '</div></div>';
       }
@@ -2943,7 +2943,7 @@ export const initFloatBall = async () => {
       appendToolArtifactSection(section, eventCallId);
       showResult();
     } catch {
-      appendToResult('<div class="mole-error">结果解析失败</div>');
+      appendToResult('<div class="actspan-error">结果解析失败</div>');
     }
     saveSnapshot();
   };
@@ -2954,21 +2954,21 @@ export const initFloatBall = async () => {
       const eventCallId = typeof imgData.callId === 'string' ? imgData.callId : '';
       const hasImage = typeof imgData.dataUrl === 'string' && imgData.dataUrl.length > 0;
       const section = document.createElement('div');
-      section.className = 'mole-screenshot-section';
+      section.className = 'actspan-screenshot-section';
       const screenshotMeta = `${imgData.format || 'png'} \u00B7 ${imgData.sizeKB || '?'}KB`;
       section.setAttribute('data-image-src', hasImage ? String(imgData.dataUrl) : '');
       section.setAttribute('data-image-meta', `截图预览（${screenshotMeta}）`);
       section.innerHTML = `
-        <div class="mole-screenshot-header">
-          <div class="mole-screenshot-meta">
-            <div class="mole-screenshot-label">\u{1F4F8} 截图已完成</div>
-            <div class="mole-screenshot-sub">${escapeHtml(screenshotMeta)}</div>
+        <div class="actspan-screenshot-header">
+          <div class="actspan-screenshot-meta">
+            <div class="actspan-screenshot-label">\u{1F4F8} 截图已完成</div>
+            <div class="actspan-screenshot-sub">${escapeHtml(screenshotMeta)}</div>
           </div>
-          ${hasImage ? '<button class="mole-screenshot-open" type="button">预览</button>' : ''}
+          ${hasImage ? '<button class="actspan-screenshot-open" type="button">预览</button>' : ''}
         </div>
         ${hasImage
-          ? `<div class=\"mole-screenshot-img-wrap\"><img class=\"mole-screenshot-img\" src=\"${escapeHtml(imgData.dataUrl)}\" data-full-src=\"${escapeHtml(imgData.dataUrl)}\" alt=\"页面截图\" loading=\"lazy\" /><span class=\"mole-screenshot-hint\">点击放大</span></div>`
-          : `<div class=\"mole-screenshot-artifact\">已保存截图资源：${escapeHtml(imgData.artifactId || '--')}</div>`}
+          ? `<div class=\"actspan-screenshot-img-wrap\"><img class=\"actspan-screenshot-img\" src=\"${escapeHtml(imgData.dataUrl)}\" data-full-src=\"${escapeHtml(imgData.dataUrl)}\" alt=\"页面截图\" loading=\"lazy\" /><span class=\"actspan-screenshot-hint\">点击放大</span></div>`
+          : `<div class=\"actspan-screenshot-artifact\">已保存截图资源：${escapeHtml(imgData.artifactId || '--')}</div>`}
       `;
 
       appendToolArtifactSection(section, eventCallId);
@@ -2986,24 +2986,24 @@ export const initFloatBall = async () => {
       const results = Array.isArray(payload.results) ? payload.results : [];
       const passed = payload.passed === true;
       const section = document.createElement('div');
-      section.className = 'mole-verify-section';
+      section.className = 'actspan-verify-section';
       section.innerHTML = `
-        <div class="mole-verify-header">
+        <div class="actspan-verify-header">
           <div>
-            <div class="mole-verify-title">✅ 页面验证</div>
-            <div class="mole-verify-sub">${escapeHtml(payload.message || '')}</div>
+            <div class="actspan-verify-title">✅ 页面验证</div>
+            <div class="actspan-verify-sub">${escapeHtml(payload.message || '')}</div>
           </div>
-          <div class="mole-verify-badge ${passed ? 'ok' : 'fail'}">${passed ? '通过' : '未通过'}</div>
+          <div class="actspan-verify-badge ${passed ? 'ok' : 'fail'}">${passed ? '通过' : '未通过'}</div>
         </div>
       `;
       const list = document.createElement('div');
-      list.className = 'mole-verify-list';
+      list.className = 'actspan-verify-list';
       for (const item of results.slice(0, 5)) {
         const row = document.createElement('div');
-        row.className = `mole-verify-item ${item?.passed ? '' : 'fail'}`;
+        row.className = `actspan-verify-item ${item?.passed ? '' : 'fail'}`;
         row.innerHTML = `
           <div>${item?.passed ? '✓' : '✗'} ${escapeHtml(item?.type || '')}</div>
-          <div class="mole-verify-sub">${escapeHtml(item?.detail || '')}</div>
+          <div class="actspan-verify-sub">${escapeHtml(item?.detail || '')}</div>
         `;
         list.appendChild(row);
       }
@@ -3024,28 +3024,28 @@ export const initFloatBall = async () => {
       const trace = Array.isArray(payload.trace) ? payload.trace : [];
       const candidates = Array.isArray(payload.candidates) ? payload.candidates : [];
       const section = document.createElement('div');
-      section.className = 'mole-repair-section';
+      section.className = 'actspan-repair-section';
       section.innerHTML = `
-        <div class="mole-repair-header">
+        <div class="actspan-repair-header">
           <div>
-            <div class="mole-repair-title">🛠️ 自动修复</div>
-            <div class="mole-repair-sub">${escapeHtml(payload.message || '')}${payload?.experience_domain ? ` · 域名=${escapeHtml(payload.experience_domain)}` : ''}${typeof payload?.experience_matches === 'number' && payload.experience_matches > 0 ? ` · 经验命中=${payload.experience_matches}` : ''}</div>
+            <div class="actspan-repair-title">🛠️ 自动修复</div>
+            <div class="actspan-repair-sub">${escapeHtml(payload.message || '')}${payload?.experience_domain ? ` · 域名=${escapeHtml(payload.experience_domain)}` : ''}${typeof payload?.experience_matches === 'number' && payload.experience_matches > 0 ? ` · 经验命中=${payload.experience_matches}` : ''}</div>
           </div>
-          <div class="mole-repair-badge ${repaired ? 'ok' : 'fail'}">${repaired ? '找到候选' : '待人工判断'}</div>
+          <div class="actspan-repair-badge ${repaired ? 'ok' : 'fail'}">${repaired ? '找到候选' : '待人工判断'}</div>
         </div>
       `;
 
       const list = document.createElement('div');
-      list.className = 'mole-repair-list';
+      list.className = 'actspan-repair-list';
       for (const item of trace.slice(0, 6)) {
         const row = document.createElement('div');
-        row.className = 'mole-repair-item';
+        row.className = 'actspan-repair-item';
         row.innerHTML = `
-          <div class="mole-repair-item-head">
+          <div class="actspan-repair-item-head">
             <span>${escapeHtml(item?.step || '')}</span>
             <span>${item?.success ? '✓' : '✗'}${typeof item?.candidate_count === 'number' ? ` · ${item.candidate_count}` : ''}</span>
           </div>
-          <div class="mole-repair-sub">${escapeHtml(item?.note || item?.error || '')}${item?.query ? ` · query=${escapeHtml(item.query)}` : ''}</div>
+          <div class="actspan-repair-sub">${escapeHtml(item?.note || item?.error || '')}${item?.query ? ` · query=${escapeHtml(item.query)}` : ''}</div>
         `;
         list.appendChild(row);
       }
@@ -3053,17 +3053,17 @@ export const initFloatBall = async () => {
 
       if (candidates.length > 0) {
         const candidateWrap = document.createElement('div');
-        candidateWrap.className = 'mole-repair-candidates';
+        candidateWrap.className = 'actspan-repair-candidates';
         for (const candidate of candidates.slice(0, 4)) {
           const row = document.createElement('div');
-          row.className = 'mole-repair-candidate';
+          row.className = 'actspan-repair-candidate';
           const title = candidate?.label || candidate?.text || candidate?.placeholder || candidate?.tag || candidate?.element_id || '--';
           const meta = [candidate?.tag, candidate?.clickable ? 'clickable' : '', candidate?.editable ? 'editable' : '', candidate?.visible ? 'visible' : '']
             .filter(Boolean)
             .join(' · ');
           row.innerHTML = `
             <div>${escapeHtml(title)}</div>
-            <div class="mole-repair-sub">${escapeHtml(meta)}${candidate?.repair_queries?.length ? ` · hints=${escapeHtml(candidate.repair_queries.join(', '))}` : ''}</div>
+            <div class="actspan-repair-sub">${escapeHtml(meta)}${candidate?.repair_queries?.length ? ` · hints=${escapeHtml(candidate.repair_queries.join(', '))}` : ''}</div>
           `;
           candidateWrap.appendChild(row);
         }
@@ -3082,13 +3082,13 @@ export const initFloatBall = async () => {
     currentTask!.lastAIText = content;
 
     // 清除临时状态提示
-    const statusEls = resultEl.querySelectorAll('.mole-status, .mole-planning');
+    const statusEls = resultEl.querySelectorAll('.actspan-status, .actspan-planning');
     statusEls.forEach(el => el.remove());
 
     // 自动折叠工具调用组，让文本区成为焦点
-    const activeGroup = resultEl.querySelector('.mole-calls-group:not(.frozen)');
+    const activeGroup = resultEl.querySelector('.actspan-calls-group:not(.frozen)');
     if (activeGroup) {
-      const detailEl = activeGroup.querySelector('.mole-calls-detail');
+      const detailEl = activeGroup.querySelector('.actspan-calls-detail');
       const arrowEl = activeGroup.querySelector('.arrow');
       if (detailEl && detailEl.classList.contains('open')) {
         detailEl.classList.remove('open');
@@ -3106,19 +3106,19 @@ export const initFloatBall = async () => {
         title: string; price: string; shop?: string; url: string; tag?: string;
       }>;
       const cardsEl = document.createElement('div');
-      cardsEl.className = 'mole-rec-cards';
+      cardsEl.className = 'actspan-rec-cards';
       for (const card of cards) {
-        const metaParts = [`<span class="mole-rec-card-price">${escapeHtml(card.price)}</span>`];
+        const metaParts = [`<span class="actspan-rec-card-price">${escapeHtml(card.price)}</span>`];
         if (card.shop) metaParts.push(escapeHtml(card.shop));
-        const tagHtml = card.tag ? `<span class="mole-rec-tag">${escapeHtml(card.tag)}</span>` : '';
+        const tagHtml = card.tag ? `<span class="actspan-rec-tag">${escapeHtml(card.tag)}</span>` : '';
         cardsEl.innerHTML += `
-          <a class="mole-rec-card" href="${escapeHtml(card.url)}" target="_blank" rel="noopener">
-            <div class="mole-rec-card-body">
-              <div class="mole-rec-card-title">${escapeHtml(card.title)}</div>
-              <div class="mole-rec-card-meta">${metaParts.join(' \u00B7 ')}</div>
+          <a class="actspan-rec-card" href="${escapeHtml(card.url)}" target="_blank" rel="noopener">
+            <div class="actspan-rec-card-body">
+              <div class="actspan-rec-card-title">${escapeHtml(card.title)}</div>
+              <div class="actspan-rec-card-meta">${metaParts.join(' \u00B7 ')}</div>
             </div>
             ${tagHtml}
-            <span class="mole-rec-arrow">\u203A</span>
+            <span class="actspan-rec-arrow">\u203A</span>
           </a>
         `;
       }
@@ -3135,9 +3135,9 @@ export const initFloatBall = async () => {
 
   /** 渲染 todo 独立进度视图 */
   const renderTodoBoard = (items: { id: number; title: string; status: string; result?: string }[], stats: { total: number; completed: number }) => {
-    const panel = resultEl.querySelector('.mole-agent-state-panel:not(.frozen)') as HTMLElement | null;
+    const panel = resultEl.querySelector('.actspan-agent-state-panel:not(.frozen)') as HTMLElement | null;
     if (!panel) return;
-    const board = panel.querySelector('.mole-todo-board') as HTMLElement | null;
+    const board = panel.querySelector('.actspan-todo-board') as HTMLElement | null;
     if (!board) return;
 
     if (!items || items.length === 0) {
@@ -3153,17 +3153,17 @@ export const initFloatBall = async () => {
                 : item.status === 'in_progress' ? 'active'
                 : 'pending';
       const resultSuffix = item.result ? ` → ${escapeHtml(item.result)}` : '';
-      return `<div class="mole-todo-item ${cls}"><span class="mole-todo-icon">${icon}</span><span class="mole-todo-text">#${item.id} ${escapeHtml(item.title)}${resultSuffix}</span></div>`;
+      return `<div class="actspan-todo-item ${cls}"><span class="actspan-todo-icon">${icon}</span><span class="actspan-todo-text">#${item.id} ${escapeHtml(item.title)}${resultSuffix}</span></div>`;
     }).join('');
 
     const progress = stats.total > 0 ? Math.round((stats.completed / stats.total) * 100) : 0;
     board.innerHTML = `
-      <div class="mole-todo-header">
-        <span class="mole-todo-label">任务计划</span>
-        <span class="mole-todo-stats">${stats.completed}/${stats.total}</span>
+      <div class="actspan-todo-header">
+        <span class="actspan-todo-label">任务计划</span>
+        <span class="actspan-todo-stats">${stats.completed}/${stats.total}</span>
       </div>
-      <div class="mole-todo-progress-bar"><div class="mole-todo-progress-fill" style="width:${progress}%"></div></div>
-      <div class="mole-todo-list">${rows}</div>
+      <div class="actspan-todo-progress-bar"><div class="actspan-todo-progress-fill" style="width:${progress}%"></div></div>
+      <div class="actspan-todo-list">${rows}</div>
     `;
   };
 
@@ -3240,11 +3240,11 @@ export const initFloatBall = async () => {
     const { requestId } = data || {};
     if (!requestId) return;
     const card = resultEl.querySelector(
-      `.mole-approval-card[data-request-id="${requestId}"]`,
+      `.actspan-approval-card[data-request-id="${requestId}"]`,
     ) as HTMLElement;
     if (!card) return;
     // 移除整个独立卡片容器（含标题栏）
-    const standalone = card.closest('.mole-approval-standalone') as HTMLElement;
+    const standalone = card.closest('.actspan-approval-standalone') as HTMLElement;
     if (standalone) {
       standalone.remove();
     } else {
@@ -3268,11 +3268,11 @@ export const initFloatBall = async () => {
   // 确认卡片附言输入框 Enter 键提交
   resultEl.addEventListener('keydown', (e) => {
     const target = e.target as HTMLElement;
-    if (e.key !== 'Enter' || !target.classList.contains('mole-approval-reject-text')) return;
+    if (e.key !== 'Enter' || !target.classList.contains('actspan-approval-reject-text')) return;
     e.preventDefault();
-    const card = target.closest('.mole-approval-card') as HTMLElement;
+    const card = target.closest('.actspan-approval-card') as HTMLElement;
     if (!card || card.classList.contains('settled')) return;
-    const confirmBtn = card.querySelector('.mole-approval-reject-confirm') as HTMLElement;
+    const confirmBtn = card.querySelector('.actspan-approval-reject-confirm') as HTMLElement;
     if (confirmBtn) confirmBtn.click();
   });
 
@@ -3288,7 +3288,7 @@ export const initFloatBall = async () => {
     const { requestId, answer, source } = data || {};
     if (!requestId) return;
     const card = resultEl.querySelector(
-      `.mole-ask-user-card[data-request-id="${requestId}"]`,
+      `.actspan-ask-user-card[data-request-id="${requestId}"]`,
     ) as HTMLElement;
     if (card && !card.classList.contains('settled')) {
       disableAskUserCard(requestId, answer || '', source || 'text');
@@ -3298,11 +3298,11 @@ export const initFloatBall = async () => {
   // 提问卡片文本输入框 Enter 键提交
   resultEl.addEventListener('keydown', (e) => {
     const target = e.target as HTMLElement;
-    if (e.key !== 'Enter' || !target.classList.contains('mole-ask-user-text')) return;
+    if (e.key !== 'Enter' || !target.classList.contains('actspan-ask-user-text')) return;
     e.preventDefault();
-    const card = target.closest('.mole-ask-user-card') as HTMLElement;
+    const card = target.closest('.actspan-ask-user-card') as HTMLElement;
     if (!card || card.classList.contains('settled')) return;
-    const submitBtn = card.querySelector('.mole-ask-user-submit') as HTMLElement;
+    const submitBtn = card.querySelector('.actspan-ask-user-submit') as HTMLElement;
     if (submitBtn) submitBtn.click();
   });
 
@@ -3337,7 +3337,7 @@ export const initFloatBall = async () => {
 
     // 显示定时器触发提示
     const timerLabel = data.timerType === 'interval' ? '周期任务' : '定时任务';
-    setStatus(`<div class="mole-planning"><span class="dot"></span>${timerLabel}触发：${escapeHtml(data.action)}</div>`);
+    setStatus(`<div class="actspan-planning"><span class="dot"></span>${timerLabel}触发：${escapeHtml(data.action)}</div>`);
   });
 
   // ---- 会话同步监听：接收 background 广播的会话状态变更 ----
@@ -3627,11 +3627,11 @@ export const initFloatBall = async () => {
     const target = e.target as HTMLElement;
 
     // 1. 顶层折叠组摘要 toggle
-    const summary = target.closest('.mole-calls-summary') as HTMLElement | null;
+    const summary = target.closest('.actspan-calls-summary') as HTMLElement | null;
     if (summary) {
-      const group = summary.closest('.mole-calls-group');
+      const group = summary.closest('.actspan-calls-group');
       if (group) {
-        const dt = group.querySelector('.mole-calls-detail');
+        const dt = group.querySelector('.actspan-calls-detail');
         const ar = summary.querySelector('.arrow');
         if (dt) {
           const opened = dt.classList.toggle('open');
@@ -3642,11 +3642,11 @@ export const initFloatBall = async () => {
     }
 
     // 1.5 历史对话折叠组 toggle
-    const roundSummary = target.closest('.mole-round-summary') as HTMLElement | null;
+    const roundSummary = target.closest('.actspan-round-summary') as HTMLElement | null;
     if (roundSummary) {
-      const roundHistory = roundSummary.closest('.mole-round-history');
+      const roundHistory = roundSummary.closest('.actspan-round-history');
       if (roundHistory) {
-        const rc = roundHistory.querySelector('.mole-round-content');
+        const rc = roundHistory.querySelector('.actspan-round-content');
         const ar = roundSummary.querySelector('.arrow');
         if (rc) {
           const opened = rc.classList.toggle('open');
@@ -3657,9 +3657,9 @@ export const initFloatBall = async () => {
     }
 
     // 2. 确认卡片按钮
-    const approvalBtn = target.closest('.mole-approval-btn') as HTMLElement | null;
+    const approvalBtn = target.closest('.actspan-approval-btn') as HTMLElement | null;
     if (approvalBtn) {
-      const card = approvalBtn.closest('.mole-approval-card') as HTMLElement;
+      const card = approvalBtn.closest('.actspan-approval-card') as HTMLElement;
       if (!card || card.classList.contains('settled')) return;
       const requestId = card.getAttribute('data-request-id');
       if (!requestId) return;
@@ -3669,24 +3669,24 @@ export const initFloatBall = async () => {
         Channel.send('__approval_response', { requestId, approved: true, trustAll: true });
         disableApprovalCard(card, true);
         // 更新标题提示
-        const standalone = card.closest('.mole-approval-standalone') as HTMLElement;
+        const standalone = card.closest('.actspan-approval-standalone') as HTMLElement;
         if (standalone) {
-          const titleEl = standalone.querySelector('.mole-approval-header-bar span') as HTMLElement;
+          const titleEl = standalone.querySelector('.actspan-approval-header-bar span') as HTMLElement;
           if (titleEl) titleEl.textContent = '已批准（本次不再询问）';
         }
       } else if (approvalBtn.classList.contains('approve')) {
         // 批准
         Channel.send('__approval_response', { requestId, approved: true });
         disableApprovalCard(card, true);
-      } else if (approvalBtn.classList.contains('reject') && !approvalBtn.classList.contains('mole-approval-reject-confirm')) {
+      } else if (approvalBtn.classList.contains('reject') && !approvalBtn.classList.contains('actspan-approval-reject-confirm')) {
         // 点击拒绝 → 展开附言输入框
-        const rejectInput = card.querySelector('.mole-approval-reject-input') as HTMLElement;
+        const rejectInput = card.querySelector('.actspan-approval-reject-input') as HTMLElement;
         if (rejectInput) rejectInput.classList.add('open');
-        const textInput = card.querySelector('.mole-approval-reject-text') as HTMLInputElement;
+        const textInput = card.querySelector('.actspan-approval-reject-text') as HTMLInputElement;
         if (textInput) textInput.focus();
-      } else if (approvalBtn.classList.contains('mole-approval-reject-confirm')) {
+      } else if (approvalBtn.classList.contains('actspan-approval-reject-confirm')) {
         // 确认拒绝（附言输入后）
-        const textInput = card.querySelector('.mole-approval-reject-text') as HTMLInputElement;
+        const textInput = card.querySelector('.actspan-approval-reject-text') as HTMLInputElement;
         const userMessage = textInput?.value?.trim() || '';
         Channel.send('__approval_response', { requestId, approved: false, userMessage });
         disableApprovalCard(card, false);
@@ -3695,9 +3695,9 @@ export const initFloatBall = async () => {
     }
 
     // 2.5 提问卡片选项点击（ask_user）
-    const askUserOption = target.closest('.mole-ask-user-option') as HTMLElement | null;
+    const askUserOption = target.closest('.actspan-ask-user-option') as HTMLElement | null;
     if (askUserOption) {
-      const card = askUserOption.closest('.mole-ask-user-card') as HTMLElement;
+      const card = askUserOption.closest('.actspan-ask-user-card') as HTMLElement;
       if (!card || card.classList.contains('settled')) return;
       const requestId = card.getAttribute('data-request-id');
       if (!requestId) return;
@@ -3708,13 +3708,13 @@ export const initFloatBall = async () => {
     }
 
     // 2.6 提问卡片发送按钮点击（ask_user）
-    const askUserSubmit = target.closest('.mole-ask-user-submit') as HTMLElement | null;
+    const askUserSubmit = target.closest('.actspan-ask-user-submit') as HTMLElement | null;
     if (askUserSubmit) {
-      const card = askUserSubmit.closest('.mole-ask-user-card') as HTMLElement;
+      const card = askUserSubmit.closest('.actspan-ask-user-card') as HTMLElement;
       if (!card || card.classList.contains('settled')) return;
       const requestId = card.getAttribute('data-request-id');
       if (!requestId) return;
-      const textInput = card.querySelector('.mole-ask-user-text') as HTMLInputElement;
+      const textInput = card.querySelector('.actspan-ask-user-text') as HTMLInputElement;
       const answer = textInput?.value?.trim() || '';
       if (!answer) return; // 空文本不提交
       Channel.send('__ask_user_response', { requestId, answer, source: 'text' });
@@ -3723,9 +3723,9 @@ export const initFloatBall = async () => {
     }
 
     // 3. 调度状态面板 toggle
-    const agentStateTitle = target.closest('.mole-agent-state-title') as HTMLElement | null;
+    const agentStateTitle = target.closest('.actspan-agent-state-title') as HTMLElement | null;
     if (agentStateTitle) {
-      const panel = agentStateTitle.closest('.mole-agent-state-panel');
+      const panel = agentStateTitle.closest('.actspan-agent-state-panel');
       if (panel) {
         panel.classList.toggle('open');
       }
@@ -3733,11 +3733,11 @@ export const initFloatBall = async () => {
     }
 
     // 3. 单个函数调用项 toggle
-    const header = target.closest('.mole-call-header') as HTMLElement | null;
+    const header = target.closest('.actspan-call-header') as HTMLElement | null;
     if (header && header.classList.contains('has-body')) {
-      const item = header.closest('.mole-call-item');
+      const item = header.closest('.actspan-call-item');
       if (item) {
-        const body = item.querySelector('.mole-call-body');
+        const body = item.querySelector('.actspan-call-body');
         const ar = header.querySelector('.arrow');
         if (body) {
           const opened = body.classList.toggle('open');
@@ -3748,11 +3748,11 @@ export const initFloatBall = async () => {
     }
 
     // 4. 截图预览（缩略图和按钮）
-    const screenshotTrigger = target.closest('.mole-screenshot-img, .mole-screenshot-open') as HTMLElement | null;
+    const screenshotTrigger = target.closest('.actspan-screenshot-img, .actspan-screenshot-open') as HTMLElement | null;
     if (screenshotTrigger) {
-      const section = screenshotTrigger.closest('.mole-screenshot-section') as HTMLElement | null;
+      const section = screenshotTrigger.closest('.actspan-screenshot-section') as HTMLElement | null;
       const screenshotSections = Array.from(
-        resultEl.querySelectorAll('.mole-screenshot-section[data-image-src]')
+        resultEl.querySelectorAll('.actspan-screenshot-section[data-image-src]')
       ) as HTMLElement[];
       const previewList = screenshotSections
         .map((node) => {
@@ -3783,7 +3783,7 @@ export const initFloatBall = async () => {
     }
 
     // 6. 搜索结果卡片点击跳转
-    const card = target.closest('.mole-result-card') as HTMLElement | null;
+    const card = target.closest('.actspan-result-card') as HTMLElement | null;
     if (card) {
       const url = card.getAttribute('data-url');
       if (url) window.open(url, '_blank');
@@ -4027,7 +4027,7 @@ export const initFloatBall = async () => {
 
   // ---- Workflow 卡片点击事件委托 ----
   resultEl.addEventListener('click', (e) => {
-    const chip = (e.target as HTMLElement).closest('.mole-workflow-chip') as HTMLElement | null;
+    const chip = (e.target as HTMLElement).closest('.actspan-workflow-chip') as HTMLElement | null;
     if (!chip) return;
     const label = chip.dataset.label || chip.dataset.name || '';
     const hasRequired = chip.dataset.hasRequired === '1';
@@ -4037,7 +4037,7 @@ export const initFloatBall = async () => {
       inputEl.value = `${label} `;
       inputEl.focus();
       // 清除卡片
-      const hints = resultEl.querySelector('.mole-workflow-hints');
+      const hints = resultEl.querySelector('.actspan-workflow-hints');
       if (hints) hints.remove();
       if (!resultEl.innerHTML.trim()) hideResult();
     } else {
@@ -4052,7 +4052,7 @@ export const initFloatBall = async () => {
     // 用户手动输入时退出历史浏览模式
     if (inputHistoryCursor !== -1) resetInputHistoryCursor();
 
-    const hints = resultEl.querySelector('.mole-workflow-hints');
+    const hints = resultEl.querySelector('.actspan-workflow-hints');
     if (hints) {
       hints.remove();
       if (!resultEl.innerHTML.trim()) hideResult();
@@ -4177,12 +4177,12 @@ export const initFloatBall = async () => {
               currentTask.failureCode = typeof response?.code === 'string' ? response.code : currentTask.failureCode;
               // API Key 未配置：提示用户前往 Options 页面
               if (currentTask.failureCode === 'E_AUTH_REQUIRED' || message.includes('请先登录')) {
-                appendToResult(`<div class="mole-error">\u26A0 请在 Options 页面配置 API Key</div>`);
+                appendToResult(`<div class="actspan-error">\u26A0 请在 Options 页面配置 API Key</div>`);
                 updateInputUI();
                 saveSnapshot();
                 return;
               }
-              appendToResult(`<div class="mole-error">\u26A0 ${escapeHtml(message)}</div>`);
+              appendToResult(`<div class="actspan-error">\u26A0 ${escapeHtml(message)}</div>`);
               updateInputUI();
               saveSnapshot();
             }
@@ -4241,12 +4241,12 @@ export const initFloatBall = async () => {
                 currentTask.failureCode = typeof response?.code === 'string' ? response.code : currentTask.failureCode;
                 // API Key 未配置：提示用户前往 Options 页面
                 if (currentTask.failureCode === 'E_AUTH_REQUIRED' || message.includes('请先登录')) {
-                  appendToResult(`<div class="mole-error">\u26A0 请在 Options 页面配置 API Key</div>`);
+                  appendToResult(`<div class="actspan-error">\u26A0 请在 Options 页面配置 API Key</div>`);
                   updateInputUI();
                   saveSnapshot();
                   return;
                 }
-                appendToResult(`<div class="mole-error">\u26A0 ${escapeHtml(message)}</div>`);
+                appendToResult(`<div class="actspan-error">\u26A0 ${escapeHtml(message)}</div>`);
                 updateInputUI();
                 saveSnapshot();
               } else if (response?.accepted === true && typeof response.sessionId === 'string') {
@@ -4361,12 +4361,12 @@ export const initFloatBall = async () => {
     if (cardType === 'approval') {
       if (pacBtn.classList.contains('pac-approve')) {
         Channel.send('__approval_response', { requestId, approved: true });
-        const panelCard = resultEl.querySelector(`.mole-approval-card[data-request-id="${requestId}"]`) as HTMLElement;
+        const panelCard = resultEl.querySelector(`.actspan-approval-card[data-request-id="${requestId}"]`) as HTMLElement;
         if (panelCard && !panelCard.classList.contains('settled')) disableApprovalCard(panelCard, true);
         hidePillActionCard();
       } else if (pacBtn.classList.contains('pac-reject')) {
         Channel.send('__approval_response', { requestId, approved: false, userMessage: '' });
-        const panelCard = resultEl.querySelector(`.mole-approval-card[data-request-id="${requestId}"]`) as HTMLElement;
+        const panelCard = resultEl.querySelector(`.actspan-approval-card[data-request-id="${requestId}"]`) as HTMLElement;
         if (panelCard && !panelCard.classList.contains('settled')) disableApprovalCard(panelCard, false);
         hidePillActionCard();
       }

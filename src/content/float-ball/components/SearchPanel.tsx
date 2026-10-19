@@ -4,7 +4,7 @@
  */
 
 import React, { useRef, useCallback } from 'react';
-import { useMole } from '../context/useMole';
+import { useActspan } from '../context/useActspan';
 import { useAIStream } from '../hooks/useAIStream';
 import { useSecondTick } from '../hooks/useGlobalEvents';
 import { InputBar } from './InputBar';
@@ -16,7 +16,7 @@ import { BgTasksPanel } from './BgTasksPanel';
 import { formatClock, formatDuration } from '../text-utils';
 
 export const SearchPanel: React.FC<{ stopRecording: () => void; cancelAuditing?: () => void }> = ({ stopRecording, cancelAuditing }) => {
-  const { state, dispatch } = useMole();
+  const { state, dispatch } = useActspan();
   const resultRef = useRef<HTMLDivElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
 
@@ -59,7 +59,7 @@ export const SearchPanel: React.FC<{ stopRecording: () => void; cancelAuditing?:
 
   // Footer 文本
   const getFooterText = () => {
-    if (!task) return 'Mole \u00B7 AI 助手';
+    if (!task) return 'Actspan \u00B7 AI 助手';
     if (isRunning) return task.liveStatusText || '我正在继续处理';
     if (task.status === 'error') return `处理失败 · ${task.title}`;
     return `已完成 · ${task.title}`;
@@ -69,14 +69,14 @@ export const SearchPanel: React.FC<{ stopRecording: () => void; cancelAuditing?:
 
   return (
     <div
-      className="mole-overlay visible"
+      className="actspan-overlay visible"
       ref={overlayRef}
       onMouseDown={handleOverlayClick}
     >
-      <div className={`mole-searchbox-wrap ${boxState}`}>
-        <div className={`mole-searchbox ${boxState}`}>
+      <div className={`actspan-searchbox-wrap ${boxState}`}>
+        <div className={`actspan-searchbox ${boxState}`}>
           <InputBar resultRef={resultRef} />
-          <div className="mole-divider" />
+          <div className="actspan-divider" />
           <ResultView />
           {/* 审批卡片（独立于 ResultView，不依赖 currentTask） */}
           {state.approvalRequest && (
@@ -96,13 +96,13 @@ export const SearchPanel: React.FC<{ stopRecording: () => void; cancelAuditing?:
               allowFreeText={state.askUserRequest.allowFreeText}
             />
           )}
-          <div className="mole-divider mole-divider-bottom" />
+          <div className="actspan-divider actspan-divider-bottom" />
           <RecorderBar onStop={stopRecording} onCancelAudit={cancelAuditing} />
           <BgTasksPanel />
-          <div className="mole-footer">
-            <span className="mole-footer-icon">✦</span>
-            <span className="mole-footer-text">{getFooterText()}</span>
-            <span className="mole-footer-time">{getFooterTime()}</span>
+          <div className="actspan-footer">
+            <span className="actspan-footer-icon">✦</span>
+            <span className="actspan-footer-text">{getFooterText()}</span>
+            <span className="actspan-footer-time">{getFooterTime()}</span>
           </div>
         </div>
       </div>

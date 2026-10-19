@@ -5,7 +5,7 @@ import { useEffect } from 'react';
 import { STORAGE_KEY, LEGACY_STORAGE_KEY, PILL_HEIGHT, PILL_WIDTH, EDGE_MARGIN } from '../constants';
 import type { Side, SavedPosition } from '../constants';
 import { readMigratedStorage } from '../../../lib/legacy-storage';
-import { useMole } from '../context/useMole';
+import { useActspan } from '../context/useActspan';
 
 const storageArea = {
   get: (keys: string | string[]) => new Promise<Record<string, unknown>>((resolve) => chrome.storage.local.get(keys, resolve)),
@@ -31,7 +31,7 @@ const getTriggerX = (side: Side): number => {
  * 返回定位计算工具函数
  */
 export const usePosition = () => {
-  const { state, dispatch } = useMole();
+  const { state, dispatch } = useActspan();
 
   // 初始化加载
   useEffect(() => {

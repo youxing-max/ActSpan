@@ -12,7 +12,7 @@ Actspan 兼容提供 OpenAI Responses API 格式的 LLM 服务。配置入口在
 | API Key | 你的 API 密钥 | - |
 | Model | 使用的模型名称 | `gpt-6.1-sol` |
 
-配置存储在 `chrome.storage.local` 中，key 为 `mole_ai_settings`。
+配置存储在 `chrome.storage.local` 中，key 为 `actspan_ai_settings`。
 
 ### 支持的模型/服务
 

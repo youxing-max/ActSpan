@@ -83,7 +83,9 @@ socket.on('message', raw => {
     if (message.method === 'ping') result = { pong: true, version: 'e2e' };
     if (message.method === 'feishu.push') {
         feishuRequest = message;
-        result = { sent: 1, failed: 0, names: [message.params.webhookName || '研发群'] };
+        result = message.params.title === '失败'
+            ? { success: false, error: '飞书推送失败' }
+            : { sent: 1, failed: 0, names: [message.params.webhookName || '研发群'] };
     }
     if (message.method === 'registry.list') result = { revision: revision++, skills: [], updatedAt: Date.now() };
     if (message.method === 'registry.detail') result = { name: message.params.name, workflows: [] };
@@ -108,6 +110,9 @@ const allPush = JSON.parse((await call('actspan_feishu_push', {
 })).content[0].text);
 check('Feishu push omits target name for the default-all behavior',
     allPush.sent === 1 && feishuRequest?.params?.webhookName === undefined);
+const failedPush = await call('actspan_feishu_push', { title: '失败', message: '模拟失败' });
+check('Feishu delivery failures are MCP tool errors',
+    failedPush.isError === true && failedPush.content?.[0]?.text.includes('飞书推送失败'));
 const first = JSON.parse((await call('actspan_skills_list')).content[0].text);
 const second = JSON.parse((await call('actspan_skills_list')).content[0].text);
 check('next catalog lookup sees new revision', second.revision > first.revision);

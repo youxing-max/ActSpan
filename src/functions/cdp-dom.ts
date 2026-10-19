@@ -768,25 +768,25 @@ const executeDOMAction = async (
     case 'set_text': {
       const textValue = params.value ?? '';
       const valueStr = JSON.stringify(textValue);
-      const moleRootProtection = `
-        var moleRoot = document.getElementById('mole-root');
-        if (moleRoot && !document.body.contains(moleRoot)) {
-          document.body.appendChild(moleRoot);
+      const actspanRootProtection = `
+        var actspanRoot = document.getElementById('actspan-root');
+        if (actspanRoot && !document.body.contains(actspanRoot)) {
+          document.body.appendChild(actspanRoot);
         }
       `;
       if (typeof params.node_id === 'number' && !params.selector) {
         return evaluateDOMByNodeId(tabId, params.node_id,
-          `__el__.textContent = ${valueStr}; ${moleRootProtection} return { success: true, data: { message: '已设置元素的文本内容' } };`
+          `__el__.textContent = ${valueStr}; ${actspanRootProtection} return { success: true, data: { message: '已设置元素的文本内容' } };`
         );
       }
       if (params.all) {
         return evaluateDOM(tabId, params.selector,
-          `__els__.forEach(function(el) { el.textContent = ${valueStr}; }); ${moleRootProtection} return { success: true, data: { message: '已设置 ' + __els__.length + ' 个元素的文本内容' } };`,
+          `__els__.forEach(function(el) { el.textContent = ${valueStr}; }); ${actspanRootProtection} return { success: true, data: { message: '已设置 ' + __els__.length + ' 个元素的文本内容' } };`,
           { all: true, limit: params.limit }
         );
       }
       return evaluateDOM(tabId, params.selector,
-        `__el__.textContent = ${valueStr}; ${moleRootProtection} return { success: true, data: { message: '已设置元素的文本内容' } };`
+        `__el__.textContent = ${valueStr}; ${actspanRootProtection} return { success: true, data: { message: '已设置元素的文本内容' } };`
       );
     }
 
@@ -829,25 +829,25 @@ const executeDOMAction = async (
     case 'set_html': {
       const htmlValue = params.value ?? '';
       const htmlStr = JSON.stringify(htmlValue);
-      const moleRootProtection = `
-        var moleRoot = document.getElementById('mole-root');
-        if (moleRoot && !document.body.contains(moleRoot)) {
-          document.body.appendChild(moleRoot);
+      const actspanRootProtection = `
+        var actspanRoot = document.getElementById('actspan-root');
+        if (actspanRoot && !document.body.contains(actspanRoot)) {
+          document.body.appendChild(actspanRoot);
         }
       `;
       if (typeof params.node_id === 'number' && !params.selector) {
         return evaluateDOMByNodeId(tabId, params.node_id,
-          `__el__.innerHTML = ${htmlStr}; ${moleRootProtection} return { success: true, data: { message: '已设置元素的 HTML' } };`
+          `__el__.innerHTML = ${htmlStr}; ${actspanRootProtection} return { success: true, data: { message: '已设置元素的 HTML' } };`
         );
       }
       if (params.all) {
         return evaluateDOM(tabId, params.selector,
-          `__els__.forEach(function(el) { el.innerHTML = ${htmlStr}; }); ${moleRootProtection} return { success: true, data: { message: '已设置 ' + __els__.length + ' 个元素的 HTML' } };`,
+          `__els__.forEach(function(el) { el.innerHTML = ${htmlStr}; }); ${actspanRootProtection} return { success: true, data: { message: '已设置 ' + __els__.length + ' 个元素的 HTML' } };`,
           { all: true, limit: params.limit }
         );
       }
       return evaluateDOM(tabId, params.selector,
-        `__el__.innerHTML = ${htmlStr}; ${moleRootProtection} return { success: true, data: { message: '已设置元素的 HTML' } };`
+        `__el__.innerHTML = ${htmlStr}; ${actspanRootProtection} return { success: true, data: { message: '已设置元素的 HTML' } };`
       );
     }
 

@@ -5,10 +5,10 @@
 
 import React, { useEffect } from 'react';
 import Channel from '../../../lib/channel';
-import { useMole } from '../context/useMole';
+import { useActspan } from '../context/useActspan';
 
 export const TakeoverBanner: React.FC = () => {
-  const { state, dispatch } = useMole();
+  const { state, dispatch } = useActspan();
 
   // 监听接管状态
   useEffect(() => {
@@ -45,9 +45,9 @@ export const TakeoverBanner: React.FC = () => {
     : '当前页由 AI 接管中';
 
   return (
-    <div className="mole-takeover-banner">
-      <span className="mole-takeover-label">{takeover.label}</span>
-      <span className="mole-takeover-meta">{metaText}</span>
+    <div className="actspan-takeover-banner">
+      <span className="actspan-takeover-label">{takeover.label}</span>
+      <span className="actspan-takeover-meta">{metaText}</span>
     </div>
   );
 };

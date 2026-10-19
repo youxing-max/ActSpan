@@ -1,5 +1,5 @@
 /**
- * Mole Background Service Worker
+ * Actspan Background Service Worker
  * 处理扩展核心逻辑和跨组件通信
  *
  * 模块职责：

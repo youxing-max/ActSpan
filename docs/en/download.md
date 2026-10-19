@@ -24,7 +24,7 @@ Click the **Download Latest** button above to save the `.zip` file to your compu
 
 ### Step 2: Unzip
 
-Extract the downloaded zip file. After extraction you'll get a folder named `mole-extension/`.
+Extract the downloaded zip file. After extraction you'll get a folder named `actspan-extension/`.
 
 ::: tip
 On macOS, double-click the zip file to extract. On Windows, right-click → "Extract All".
@@ -45,7 +45,7 @@ Find the **Developer mode** toggle in the **top-right corner** of the page and t
 ### Step 5: Load the Extension
 
 1. Click the **"Load unpacked"** button that appears in the top-left area
-2. In the file dialog, navigate to and select the **unzipped folder** (`mole-extension/`)
+2. In the file dialog, navigate to and select the **unzipped folder** (`actspan-extension/`)
 3. Click **"Select Folder"** (Windows) or **"Open"** (macOS)
 
 ### Step 6: Verify Installation

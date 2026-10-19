@@ -31,11 +31,11 @@ Keep this managed block so 'openspec update' can refresh the instructions.
 
 ## 项目概述
 
-**MoleClaw** — 一个像鼹鼠一样工作的 AI 浏览器助手。
+**ActSpan** — 一个持续执行、连接浏览器与 AI 的智能助手。
 
-用户提出问题后，Mole 会像鼹鼠钻入地下一样，潜入后台默默挖掘——调用工具、搜索网页、解析数据、跨站点采集信息。当它找到宝藏（结果），便会重新浮出地面，把挖到的东西呈现给你。整个过程中，它不会打扰你正在做的事情，就像鼹鼠在地表之下悄无声息地工作。
+用户提出问题后，ActSpan 会在后台调用工具、搜索网页、解析数据、跨站点采集信息，并将结果呈现给用户。整个过程中，它不会打扰你正在做的事情。
 
-本项目是 **MoleClaw** Chrome 扩展程序（MV3），使用 React + TypeScript + Vite 构建。核心功能是**在任意网页上注入一个 AI 悬浮助手（Mole）**，用户通过悬浮球或快捷键唤起对话框，与 AI 交互。Mole 运行在用户的真实浏览器环境中，天然复用用户的登录态和 Cookie，无需额外的身份验证或 Cookie 迁移。AI 通过 Phase Orchestrator + Agentic Loop 自主调用 27 个内置工具（+ 动态扩展工具），在后台多轮执行，完成后以流式方式返回结果。
+本项目是 **ActSpan** Chrome 扩展程序（MV3），使用 React + TypeScript + Vite 构建。核心功能是在任意网页上注入一个 AI 悬浮助手，用户通过悬浮球或快捷键唤起对话框，与 AI 交互。ActSpan 运行在用户的真实浏览器环境中，天然复用用户的登录态和 Cookie，无需额外的身份验证或 Cookie 迁移。AI 通过 Phase Orchestrator + Agentic Loop 自主调用内置工具和动态扩展工具，在后台多轮执行，完成后以流式方式返回结果。
 
 ## 构建系统
 
@@ -54,7 +54,7 @@ Keep this managed block so 'openspec update' can refresh the instructions.
 
 ### 构建输出
 
-所有构建输出到：`build_version/mole-extension/`
+所有构建输出到：`build_version/actspan-extension/`
 
 输出目录结构符合 Chrome 扩展 manifest 要求：
 - `index.html` + assets - 弹窗 UI
@@ -183,7 +183,7 @@ Keep this managed block so 'openspec update' can refresh the instructions.
 基于 fetch 实现的 **OpenAI Responses API** 接口，不引入 SDK：
 - `chatComplete()` - 非流式调用（POST `{endpoint}/responses`，用于工具调用循环）
 - `chatStream()` - 流式调用（AsyncGenerator，用于最终文本回复）
-- AI 配置存储在 `chrome.storage.local`，key 为 `mole_ai_settings`
+- AI 配置存储在 `chrome.storage.local`，key 为 `actspan_ai_settings`（兼容读取旧 key `mole_ai_settings`）
 - 用户自行配置 endpoint / API Key / model
 - 模型并行工具能力表（`MODEL_PARALLEL_TOOL_CALL_SUPPORT`）：按模型名自动判断是否支持 `parallel_tool_calls`
 
@@ -306,13 +306,13 @@ Keep this managed block so 'openspec update' can refresh the instructions.
 
 ### 悬浮球 UI（React 版）
 
-- 入口：`src/content/float-ball-react.tsx` → `src/content/float-ball/MoleRoot.tsx`
+- 入口：`src/content/float-ball-react.tsx` → `src/content/float-ball/ActspanRoot.tsx`
 - Shadow DOM 隔离样式，不影响宿主页面
 - React 组件树挂载在 Shadow DOM 内
 - 支持域名黑名单（`DISABLED_DOMAINS_KEY`，在 Options 页面管理）
 - 快捷键：⌘M (Mac) / Ctrl+M (Windows)
 - 搜索框接入 AI 对话，支持流式响应和函数调用状态展示
-- 组件文件：`src/content/float-ball/`（包含 MoleRoot、components、context、hooks、styles、constants 等）
+- 组件文件：`src/content/float-ball/`（包含 ActspanRoot、components、context、hooks、styles、constants 等）
 - 旧版 `src/content/float-ball.ts` 保留但未使用，待迁移完成后删除
 
 ### 页面内容解析器 (`src/content/page-parser.ts`)
@@ -567,7 +567,7 @@ interface ToolExecutionContext { tabId?: number; signal?: AbortSignal; }
 
 1. 在 `src/` 目录下修改代码
 2. 运行 `npm run build` 或 `npm run dev`（监听模式）
-3. 在 Chrome 中从 `build_version/mole-extension/` 加载未打包的扩展
+3. 在 Chrome 中从 `build_version/actspan-extension/` 加载未打包的扩展
 4. 内容脚本修改：重新加载扩展并刷新目标页面
 5. 后台脚本修改：重新加载扩展
 6. 弹窗修改：关闭并重新打开弹窗

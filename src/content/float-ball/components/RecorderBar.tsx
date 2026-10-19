@@ -4,25 +4,25 @@
  */
 
 import React from 'react';
-import { useMole } from '../context/useMole';
+import { useActspan } from '../context/useActspan';
 
 export const RecorderBar: React.FC<{
   onStop: () => void;
   onCancelAudit?: () => void;
 }> = ({ onStop, onCancelAudit }) => {
-  const { state } = useMole();
+  const { state } = useActspan();
   const { isRecording, isRecorderAuditing, recorderStepCount } = state;
 
   // 审计中状态
   if (isRecorderAuditing) {
     return (
-      <div className="mole-recorder-bar visible auditing">
-        <span className="mole-recorder-bar-dot auditing" />
-        <span className="mole-recorder-bar-info">
+      <div className="actspan-recorder-bar visible auditing">
+        <span className="actspan-recorder-bar-dot auditing" />
+        <span className="actspan-recorder-bar-info">
           正在整理录制的工作流...
         </span>
         {onCancelAudit && (
-          <button className="mole-recorder-bar-stop" type="button" onClick={onCancelAudit}>
+          <button className="actspan-recorder-bar-stop" type="button" onClick={onCancelAudit}>
             取消
           </button>
         )}
@@ -34,12 +34,12 @@ export const RecorderBar: React.FC<{
   if (!isRecording) return null;
 
   return (
-    <div className="mole-recorder-bar visible">
-      <span className="mole-recorder-bar-dot" />
-      <span className="mole-recorder-bar-info">
+    <div className="actspan-recorder-bar visible">
+      <span className="actspan-recorder-bar-dot" />
+      <span className="actspan-recorder-bar-info">
         录制中 · {recorderStepCount} 步
       </span>
-      <button className="mole-recorder-bar-stop" type="button" onClick={onStop}>
+      <button className="actspan-recorder-bar-stop" type="button" onClick={onStop}>
         停止录制
       </button>
     </div>

@@ -1,13 +1,13 @@
 /**
- * MoleContext 定义（纯 Context 对象，无组件）
+ * ActspanContext 定义（纯 Context 对象，无组件）
  */
 
 import { createContext, type Dispatch } from 'react';
-import type { MoleState, MoleAction } from './types';
+import type { ActspanState, ActspanAction } from './types';
 
-export interface MoleContextValue {
-  state: MoleState;
-  dispatch: Dispatch<MoleAction>;
+export interface ActspanContextValue {
+  state: ActspanState;
+  dispatch: Dispatch<ActspanAction>;
 }
 
-export const MoleContext = createContext<MoleContextValue | null>(null);
+export const ActspanContext = createContext<ActspanContextValue | null>(null);

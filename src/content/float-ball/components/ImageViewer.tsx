@@ -4,10 +4,10 @@
  */
 
 import React, { useCallback, useEffect } from 'react';
-import { useMole } from '../context/useMole';
+import { useActspan } from '../context/useActspan';
 
 export const ImageViewer: React.FC = () => {
-  const { state, dispatch } = useMole();
+  const { state, dispatch } = useActspan();
   const { screenshotPreviewList, screenshotPreviewIndex } = state;
   const isOpen = screenshotPreviewList.length > 0;
 
@@ -39,25 +39,25 @@ export const ImageViewer: React.FC = () => {
   const meta = `${screenshotPreviewIndex + 1} / ${screenshotPreviewList.length}`;
 
   return (
-    <div className="mole-image-viewer open">
-      <div className="mole-image-viewer-content">
-        <button className="mole-image-viewer-close" type="button" aria-label="关闭预览" onClick={close}>
+    <div className="actspan-image-viewer open">
+      <div className="actspan-image-viewer-content">
+        <button className="actspan-image-viewer-close" type="button" aria-label="关闭预览" onClick={close}>
           ×
         </button>
-        <div className="mole-image-viewer-stage">
+        <div className="actspan-image-viewer-stage">
           {screenshotPreviewList.length > 1 && (
-            <button className="mole-image-viewer-nav prev" type="button" aria-label="上一张" onClick={() => navigate(-1)}>
+            <button className="actspan-image-viewer-nav prev" type="button" aria-label="上一张" onClick={() => navigate(-1)}>
               ‹
             </button>
           )}
-          <img className="mole-image-viewer-img" src={currentSrc} alt="截图预览" />
+          <img className="actspan-image-viewer-img" src={currentSrc} alt="截图预览" />
           {screenshotPreviewList.length > 1 && (
-            <button className="mole-image-viewer-nav next" type="button" aria-label="下一张" onClick={() => navigate(1)}>
+            <button className="actspan-image-viewer-nav next" type="button" aria-label="下一张" onClick={() => navigate(1)}>
               ›
             </button>
           )}
         </div>
-        <div className="mole-image-viewer-meta">{meta}</div>
+        <div className="actspan-image-viewer-meta">{meta}</div>
       </div>
     </div>
   );

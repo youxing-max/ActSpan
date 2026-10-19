@@ -153,7 +153,7 @@ const buildGenericRequest = (
       body: JSON.stringify({
         ...body,
         timestamp: Date.now(),
-        source: 'mole-extension',
+        source: 'actspan-extension',
       }),
     },
   };
@@ -179,15 +179,22 @@ export const sendToWebhook = async (
       return { success: false, message: `HTTP ${response.status}` };
     }
 
-    const inspectJson = entry.type === 'bark' || (entry.type === 'generic' && isFeishuWebhookUrl(url));
+    const isFeishu = entry.type === 'generic' && isFeishuWebhookUrl(url);
+    const inspectJson = entry.type === 'bark' || isFeishu;
     if (inspectJson) {
       try {
         const json = await response.json();
         const successCode = entry.type === 'bark' ? 200 : 0;
-        if (json.code !== undefined && Number(json.code) !== successCode) {
+        if (isFeishu && (json === null || typeof json !== 'object' || json.code === undefined)) {
+          return { success: false, message: '飞书响应缺少成功码' };
+        }
+        if (json?.code !== undefined && Number(json.code) !== successCode) {
           return { success: false, message: json.message || json.msg || `Webhook code ${json.code}` };
         }
       } catch {
+        if (isFeishu) {
+          return { success: false, message: '飞书响应不是有效 JSON' };
+        }
         // 非 JSON 响应，HTTP 200 视为成功
       }
     }
@@ -230,6 +237,22 @@ export const sendWebhookEntries = async (
     },
   };
 };
+/** 向已启用的飞书 Webhook 推送 AI 完成结果 */
+export const sendFeishuCompletion = async (message: string): Promise<FunctionResult> => {
+  const entries = selectFeishuWebhooks(await readWebhookConfig());
+  if (entries.length === 0) {
+    return {
+      success: false,
+      error: '未配置启用的飞书 Webhook',
+      data: { message: '未配置启用的飞书 Webhook', sent: 0, failed: 0 },
+    };
+  }
+  return sendWebhookEntries(entries, {
+    title: '调查完成',
+    message,
+  });
+};
+
 
 /** 获取 entry 的展示 URL（用于 Options 页面） */
 export const getEntryDisplayUrl = (entry: WebhookEntry): string => {

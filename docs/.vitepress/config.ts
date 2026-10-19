@@ -18,7 +18,7 @@ export default defineConfig({
           { text: '快速开始', link: '/guide/getting-started' },
           { text: 'Actspan 能做什么？', link: '/guide/examples' },
           { text: '下载', link: '/download' },
-          { text: 'GitHub', link: 'https://github.com/clark-maybe/mole-extension' },
+          { text: 'GitHub', link: 'https://github.com/youxing-max/ActSpan' },
         ],
         sidebar: {
           '/guide/': [
@@ -98,7 +98,7 @@ export default defineConfig({
           { text: 'Get Started', link: '/en/guide/getting-started' },
           { text: 'What Can Actspan Do?', link: '/en/guide/examples' },
           { text: 'Download', link: '/en/download' },
-          { text: 'GitHub', link: 'https://github.com/clark-maybe/mole-extension' },
+          { text: 'GitHub', link: 'https://github.com/youxing-max/ActSpan' },
         ],
         sidebar: {
           '/en/guide/': [
@@ -154,7 +154,7 @@ export default defineConfig({
     logo: '/actspan-logo.svg',
 
     socialLinks: [
-      { icon: 'github', link: 'https://github.com/clark-maybe/mole-extension' },
+      { icon: 'github', link: 'https://github.com/youxing-max/ActSpan' },
     ],
 
     search: {

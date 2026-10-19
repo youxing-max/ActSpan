@@ -3,6 +3,7 @@
 - 状态：已确认架构基线
 - 范围：扩展运行时 Skill Registry、工作流管理控制台、MCP Bridge、浏览器任务执行边界
 - 目标：用户只安装一次扩展和 MCP Bridge；之后新增、修改、删除工作流无需重新上传扩展、重载扩展或重启 IDE，Actspan 控制台和 IDE 能看到同一份最新能力目录。
+- 当前修复项与验证状态维护在 [Actspan 修复 Spec](./actspan-repair-spec.md)。
 
 ## 1. 问题与现状
 
@@ -16,10 +17,10 @@
 - AI 保存同时写入新旧注册表：`src/functions/save-workflow.ts:50-79`。
 - Options 控制台只写旧注册表：`src/options/pages/WorkflowsPage.tsx:30-63,86-270`。
 - Options 的失效通知只重载旧注册表：`src/background/workflow-handlers.ts:144-154`。
-- 新 Skill 查询只读取内存缓存：`src/functions/skill.ts:185-320`。
-- MCP 当前只暴露浏览器状态、标签页和页面原子工具，没有 Skill/workflow 目录：`mcp-server/index.js:45-160`、`src/background/mcp-bridge.ts:168-285`。
-- 远端同步在启动时非阻塞执行并按定时任务触发；仅删除远端条目时存在持久化缺口：`src/functions/skill-registry.ts:250-353,369-374`。
-- Popup 对 `mole_skills` 的数据形状假设为数组，而实际存储为包含 `skills` 的对象：`src/App.tsx:31-36`。
+- 历史记录（已解决）：Skill API 现在通过 `registryService.listAll()` 读取 canonical snapshot 和 revision。
+- 历史记录（已解决）：MCP 已提供 Skill/workflow catalog 与异步执行能力；当前稳定工具清单另包含 `actspan_feishu_push`，共 18 个工具。
+- 历史记录（已解决）：远端同步删除现在通过 Registry Service 原子提交 source removal 和 revision，见 `src/functions/skill-registry.ts` 与 `src/functions/registry-service.ts`。
+- 历史记录（已解决）：Popup 现在通过 `registryService.listAll().skills` 读取 canonical snapshot，并监听 `actspan_skills` 变化；不再假设旧 registry 是数组。
 
 现有 MCP 边界已经明确：IDE Agent 负责编排，扩展负责浏览器执行；扩展不应被重新上传来更新工作流：`MCP-BRIDGE.md:8-11`。
 当前并发和安全边界也不足以直接承载目标架构：
@@ -251,6 +252,8 @@ actspan_agent_submit
 actspan_agent_status
 actspan_agent_result
 actspan_agent_cancel
+
+`actspan_feishu_push`
 ```
 
 `actspan_skills_list` 至少返回：

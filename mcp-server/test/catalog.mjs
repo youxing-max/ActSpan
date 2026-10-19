@@ -14,6 +14,7 @@ const packageJson = JSON.parse(readFileSync(new URL('../package.json', import.me
 test('exports the fixed Actspan tool catalog', () => {
     assert.deepEqual(TOOL_NAMES, [
         'actspan_status',
+        'actspan_feishu_push',
         'actspan_tabs_list',
         'actspan_tab_open',
         'actspan_tab_close',

@@ -6,7 +6,7 @@
 import React, { useState, useCallback } from 'react';
 import Channel from '../../../lib/channel';
 import { LOGO_REQUEST_CONFIRMATION } from '../icons';
-import { useMole } from '../context/useMole';
+import { useActspan } from '../context/useActspan';
 
 interface ApprovalCardProps {
   requestId: string;
@@ -14,7 +14,7 @@ interface ApprovalCardProps {
 }
 
 export const ApprovalCard: React.FC<ApprovalCardProps> = ({ requestId, message }) => {
-  const { dispatch } = useMole();
+  const { dispatch } = useActspan();
   const [settled, setSettled] = useState(false);
   const [result, setResult] = useState<'approved' | 'rejected' | 'cancelled' | null>(null);
   const [showRejectInput, setShowRejectInput] = useState(false);
@@ -52,26 +52,26 @@ export const ApprovalCard: React.FC<ApprovalCardProps> = ({ requestId, message }
     : '需要你的确认';
 
   return (
-    <div className={`mole-approval-standalone${settled ? ' settled' : ''}`}>
-      <div className="mole-approval-header-bar">
+    <div className={`actspan-approval-standalone${settled ? ' settled' : ''}`}>
+      <div className="actspan-approval-header-bar">
         <img src={LOGO_REQUEST_CONFIRMATION} alt="" />
         <span>{headerText}</span>
       </div>
-      <div className={`mole-approval-card${settled ? ' settled' : ''}`} data-request-id={requestId}>
-        <div className="mole-approval-message">{message}</div>
+      <div className={`actspan-approval-card${settled ? ' settled' : ''}`} data-request-id={requestId}>
+        <div className="actspan-approval-message">{message}</div>
         {!settled && (
-          <div className="mole-approval-actions">
-            <button className="mole-approval-btn approve" onClick={handleApprove}>批准</button>
-            <button className="mole-approval-btn reject" onClick={handleReject}>
+          <div className="actspan-approval-actions">
+            <button className="actspan-approval-btn approve" onClick={handleApprove}>批准</button>
+            <button className="actspan-approval-btn reject" onClick={handleReject}>
               {showRejectInput ? '确认拒绝' : '拒绝'}
             </button>
-            <button className="mole-approval-btn trust-all" onClick={handleTrustAll}>本次不再询问</button>
+            <button className="actspan-approval-btn trust-all" onClick={handleTrustAll}>本次不再询问</button>
           </div>
         )}
         {showRejectInput && !settled && (
-          <div className="mole-approval-reject-input open">
+          <div className="actspan-approval-reject-input open">
             <input
-              className="mole-approval-reject-text"
+              className="actspan-approval-reject-text"
               placeholder="拒绝理由（可选）"
               value={rejectReason}
               onChange={e => setRejectReason(e.target.value)}
@@ -79,7 +79,7 @@ export const ApprovalCard: React.FC<ApprovalCardProps> = ({ requestId, message }
           </div>
         )}
         {settled && (
-          <div className="mole-approval-result">
+          <div className="actspan-approval-result">
             {result === 'approved' ? '✓ 已批准' : result === 'rejected' ? '✗ 已拒绝' : '已取消'}
           </div>
         )}

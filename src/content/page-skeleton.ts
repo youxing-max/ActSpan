@@ -186,7 +186,7 @@ const buildSkeletonTree = (
   // 交互元素：分配 element_id
   if (kind === 'interactive') {
     node.elementId = getOrCreateElementHandle(root);
-    (root as HTMLElement).dataset.moleHandle = node.elementId;
+    (root as HTMLElement).dataset.actspanHandle = node.elementId;
     annotateInteractiveAttrs(node, root);
   }
 

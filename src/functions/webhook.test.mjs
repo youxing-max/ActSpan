@@ -5,7 +5,7 @@ import { build } from 'esbuild';
 const bundle = await build({
   stdin: {
     contents: `
-      export { sendToWebhook, selectFeishuWebhooks, sendWebhookEntries } from './src/functions/webhook.ts';
+      export { sendFeishuCompletion, sendToWebhook, selectFeishuWebhooks, sendWebhookEntries } from './src/functions/webhook.ts';
     `,
     resolveDir: process.cwd(),
     loader: 'ts',
@@ -15,7 +15,7 @@ const bundle = await build({
   format: 'esm',
   platform: 'node',
 });
-const { sendToWebhook, selectFeishuWebhooks, sendWebhookEntries } = await import(
+const { sendFeishuCompletion, sendToWebhook, selectFeishuWebhooks, sendWebhookEntries } = await import(
   `data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].contents).toString('base64')}`
 );
 
@@ -131,5 +131,80 @@ test('reports a Feishu business error from an HTTP 200 response', async () => {
     assert.deepEqual(result, { success: false, message: 'keyword mismatch' });
   } finally {
     globalThis.fetch = originalFetch;
+  }
+});
+
+test('rejects malformed Feishu responses', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response('accepted', { status: 200 });
+
+  try {
+    const result = await sendToWebhook(
+      {
+        id: 'feishu-1',
+        name: '飞书通知群',
+        type: 'generic',
+        enabled: true,
+        createdAt: 1,
+        url: 'https://open.feishu.cn/open-apis/bot/v2/hook/test-token',
+      },
+      { title: '任务完成', message: '处理结果已生成' },
+    );
+
+    assert.equal(result.success, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('rejects Feishu responses without a success code', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response('{"msg":"accepted"}', {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  });
+
+  try {
+    const result = await sendToWebhook(
+      {
+        id: 'feishu-1',
+        name: '飞书通知群',
+        type: 'generic',
+        enabled: true,
+        createdAt: 1,
+        url: 'https://open.feishu.cn/open-apis/bot/v2/hook/test-token',
+      },
+      { title: '任务完成', message: '处理结果已生成' },
+    );
+
+    assert.equal(result.success, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('reports when no enabled Feishu webhook is configured', async () => {
+  const originalChrome = globalThis.chrome;
+  globalThis.chrome = {
+    storage: {
+      local: {
+        get(_keys, callback) {
+          callback({
+            actspan_webhook_config_v1: { version: 1, updatedAt: 1, webhooks: [] },
+          });
+        },
+        set(_items, callback) {
+          callback?.();
+        }
+      },
+    },
+  };
+
+  try {
+    const result = await sendFeishuCompletion('处理结果已生成');
+    assert.equal(result.success, false);
+    assert.equal(result.data.sent, 0);
+  } finally {
+    globalThis.chrome = originalChrome;
   }
 });

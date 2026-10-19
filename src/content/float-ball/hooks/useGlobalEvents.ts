@@ -6,13 +6,13 @@
 
 import { useEffect, useRef, useState } from 'react';
 import Channel from '../../../lib/channel';
-import { useMole } from '../context/useMole';
+import { useActspan } from '../context/useActspan';
 
 /**
  * 监听宿主文档通过 CustomEvent 桥接的全局事件（ESC、点击外部）
  */
 export const useGlobalEvents = () => {
-  const { state, dispatch } = useMole();
+  const { state, dispatch } = useActspan();
   const stateRef = useRef(state);
   stateRef.current = state;
 
@@ -59,12 +59,12 @@ export const useGlobalEvents = () => {
     // 监听来自入口文件桥接的 CustomEvent
     // 注意：这些事件分发在 reactRoot 上，但在 closed Shadow DOM 中
     // 我们无法从组件内拿到 reactRoot 引用，改为使用 window 上的自定义事件
-    window.addEventListener('mole-escape' as any, handleEscape);
-    window.addEventListener('mole-click-outside' as any, handleClickOutside);
+    window.addEventListener('actspan-escape' as any, handleEscape);
+    window.addEventListener('actspan-click-outside' as any, handleClickOutside);
 
     return () => {
-      window.removeEventListener('mole-escape' as any, handleEscape);
-      window.removeEventListener('mole-click-outside' as any, handleClickOutside);
+      window.removeEventListener('actspan-escape' as any, handleEscape);
+      window.removeEventListener('actspan-click-outside' as any, handleClickOutside);
     };
   }, [dispatch]);
 };

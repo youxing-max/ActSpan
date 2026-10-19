@@ -386,7 +386,7 @@ const runRemotePlan = async (
   const warnings: string[] = [];
   let runtimeTabId = context?.tabId;
   const shouldPushTakeoverState = inputParams.float_ball_execution_state !== false;
-  const defaultExecutionLabel = 'Mole AI 执行中';
+  const defaultExecutionLabel = 'Actspan AI 执行中';
   const takeoverLabel = String(inputParams.execution_state_label || inputParams.takeover_label || defaultExecutionLabel).trim()
     || defaultExecutionLabel;
   const takeoverTtlRaw = Number(inputParams.execution_state_ttl_ms ?? inputParams.takeover_ttl_ms);

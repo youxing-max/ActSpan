@@ -1,6 +1,6 @@
 /**
  * AI 流式事件 Hook
- * 监听 Channel __ai_stream 事件，分发到 MoleContext 状态
+ * 监听 Channel __ai_stream 事件，分发到 ActspanContext 状态
  * 核心桥梁：Channel 事件 → React 状态更新
  *
  * 关键设计：
@@ -11,13 +11,13 @@
 
 import { useEffect, useCallback, useRef } from 'react';
 import Channel from '../../../lib/channel';
-import { useMole } from '../context/useMole';
+import { useActspan } from '../context/useActspan';
 import { buildToolIntentText, buildUserFacingActionSummary } from '../text-utils';
 import { reconcileSessionSyncTask } from '../session-sync';
 import { FUNCTION_ICONS, FUNCTION_LABELS } from '../icons';
 
 export const useAIStream = (resultRef: React.RefObject<HTMLDivElement | null>) => {
-  const { state, dispatch } = useMole();
+  const { state, dispatch } = useActspan();
   const stateRef = useRef(state);
   stateRef.current = state;
 

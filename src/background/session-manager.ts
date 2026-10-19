@@ -7,6 +7,7 @@ import Channel from '../lib/channel';
 import { handleChat } from '../ai/orchestrator';
 import { getTextContent } from '../ai/context-manager';
 import { mcpClient } from '../functions/registry';
+import { sendFeishuCompletion } from '../functions/webhook';
 import type { HandleChatOptions } from '../ai/orchestrator';
 import type {
     AIStreamEvent,
@@ -41,6 +42,7 @@ import {
     DEFAULT_REVIEW_TASK_QUERY,
     DEFAULT_COMPACT_TASK_QUERY,
     SESSION_CONTEXT_COMPRESSION_TAG,
+    LEGACY_SESSION_CONTEXT_COMPRESSION_TAG,
     GRACEFUL_ABORT_TIMEOUT_MS,
     SESSION_SYNC_EVENT_TYPES,
     SESSION_IMMEDIATE_PERSIST_EVENT_TYPES,
@@ -504,6 +506,28 @@ function emitTaskLifecycleEvent(
     });
 }
 
+function getFeishuCompletionMessage(
+    session: Session,
+    event: { type: string; content: string },
+): string | undefined {
+    if (event.type !== 'turn_completed') return undefined;
+    if (session.eventLog.some((previous) => previous.type === event.type && previous.content === event.content)) {
+        return undefined;
+    }
+    const payload = parseTurnLifecycleEventPayload(event.content);
+    if (payload?.status !== 'done') return undefined;
+    const message = payload?.lastAgentMessage?.trim();
+    return message || extractLatestAssistantMessageFromContext(session.context);
+}
+
+const pendingFeishuCompletionNotifications = new WeakMap<Session, Set<Promise<void>>>();
+
+export async function flushFeishuCompletionNotifications(session: Session): Promise<void> {
+    const pending = pendingFeishuCompletionNotifications.get(session);
+    if (!pending || pending.size === 0) return;
+    await Promise.all([...pending]);
+}
+
 // ============ 会话级 pushEvent ============
 
 /**
@@ -511,8 +535,23 @@ function emitTaskLifecycleEvent(
  * 同时广播到所有标签页并追加到会话事件日志
  */
 export function createSessionPushEvent(session: Session) {
-    return (event: { type: string; content: string }) => {
-        // 追加到事件日志
+    return (event: AIStreamEvent) => {
+        const completionMessage = getFeishuCompletionMessage(session, event);
+        // 完成通知失败不应改变 AI 任务已完成状态，只记录原因供后台日志排查。
+        if (completionMessage) {
+            const pending = sendFeishuCompletion(completionMessage).then((result) => {
+                if (!result.success) {
+                    console.warn('[Actspan] 调查完成结果飞书推送失败:', result.data?.message || result.error || '未知错误');
+                }
+            }).catch((error: unknown) => {
+                console.warn('[Actspan] 调查完成结果飞书推送异常:', error instanceof Error ? error.message : String(error));
+            });
+            const notifications = pendingFeishuCompletionNotifications.get(session) || new Set<Promise<void>>();
+            notifications.add(pending);
+            pendingFeishuCompletionNotifications.set(session, notifications);
+            pending.then(() => notifications.delete(pending), () => notifications.delete(pending));
+        }
+
         session.eventLog.push({
             ...event,
             timestamp: Date.now(),
@@ -896,7 +935,7 @@ function extractLatestAssistantMessageFromContext(context: InputItem[] | undefin
         const item = context[index];
         if (!('role' in item) || item.role !== 'assistant') continue;
         const text = getTextContent(item.content).trim();
-        if (!text || text.startsWith(SESSION_CONTEXT_COMPRESSION_TAG)) continue;
+        if (!text || text.startsWith(SESSION_CONTEXT_COMPRESSION_TAG) || text.startsWith(LEGACY_SESSION_CONTEXT_COMPRESSION_TAG)) continue;
         return text;
     }
     return undefined;
@@ -1025,6 +1064,7 @@ async function executeSessionChat(session: Session, query: string, tabId?: numbe
                 type: 'turn_completed',
                 content: JSON.stringify(completedPayload),
             });
+            await flushFeishuCompletionNotifications(session);
         }
 
         // 广播会话状态同步

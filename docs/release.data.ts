@@ -23,10 +23,10 @@ export { data }
 
 export default {
   async load(): Promise<ReleaseData> {
-    const REPO = 'clark-maybe/mole-extension'
+    const REPO = 'youxing-max/ActSpan'
     const API = `https://api.github.com/repos/${REPO}/releases/latest`
     // 固定下载地址，不跟版本号
-    const DOWNLOAD_URL = `https://github.com/${REPO}/releases/download/release/mole-extension.zip`
+    const DOWNLOAD_URL = `https://github.com/${REPO}/releases/download/release/actspan-extension.zip`
 
     try {
       const res = await fetch(API, {

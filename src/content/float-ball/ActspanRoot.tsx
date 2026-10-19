@@ -4,19 +4,19 @@
  */
 
 import React, { useCallback } from 'react';
-import { MoleProvider } from './context/MoleContext';
+import { ActspanProvider } from './context/ActspanContext';
 import { Trigger } from './components/Trigger';
 import { TakeoverBanner } from './components/TakeoverBanner';
 import { useGlobalEvents } from './hooks/useGlobalEvents';
 import { useAIStream } from './hooks/useAIStream';
 import { useRecorder } from './hooks/useRecorder';
-import { useMole } from './context/useMole';
+import { useActspan } from './context/useActspan';
 
 /** 内部组件，在 Provider 内部才能用 hooks */
-const MoleInner: React.FC = () => {
+const ActspanInner: React.FC = () => {
   useGlobalEvents();
   useAIStream({ current: null });
-  const { state } = useMole();
+  const { state } = useActspan();
   const { startRecording, stopRecording } = useRecorder();
 
   const handleRecordClick = useCallback(() => {
@@ -35,10 +35,10 @@ const MoleInner: React.FC = () => {
   );
 };
 
-export const MoleRoot: React.FC = () => {
+export const ActspanRoot: React.FC = () => {
   return (
-    <MoleProvider>
-      <MoleInner />
-    </MoleProvider>
+    <ActspanProvider>
+      <ActspanInner />
+    </ActspanProvider>
   );
 };

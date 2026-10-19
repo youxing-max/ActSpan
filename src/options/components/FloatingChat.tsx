@@ -122,22 +122,22 @@ export function FloatingChat({ mode = 'float' }: FloatingChatProps) {
   // ---- 进展面板 ----
 
   const buildAgentStatePanelMarkup = (): string => `
-    <div class="mole-agent-state-title">
-      <span class="mole-agent-state-title-main"><span class="arrow">▶</span><span>进展</span></span>
-      <span class="mole-agent-state-summary">等待任务开始</span>
+    <div class="actspan-agent-state-title">
+      <span class="actspan-agent-state-title-main"><span class="arrow">▶</span><span>进展</span></span>
+      <span class="actspan-agent-state-summary">等待任务开始</span>
     </div>
-    <div class="mole-task-runtime-board"></div>
-    <div class="mole-agent-state-ops-anchor"></div>
-    <div class="mole-agent-state-log"></div>
+    <div class="actspan-task-runtime-board"></div>
+    <div class="actspan-agent-state-ops-anchor"></div>
+    <div class="actspan-agent-state-log"></div>
   `;
 
   const ensureAgentStatePanel = useCallback((): HTMLElement => {
     const el = resultRef.current;
     if (!el) throw new Error('resultRef 未挂载');
-    let panel = el.querySelector('.mole-agent-state-panel:not(.frozen)') as HTMLElement | null;
+    let panel = el.querySelector('.actspan-agent-state-panel:not(.frozen)') as HTMLElement | null;
     if (!panel) {
       panel = document.createElement('div');
-      panel.className = 'mole-agent-state-panel';
+      panel.className = 'actspan-agent-state-panel';
       panel.innerHTML = buildAgentStatePanelMarkup();
       el.appendChild(panel);
       showResult();
@@ -151,9 +151,9 @@ export function FloatingChat({ mode = 'float' }: FloatingChatProps) {
     if (!el) return;
     const panel = task
       ? ensureAgentStatePanel()
-      : el.querySelector('.mole-agent-state-panel:not(.frozen)') as HTMLElement | null;
-    const board = panel?.querySelector('.mole-task-runtime-board') as HTMLElement | null;
-    const summaryEl = panel?.querySelector('.mole-agent-state-summary') as HTMLElement | null;
+      : el.querySelector('.actspan-agent-state-panel:not(.frozen)') as HTMLElement | null;
+    const board = panel?.querySelector('.actspan-task-runtime-board') as HTMLElement | null;
+    const summaryEl = panel?.querySelector('.actspan-agent-state-summary') as HTMLElement | null;
     if (!board) return;
 
     const isRunning = task?.status === 'running';
@@ -192,9 +192,9 @@ export function FloatingChat({ mode = 'float' }: FloatingChatProps) {
       task?.liveStatusText || '我正在继续处理，请稍候...', 'current',
     );
     board.innerHTML = `
-      <div class="mole-runtime-now">
-        ${isRunning ? '<span class="mole-inline-loader"><span></span><span></span><span></span></span>' : ''}
-        <span class="mole-runtime-now-text">${escapeHtml(clipRuntimeText(statusText, 120))}</span>
+      <div class="actspan-runtime-now">
+        ${isRunning ? '<span class="actspan-inline-loader"><span></span><span></span><span></span></span>' : ''}
+        <span class="actspan-runtime-now-text">${escapeHtml(clipRuntimeText(statusText, 120))}</span>
       </div>
     `;
   }, [ensureAgentStatePanel]);
@@ -203,26 +203,26 @@ export function FloatingChat({ mode = 'float' }: FloatingChatProps) {
 
   const ensureCallsGroup = useCallback((): { summary: HTMLElement; detail: HTMLElement } => {
     const panel = ensureAgentStatePanel();
-    const anchor = panel.querySelector('.mole-agent-state-ops-anchor') as HTMLElement | null;
-    let group = panel.querySelector('.mole-calls-group:not(.frozen)') as HTMLElement | null;
+    const anchor = panel.querySelector('.actspan-agent-state-ops-anchor') as HTMLElement | null;
+    let group = panel.querySelector('.actspan-calls-group:not(.frozen)') as HTMLElement | null;
     if (!group) {
       group = document.createElement('div');
-      group.className = 'mole-calls-group mole-agent-state-ops';
+      group.className = 'actspan-calls-group actspan-agent-state-ops';
       group.innerHTML = `
-        <div class="mole-calls-summary">
+        <div class="actspan-calls-summary">
           <span class="arrow">▶</span>
-          <span class="mole-calls-icons"></span>
+          <span class="actspan-calls-icons"></span>
           <span class="calls-text">查看执行过程</span>
         </div>
-        <div class="mole-calls-detail"></div>
+        <div class="actspan-calls-detail"></div>
       `;
       if (anchor) anchor.appendChild(group);
       else panel.appendChild(group);
       showResult();
     }
     return {
-      summary: group.querySelector('.mole-calls-summary')! as HTMLElement,
-      detail: group.querySelector('.mole-calls-detail')! as HTMLElement,
+      summary: group.querySelector('.actspan-calls-summary')! as HTMLElement,
+      detail: group.querySelector('.actspan-calls-detail')! as HTMLElement,
     };
   }, [ensureAgentStatePanel, showResult]);
 
@@ -231,17 +231,17 @@ export function FloatingChat({ mode = 'float' }: FloatingChatProps) {
     if (!task) return;
     const el = resultRef.current;
     if (!el) return;
-    const group = el.querySelector('.mole-agent-state-panel:not(.frozen) .mole-calls-group');
+    const group = el.querySelector('.actspan-agent-state-panel:not(.frozen) .actspan-calls-group');
     if (!group) {
       renderTaskRuntimeBoard();
       return;
     }
-    const iconsEl = group.querySelector('.mole-calls-icons') as HTMLElement | null;
+    const iconsEl = group.querySelector('.actspan-calls-icons') as HTMLElement | null;
     const textEl = group.querySelector('.calls-text') as HTMLElement | null;
-    const detailEl = group.querySelector('.mole-calls-detail') as HTMLElement | null;
+    const detailEl = group.querySelector('.actspan-calls-detail') as HTMLElement | null;
     const uniqueIcons = [...new Set(task.callStack.map(c => c.icon).filter(Boolean))].slice(0, 3);
     if (iconsEl) iconsEl.innerHTML = uniqueIcons.map(src => `<img src="${src}" />`).join('');
-    const count = detailEl ? detailEl.querySelectorAll('.mole-call-item').length : 0;
+    const count = detailEl ? detailEl.querySelectorAll('.actspan-call-item').length : 0;
     if (textEl) textEl.textContent = count > 0 ? `查看执行过程 · 共 ${count} 条` : '查看执行过程';
     renderTaskRuntimeBoard();
   }, [renderTaskRuntimeBoard]);
@@ -253,7 +253,7 @@ export function FloatingChat({ mode = 'float' }: FloatingChatProps) {
     const normalized = String(text || '').replace(/\s+/g, ' ').trim();
     if (!normalized) return null;
     const { detail } = ensureCallsGroup();
-    const items = Array.from(detail.querySelectorAll('.mole-call-item')) as HTMLElement[];
+    const items = Array.from(detail.querySelectorAll('.actspan-call-item')) as HTMLElement[];
     const last = items.length > 0 ? items[items.length - 1] : null;
     if (options?.dedupe !== false && last?.getAttribute('data-process-text') === normalized) return last;
 
@@ -262,19 +262,19 @@ export function FloatingChat({ mode = 'float' }: FloatingChatProps) {
     const subtext = String(options?.subtext || '').trim();
     const statusLabel = tone === 'issue' ? '调整中' : tone === 'done' ? '完成' : tone === 'action' ? '执行中' : '处理中';
     const item = document.createElement('div');
-    item.className = `mole-call-item tone-${tone}`;
+    item.className = `actspan-call-item tone-${tone}`;
     item.setAttribute('data-process-text', normalized);
     if (options?.callId) item.setAttribute('data-call-id', options.callId);
     item.innerHTML = `
-      <div class="mole-call-header">
-        ${icon ? `<img class="mole-func-icon" src="${icon}" />` : '<span class="mole-task-runtime-step-dot"></span>'}
-        <span class="mole-call-main">
-          <span class="mole-call-title">${escapeHtml(normalized)}</span>
-          ${subtext ? `<span class="mole-call-intent">${escapeHtml(subtext)}</span>` : ''}
+      <div class="actspan-call-header">
+        ${icon ? `<img class="actspan-func-icon" src="${icon}" />` : '<span class="actspan-task-runtime-step-dot"></span>'}
+        <span class="actspan-call-main">
+          <span class="actspan-call-title">${escapeHtml(normalized)}</span>
+          ${subtext ? `<span class="actspan-call-intent">${escapeHtml(subtext)}</span>` : ''}
         </span>
-        <span class="mole-call-status">${escapeHtml(statusLabel)}</span>
+        <span class="actspan-call-status">${escapeHtml(statusLabel)}</span>
       </div>
-      <div class="mole-call-body"></div>
+      <div class="actspan-call-body"></div>
     `;
     detail.appendChild(item);
     while (detail.children.length > 24) detail.removeChild(detail.firstChild as Node);
@@ -286,7 +286,7 @@ export function FloatingChat({ mode = 'float' }: FloatingChatProps) {
   // ---- 状态渲染 ----
 
   const clearTransientStatus = useCallback(() => {
-    resultRef.current?.querySelectorAll('.mole-status, .mole-planning').forEach(el => el.remove());
+    resultRef.current?.querySelectorAll('.actspan-status, .actspan-planning').forEach(el => el.remove());
   }, []);
 
   const setStatus = useCallback((html: string) => {
@@ -304,10 +304,10 @@ export function FloatingChat({ mode = 'float' }: FloatingChatProps) {
   const updateAnswer = useCallback((text: string) => {
     const el = resultRef.current;
     if (!el) return;
-    let answerEl = el.querySelector('.mole-answer:not(.frozen)');
+    let answerEl = el.querySelector('.actspan-answer:not(.frozen)');
     if (!answerEl) {
       answerEl = document.createElement('div');
-      answerEl.className = 'mole-answer';
+      answerEl.className = 'actspan-answer';
       el.appendChild(answerEl);
       showResult();
     }
@@ -319,29 +319,29 @@ export function FloatingChat({ mode = 'float' }: FloatingChatProps) {
     const el = resultRef.current;
     if (!el) return;
     const looseNodes = Array.from(el.childNodes).filter(
-      node => !(node instanceof HTMLElement && node.classList.contains('mole-round-history')),
+      node => !(node instanceof HTMLElement && node.classList.contains('actspan-round-history')),
     );
     if (looseNodes.length === 0) return;
 
-    const prevAnswer = el.querySelector('.mole-answer:not(.frozen)');
+    const prevAnswer = el.querySelector('.actspan-answer:not(.frozen)');
     if (prevAnswer) prevAnswer.classList.add('frozen');
-    const prevGroup = el.querySelector('.mole-calls-group:not(.frozen)');
+    const prevGroup = el.querySelector('.actspan-calls-group:not(.frozen)');
     if (prevGroup) prevGroup.classList.add('frozen');
-    const prevStatePanel = el.querySelector('.mole-agent-state-panel:not(.frozen)');
+    const prevStatePanel = el.querySelector('.actspan-agent-state-panel:not(.frozen)');
     if (prevStatePanel) prevStatePanel.classList.add('frozen');
 
     const roundHistory = document.createElement('div');
-    roundHistory.className = 'mole-round-history';
+    roundHistory.className = 'actspan-round-history';
     const compact = String(previewQuery || '').trim();
     const preview = compact ? (compact.length > 40 ? `${compact.slice(0, 40)}...` : compact) : '历史对话';
     roundHistory.innerHTML = `
-      <div class="mole-round-summary">
+      <div class="actspan-round-summary">
         <span class="arrow">▶</span>
-        <span class="mole-round-preview">${escapeHtml(preview)}</span>
+        <span class="actspan-round-preview">${escapeHtml(preview)}</span>
       </div>
-      <div class="mole-round-content"></div>
+      <div class="actspan-round-content"></div>
     `;
-    const roundContent = roundHistory.querySelector('.mole-round-content')!;
+    const roundContent = roundHistory.querySelector('.actspan-round-content')!;
     for (const node of looseNodes) roundContent.appendChild(node);
     el.appendChild(roundHistory);
   }, []);
@@ -433,12 +433,12 @@ export function FloatingChat({ mode = 'float' }: FloatingChatProps) {
     if (!(target instanceof HTMLElement)) return;
     target.classList.remove('tone-status', 'tone-action', 'tone-issue', 'tone-done');
     target.classList.add(`tone-${options.tone || 'status'}`);
-    const statusEl = target.querySelector('.mole-call-status');
+    const statusEl = target.querySelector('.actspan-call-status');
     if (statusEl) {
       statusEl.textContent = options.statusLabel || (options.tone === 'done' ? '完成' : options.tone === 'issue' ? '失败' : '处理中');
     }
     if (typeof options.subtext === 'string') {
-      const subtextEl = target.querySelector('.mole-call-intent');
+      const subtextEl = target.querySelector('.actspan-call-intent');
       if (subtextEl) subtextEl.textContent = options.subtext;
     }
   }, []);
@@ -535,7 +535,7 @@ export function FloatingChat({ mode = 'float' }: FloatingChatProps) {
         renderTaskRuntimeBoard();
         if (SHOW_AGENT_STATE_PANEL) {
           // 追加日志
-          const logEl = ensureAgentStatePanel().querySelector('.mole-agent-state-log') as HTMLElement | null;
+          const logEl = ensureAgentStatePanel().querySelector('.actspan-agent-state-log') as HTMLElement | null;
           if (logEl) {
             try {
               const parsed = JSON.parse(content);
@@ -544,7 +544,7 @@ export function FloatingChat({ mode = 'float' }: FloatingChatProps) {
               const reason = parsed.reason || '';
               const round = typeof parsed.round === 'number' ? parsed.round : 0;
               const item = document.createElement('div');
-              item.className = 'mole-agent-state-item';
+              item.className = 'actspan-agent-state-item';
               item.textContent = `R${round} ${from} → ${to}：${reason}`;
               logEl.appendChild(item);
               while (logEl.children.length > 24) logEl.removeChild(logEl.firstChild as Node);
@@ -562,7 +562,7 @@ export function FloatingChat({ mode = 'float' }: FloatingChatProps) {
         task.failureCode = parsedError.code || task.failureCode || 'E_UNKNOWN';
         if (!task.endedAt) task.endedAt = Date.now();
         if (task.durationMs == null) task.durationMs = Math.max(0, task.endedAt - task.startedAt);
-        appendToResult(`<div class="mole-error">⚠ ${escapeHtml(parsedError.message)}</div>`);
+        appendToResult(`<div class="actspan-error">⚠ ${escapeHtml(parsedError.message)}</div>`);
         updateInputUI();
         saveSnapshot();
         return;
@@ -571,7 +571,7 @@ export function FloatingChat({ mode = 'float' }: FloatingChatProps) {
       if (type === 'thinking' || type === 'planning') {
         const label = type === 'planning' ? '规划中' : '思考中';
         task.liveStatusText = content || label;
-        setStatus(`<div class="mole-planning"><span class="dot"></span>${escapeHtml(content || label)}</div>`);
+        setStatus(`<div class="actspan-planning"><span class="dot"></span>${escapeHtml(content || label)}</div>`);
         saveSnapshot();
         return;
       }
@@ -656,7 +656,7 @@ export function FloatingChat({ mode = 'float' }: FloatingChatProps) {
         }
 
         // 更新对应的 process entry
-        const detailEl = resultRef.current?.querySelector('.mole-calls-detail:not(.frozen .mole-calls-detail)') as HTMLElement | null;
+        const detailEl = resultRef.current?.querySelector('.actspan-calls-detail:not(.frozen .actspan-calls-detail)') as HTMLElement | null;
         if (detailEl && resultCallId) {
           const entry = detailEl.querySelector(`[data-call-id="${resultCallId}"]`) as HTMLElement | null;
           if (entry) {
@@ -667,10 +667,10 @@ export function FloatingChat({ mode = 'float' }: FloatingChatProps) {
             });
             // 结果内容放到 body
             if (resultText && typeof resultText === 'string' && resultText.length < 500) {
-              const body = entry.querySelector('.mole-call-body') as HTMLElement | null;
+              const body = entry.querySelector('.actspan-call-body') as HTMLElement | null;
               if (body) {
                 body.textContent = resultText.slice(0, 300);
-                entry.querySelector('.mole-call-header')?.classList.add('has-body');
+                entry.querySelector('.actspan-call-header')?.classList.add('has-body');
               }
             }
           }
@@ -686,9 +686,9 @@ export function FloatingChat({ mode = 'float' }: FloatingChatProps) {
         task.lastAIText = content;
         clearTransientStatus();
         // 折叠工具调用组
-        const activeGroup = el.querySelector('.mole-calls-group:not(.frozen)');
+        const activeGroup = el.querySelector('.actspan-calls-group:not(.frozen)');
         if (activeGroup) {
-          const detailEl2 = activeGroup.querySelector('.mole-calls-detail');
+          const detailEl2 = activeGroup.querySelector('.actspan-calls-detail');
           const arrowEl = activeGroup.querySelector('.arrow');
           if (detailEl2 && detailEl2.classList.contains('open')) {
             detailEl2.classList.remove('open');
@@ -704,19 +704,19 @@ export function FloatingChat({ mode = 'float' }: FloatingChatProps) {
         try {
           const cards = JSON.parse(content) as Array<{ title: string; price: string; shop?: string; url: string; tag?: string }>;
           const cardsEl = document.createElement('div');
-          cardsEl.className = 'mole-rec-cards';
+          cardsEl.className = 'actspan-rec-cards';
           for (const card of cards) {
-            const metaParts = [`<span class="mole-rec-card-price">${escapeHtml(card.price)}</span>`];
+            const metaParts = [`<span class="actspan-rec-card-price">${escapeHtml(card.price)}</span>`];
             if (card.shop) metaParts.push(escapeHtml(card.shop));
-            const tagHtml = card.tag ? `<span class="mole-rec-tag">${escapeHtml(card.tag)}</span>` : '';
+            const tagHtml = card.tag ? `<span class="actspan-rec-tag">${escapeHtml(card.tag)}</span>` : '';
             cardsEl.innerHTML += `
-              <a class="mole-rec-card" href="${escapeHtml(card.url)}" target="_blank" rel="noopener">
-                <div class="mole-rec-card-body">
-                  <div class="mole-rec-card-title">${escapeHtml(card.title)}</div>
-                  <div class="mole-rec-card-meta">${metaParts.join(' · ')}</div>
+              <a class="actspan-rec-card" href="${escapeHtml(card.url)}" target="_blank" rel="noopener">
+                <div class="actspan-rec-card-body">
+                  <div class="actspan-rec-card-title">${escapeHtml(card.title)}</div>
+                  <div class="actspan-rec-card-meta">${metaParts.join(' · ')}</div>
                 </div>
                 ${tagHtml}
-                <span class="mole-rec-arrow">›</span>
+                <span class="actspan-rec-arrow">›</span>
               </a>
             `;
           }
@@ -734,17 +734,17 @@ export function FloatingChat({ mode = 'float' }: FloatingChatProps) {
           const results = data2.results || [];
           if (results.length > 0) {
             const section = document.createElement('div');
-            section.className = 'mole-search-section';
-            section.innerHTML = `<div class="mole-result-count">找到 ${results.length} 条结果</div>`;
+            section.className = 'actspan-search-section';
+            section.innerHTML = `<div class="actspan-result-count">找到 ${results.length} 条结果</div>`;
             const list = document.createElement('div');
-            list.className = 'mole-search-results';
+            list.className = 'actspan-search-results';
             for (const r of results.slice(0, 5)) {
               list.innerHTML += `
-                <div class="mole-result-card" data-url="${escapeHtml(r.url || '')}">
-                  <div class="mole-result-body">
-                    <a class="mole-result-title" href="${escapeHtml(r.url || '')}" target="_blank" rel="noopener">${escapeHtml(r.title || '')}</a>
-                    <div class="mole-result-snippet">${escapeHtml(r.snippet || r.description || '')}</div>
-                    <div class="mole-result-source">${escapeHtml(r.source || r.shop || '')}</div>
+                <div class="actspan-result-card" data-url="${escapeHtml(r.url || '')}">
+                  <div class="actspan-result-body">
+                    <a class="actspan-result-title" href="${escapeHtml(r.url || '')}" target="_blank" rel="noopener">${escapeHtml(r.title || '')}</a>
+                    <div class="actspan-result-snippet">${escapeHtml(r.snippet || r.description || '')}</div>
+                    <div class="actspan-result-source">${escapeHtml(r.source || r.shop || '')}</div>
                   </div>
                 </div>
               `;
@@ -765,11 +765,11 @@ export function FloatingChat({ mode = 'float' }: FloatingChatProps) {
           const imgSrc = parsed?.image || parsed?.data || '';
           if (imgSrc) {
             const section = document.createElement('div');
-            section.className = 'mole-screenshot-section';
+            section.className = 'actspan-screenshot-section';
             section.setAttribute('data-image-src', imgSrc);
             section.innerHTML = `
-              <div class="mole-screenshot-img-wrap">
-                <img class="mole-screenshot-img" src="${imgSrc}" alt="截图" data-full-src="${imgSrc}" />
+              <div class="actspan-screenshot-img-wrap">
+                <img class="actspan-screenshot-img" src="${imgSrc}" alt="截图" data-full-src="${imgSrc}" />
               </div>
             `;
             el.appendChild(section);
@@ -797,22 +797,22 @@ export function FloatingChat({ mode = 'float' }: FloatingChatProps) {
       if (!el) return;
 
       const wrapper = document.createElement('div');
-      wrapper.className = 'mole-approval-standalone';
+      wrapper.className = 'actspan-approval-standalone';
       wrapper.innerHTML = `
-        <div class="mole-approval-header-bar">
+        <div class="actspan-approval-header-bar">
           <img src="${LOGO_REQUEST_CONFIRMATION}" />
           <span>需要你的确认</span>
         </div>
-        <div class="mole-approval-card" data-request-id="${requestId}">
-          <div class="mole-approval-message">${escapeHtml(message)}</div>
-          <div class="mole-approval-actions">
-            <button class="mole-approval-btn approve">批准</button>
-            <button class="mole-approval-btn reject">拒绝</button>
-            <button class="mole-approval-btn trust-all">本次不再询问</button>
+        <div class="actspan-approval-card" data-request-id="${requestId}">
+          <div class="actspan-approval-message">${escapeHtml(message)}</div>
+          <div class="actspan-approval-actions">
+            <button class="actspan-approval-btn approve">批准</button>
+            <button class="actspan-approval-btn reject">拒绝</button>
+            <button class="actspan-approval-btn trust-all">本次不再询问</button>
           </div>
-          <div class="mole-approval-reject-input">
-            <input class="mole-approval-reject-text" placeholder="拒绝理由（可选）" />
-            <button class="mole-approval-reject-confirm mole-approval-btn reject">确认拒绝</button>
+          <div class="actspan-approval-reject-input">
+            <input class="actspan-approval-reject-text" placeholder="拒绝理由（可选）" />
+            <button class="actspan-approval-reject-confirm actspan-approval-btn reject">确认拒绝</button>
           </div>
         </div>
       `;
@@ -825,12 +825,12 @@ export function FloatingChat({ mode = 'float' }: FloatingChatProps) {
     const handleApprovalCancel = (data: any) => {
       const requestId = data?.requestId;
       if (!requestId) return;
-      const card = resultRef.current?.querySelector(`.mole-approval-card[data-request-id="${requestId}"]`) as HTMLElement;
+      const card = resultRef.current?.querySelector(`.actspan-approval-card[data-request-id="${requestId}"]`) as HTMLElement;
       if (!card || card.classList.contains('settled')) return;
       card.classList.add('settled');
       card.querySelectorAll('button').forEach(btn => { (btn as HTMLButtonElement).disabled = true; });
       const resultText = document.createElement('div');
-      resultText.className = 'mole-approval-result';
+      resultText.className = 'actspan-approval-result';
       resultText.textContent = '已取消';
       card.appendChild(resultText);
       saveSnapshot();
@@ -840,20 +840,20 @@ export function FloatingChat({ mode = 'float' }: FloatingChatProps) {
     const handleApprovalSettled = (data: any) => {
       const { requestId, approved, trustAll } = data || {};
       if (!requestId) return;
-      const card = resultRef.current?.querySelector(`.mole-approval-card[data-request-id="${requestId}"]`) as HTMLElement;
+      const card = resultRef.current?.querySelector(`.actspan-approval-card[data-request-id="${requestId}"]`) as HTMLElement;
       if (!card || card.classList.contains('settled')) return;
       card.classList.add('settled');
       card.querySelectorAll('button').forEach(btn => { (btn as HTMLButtonElement).disabled = true; });
-      const rejectInput = card.querySelector('.mole-approval-reject-input') as HTMLElement;
+      const rejectInput = card.querySelector('.actspan-approval-reject-input') as HTMLElement;
       if (rejectInput) rejectInput.classList.remove('open');
       const resultText = document.createElement('div');
-      resultText.className = 'mole-approval-result';
+      resultText.className = 'actspan-approval-result';
       resultText.textContent = approved ? '✓ 已批准' : '✗ 已拒绝';
       card.appendChild(resultText);
-      const standalone = card.closest('.mole-approval-standalone') as HTMLElement;
+      const standalone = card.closest('.actspan-approval-standalone') as HTMLElement;
       if (standalone) {
         standalone.classList.add('settled');
-        const titleEl = standalone.querySelector('.mole-approval-header-bar span') as HTMLElement;
+        const titleEl = standalone.querySelector('.actspan-approval-header-bar span') as HTMLElement;
         if (titleEl) titleEl.textContent = trustAll ? '已批准（本次不再询问）' : (approved ? '已批准' : '已拒绝');
       }
       saveSnapshot();
@@ -869,21 +869,21 @@ export function FloatingChat({ mode = 'float' }: FloatingChatProps) {
       if (!el) return;
 
       const optionsHtml = options && options.length > 0
-        ? `<div class="mole-ask-user-options">${options.map((opt: string, idx: number) => `<button class="mole-ask-user-option" data-index="${idx}">${escapeHtml(opt)}</button>`).join('')}</div>`
+        ? `<div class="actspan-ask-user-options">${options.map((opt: string, idx: number) => `<button class="actspan-ask-user-option" data-index="${idx}">${escapeHtml(opt)}</button>`).join('')}</div>`
         : '';
       const inputRowHtml = allowFreeText !== false
-        ? `<div class="mole-ask-user-input-row"><input class="mole-ask-user-text" placeholder="${options && options.length > 0 ? '或者直接输入...' : '请输入你的回答...'}" /><button class="mole-ask-user-submit">发送</button></div>`
+        ? `<div class="actspan-ask-user-input-row"><input class="actspan-ask-user-text" placeholder="${options && options.length > 0 ? '或者直接输入...' : '请输入你的回答...'}" /><button class="actspan-ask-user-submit">发送</button></div>`
         : '';
 
       const wrapper = document.createElement('div');
-      wrapper.className = 'mole-ask-user-standalone';
+      wrapper.className = 'actspan-ask-user-standalone';
       wrapper.innerHTML = `
-        <div class="mole-ask-user-header-bar">
+        <div class="actspan-ask-user-header-bar">
           <img src="${LOGO_ASK_USER}" />
           <span>Actspan 有个问题</span>
         </div>
-        <div class="mole-ask-user-card" data-request-id="${requestId}">
-          <div class="mole-ask-user-question">${escapeHtml(question)}</div>
+        <div class="actspan-ask-user-card" data-request-id="${requestId}">
+          <div class="actspan-ask-user-question">${escapeHtml(question)}</div>
           ${optionsHtml}
           ${inputRowHtml}
         </div>
@@ -897,12 +897,12 @@ export function FloatingChat({ mode = 'float' }: FloatingChatProps) {
     const handleAskUserCancel = (data: any) => {
       const requestId = data?.requestId;
       if (!requestId) return;
-      const card = resultRef.current?.querySelector(`.mole-ask-user-card[data-request-id="${requestId}"]`) as HTMLElement;
+      const card = resultRef.current?.querySelector(`.actspan-ask-user-card[data-request-id="${requestId}"]`) as HTMLElement;
       if (!card || card.classList.contains('settled')) return;
       card.classList.add('settled');
       card.querySelectorAll('button, input').forEach(el2 => { (el2 as HTMLButtonElement).disabled = true; });
       const resultText = document.createElement('div');
-      resultText.className = 'mole-ask-user-result';
+      resultText.className = 'actspan-ask-user-result';
       resultText.textContent = '已取消';
       card.appendChild(resultText);
       saveSnapshot();
@@ -912,23 +912,23 @@ export function FloatingChat({ mode = 'float' }: FloatingChatProps) {
     const handleAskUserSettled = (data: any) => {
       const { requestId, answer, source } = data || {};
       if (!requestId) return;
-      const card = resultRef.current?.querySelector(`.mole-ask-user-card[data-request-id="${requestId}"]`) as HTMLElement;
+      const card = resultRef.current?.querySelector(`.actspan-ask-user-card[data-request-id="${requestId}"]`) as HTMLElement;
       if (!card || card.classList.contains('settled')) return;
       card.classList.add('settled');
       card.querySelectorAll('button, input').forEach(el2 => { (el2 as HTMLButtonElement).disabled = true; });
       if (source === 'option') {
-        const optionBtns = card.querySelectorAll('.mole-ask-user-option');
+        const optionBtns = card.querySelectorAll('.actspan-ask-user-option');
         optionBtns.forEach(btn => {
           if (btn.textContent === answer) btn.classList.add('selected');
         });
       }
       const resultText = document.createElement('div');
-      resultText.className = 'mole-ask-user-result';
+      resultText.className = 'actspan-ask-user-result';
       resultText.textContent = source === 'option' ? `已选择：${answer}` : `已回答：${answer}`;
       card.appendChild(resultText);
-      const standalone = card.closest('.mole-ask-user-standalone') as HTMLElement;
+      const standalone = card.closest('.actspan-ask-user-standalone') as HTMLElement;
       if (standalone) {
-        const titleEl = standalone.querySelector('.mole-ask-user-header-bar span') as HTMLElement;
+        const titleEl = standalone.querySelector('.actspan-ask-user-header-bar span') as HTMLElement;
         if (titleEl) titleEl.textContent = '已回答';
       }
       saveSnapshot();
@@ -1199,7 +1199,7 @@ export function FloatingChat({ mode = 'float' }: FloatingChatProps) {
           curTask.status = 'error';
           curTask.errorMsg = message;
           curTask.failureCode = typeof response?.code === 'string' ? response.code : curTask.failureCode;
-          appendToResult(`<div class="mole-error">⚠ ${escapeHtml(message)}</div>`);
+          appendToResult(`<div class="actspan-error">⚠ ${escapeHtml(message)}</div>`);
           updateInputUI();
           saveSnapshot();
         }
@@ -1245,7 +1245,7 @@ export function FloatingChat({ mode = 'float' }: FloatingChatProps) {
             curTask.status = 'error';
             curTask.errorMsg = message;
             curTask.failureCode = typeof response?.code === 'string' ? response.code : curTask.failureCode;
-            appendToResult(`<div class="mole-error">⚠ ${escapeHtml(message)}</div>`);
+            appendToResult(`<div class="actspan-error">⚠ ${escapeHtml(message)}</div>`);
             updateInputUI();
             saveSnapshot();
           } else if (response?.accepted === true && typeof response.sessionId === 'string') {
@@ -1299,7 +1299,7 @@ export function FloatingChat({ mode = 'float' }: FloatingChatProps) {
         if (retryBtn) retryBtn.disabled = false;
         const message = typeof response?.message === 'string' && response.message.trim()
           ? response.message.trim() : '恢复失败';
-        appendToResult(`<div class="mole-error">⚠ ${escapeHtml(message)}</div>`);
+        appendToResult(`<div class="actspan-error">⚠ ${escapeHtml(message)}</div>`);
         updateInputUI();
       }
     });
@@ -1310,11 +1310,11 @@ export function FloatingChat({ mode = 'float' }: FloatingChatProps) {
     const target = e.target as HTMLElement;
 
     // 折叠组摘要 toggle
-    const summary = target.closest('.mole-calls-summary') as HTMLElement | null;
+    const summary = target.closest('.actspan-calls-summary') as HTMLElement | null;
     if (summary) {
-      const group = summary.closest('.mole-calls-group');
+      const group = summary.closest('.actspan-calls-group');
       if (group) {
-        const dt = group.querySelector('.mole-calls-detail');
+        const dt = group.querySelector('.actspan-calls-detail');
         const ar = summary.querySelector('.arrow');
         if (dt) {
           const opened = dt.classList.toggle('open');
@@ -1325,11 +1325,11 @@ export function FloatingChat({ mode = 'float' }: FloatingChatProps) {
     }
 
     // 历史对话折叠组 toggle
-    const roundSummary = target.closest('.mole-round-summary') as HTMLElement | null;
+    const roundSummary = target.closest('.actspan-round-summary') as HTMLElement | null;
     if (roundSummary) {
-      const roundHistory = roundSummary.closest('.mole-round-history');
+      const roundHistory = roundSummary.closest('.actspan-round-history');
       if (roundHistory) {
-        const rc = roundHistory.querySelector('.mole-round-content');
+        const rc = roundHistory.querySelector('.actspan-round-content');
         const ar = roundSummary.querySelector('.arrow');
         if (rc) {
           const opened = rc.classList.toggle('open');
@@ -1340,19 +1340,19 @@ export function FloatingChat({ mode = 'float' }: FloatingChatProps) {
     }
 
     // 进展面板 toggle
-    const agentStateTitle = target.closest('.mole-agent-state-title') as HTMLElement | null;
+    const agentStateTitle = target.closest('.actspan-agent-state-title') as HTMLElement | null;
     if (agentStateTitle) {
-      const panel = agentStateTitle.closest('.mole-agent-state-panel');
+      const panel = agentStateTitle.closest('.actspan-agent-state-panel');
       if (panel) panel.classList.toggle('open');
       return;
     }
 
     // 单个函数调用项 toggle
-    const header = target.closest('.mole-call-header') as HTMLElement | null;
+    const header = target.closest('.actspan-call-header') as HTMLElement | null;
     if (header && header.classList.contains('has-body')) {
-      const item = header.closest('.mole-call-item');
+      const item = header.closest('.actspan-call-item');
       if (item) {
-        const body = item.querySelector('.mole-call-body');
+        const body = item.querySelector('.actspan-call-body');
         const ar = header.querySelector('.arrow');
         if (body) {
           const opened = body.classList.toggle('open');
@@ -1363,9 +1363,9 @@ export function FloatingChat({ mode = 'float' }: FloatingChatProps) {
     }
 
     // 确认卡片按钮
-    const approvalBtn = target.closest('.mole-approval-btn') as HTMLElement | null;
+    const approvalBtn = target.closest('.actspan-approval-btn') as HTMLElement | null;
     if (approvalBtn) {
-      const card = approvalBtn.closest('.mole-approval-card') as HTMLElement;
+      const card = approvalBtn.closest('.actspan-approval-card') as HTMLElement;
       if (!card || card.classList.contains('settled')) return;
       const requestId = card.getAttribute('data-request-id');
       if (!requestId) return;
@@ -1373,16 +1373,16 @@ export function FloatingChat({ mode = 'float' }: FloatingChatProps) {
       const disableCard = (approved: boolean) => {
         card.classList.add('settled');
         card.querySelectorAll('button').forEach(btn => { (btn as HTMLButtonElement).disabled = true; });
-        const rejectInput = card.querySelector('.mole-approval-reject-input') as HTMLElement;
+        const rejectInput = card.querySelector('.actspan-approval-reject-input') as HTMLElement;
         if (rejectInput) rejectInput.classList.remove('open');
         const resultText = document.createElement('div');
-        resultText.className = 'mole-approval-result';
+        resultText.className = 'actspan-approval-result';
         resultText.textContent = approved ? '✓ 已批准' : '✗ 已拒绝';
         card.appendChild(resultText);
-        const standalone = card.closest('.mole-approval-standalone') as HTMLElement;
+        const standalone = card.closest('.actspan-approval-standalone') as HTMLElement;
         if (standalone) {
           standalone.classList.add('settled');
-          const titleEl = standalone.querySelector('.mole-approval-header-bar span') as HTMLElement;
+          const titleEl = standalone.querySelector('.actspan-approval-header-bar span') as HTMLElement;
           if (titleEl) titleEl.textContent = approved ? '已批准' : '已拒绝';
         }
         saveSnapshot();
@@ -1391,21 +1391,21 @@ export function FloatingChat({ mode = 'float' }: FloatingChatProps) {
       if (approvalBtn.classList.contains('trust-all')) {
         Channel.send('__approval_response', { requestId, approved: true, trustAll: true });
         disableCard(true);
-        const standalone = card.closest('.mole-approval-standalone') as HTMLElement;
+        const standalone = card.closest('.actspan-approval-standalone') as HTMLElement;
         if (standalone) {
-          const titleEl = standalone.querySelector('.mole-approval-header-bar span') as HTMLElement;
+          const titleEl = standalone.querySelector('.actspan-approval-header-bar span') as HTMLElement;
           if (titleEl) titleEl.textContent = '已批准（本次不再询问）';
         }
       } else if (approvalBtn.classList.contains('approve')) {
         Channel.send('__approval_response', { requestId, approved: true });
         disableCard(true);
-      } else if (approvalBtn.classList.contains('reject') && !approvalBtn.classList.contains('mole-approval-reject-confirm')) {
-        const rejectInput = card.querySelector('.mole-approval-reject-input') as HTMLElement;
+      } else if (approvalBtn.classList.contains('reject') && !approvalBtn.classList.contains('actspan-approval-reject-confirm')) {
+        const rejectInput = card.querySelector('.actspan-approval-reject-input') as HTMLElement;
         if (rejectInput) rejectInput.classList.add('open');
-        const textInput = card.querySelector('.mole-approval-reject-text') as HTMLInputElement;
+        const textInput = card.querySelector('.actspan-approval-reject-text') as HTMLInputElement;
         if (textInput) textInput.focus();
-      } else if (approvalBtn.classList.contains('mole-approval-reject-confirm')) {
-        const textInput = card.querySelector('.mole-approval-reject-text') as HTMLInputElement;
+      } else if (approvalBtn.classList.contains('actspan-approval-reject-confirm')) {
+        const textInput = card.querySelector('.actspan-approval-reject-text') as HTMLInputElement;
         const userMessage = textInput?.value?.trim() || '';
         Channel.send('__approval_response', { requestId, approved: false, userMessage });
         disableCard(false);
@@ -1414,9 +1414,9 @@ export function FloatingChat({ mode = 'float' }: FloatingChatProps) {
     }
 
     // 提问卡片选项点击
-    const askUserOption = target.closest('.mole-ask-user-option') as HTMLElement | null;
+    const askUserOption = target.closest('.actspan-ask-user-option') as HTMLElement | null;
     if (askUserOption) {
-      const card = askUserOption.closest('.mole-ask-user-card') as HTMLElement;
+      const card = askUserOption.closest('.actspan-ask-user-card') as HTMLElement;
       if (!card || card.classList.contains('settled')) return;
       const requestId = card.getAttribute('data-request-id');
       if (!requestId) return;
@@ -1426,7 +1426,7 @@ export function FloatingChat({ mode = 'float' }: FloatingChatProps) {
       card.querySelectorAll('button, input').forEach(el => { (el as HTMLButtonElement).disabled = true; });
       askUserOption.classList.add('selected');
       const resultText = document.createElement('div');
-      resultText.className = 'mole-ask-user-result';
+      resultText.className = 'actspan-ask-user-result';
       resultText.textContent = `已选择：${answer}`;
       card.appendChild(resultText);
       saveSnapshot();
@@ -1434,20 +1434,20 @@ export function FloatingChat({ mode = 'float' }: FloatingChatProps) {
     }
 
     // 提问卡片发送按钮
-    const askUserSubmit = target.closest('.mole-ask-user-submit') as HTMLElement | null;
+    const askUserSubmit = target.closest('.actspan-ask-user-submit') as HTMLElement | null;
     if (askUserSubmit) {
-      const card = askUserSubmit.closest('.mole-ask-user-card') as HTMLElement;
+      const card = askUserSubmit.closest('.actspan-ask-user-card') as HTMLElement;
       if (!card || card.classList.contains('settled')) return;
       const requestId = card.getAttribute('data-request-id');
       if (!requestId) return;
-      const textInput = card.querySelector('.mole-ask-user-text') as HTMLInputElement;
+      const textInput = card.querySelector('.actspan-ask-user-text') as HTMLInputElement;
       const answer = textInput?.value?.trim() || '';
       if (!answer) return;
       Channel.send('__ask_user_response', { requestId, answer, source: 'text' });
       card.classList.add('settled');
       card.querySelectorAll('button, input').forEach(el => { (el as HTMLButtonElement).disabled = true; });
       const resultText = document.createElement('div');
-      resultText.className = 'mole-ask-user-result';
+      resultText.className = 'actspan-ask-user-result';
       resultText.textContent = `已回答：${answer}`;
       card.appendChild(resultText);
       saveSnapshot();
@@ -1456,7 +1456,7 @@ export function FloatingChat({ mode = 'float' }: FloatingChatProps) {
 
     // 搜索结果卡片点击
     if ((target as HTMLElement).tagName === 'A') return;
-    const resultCard = target.closest('.mole-result-card') as HTMLElement | null;
+    const resultCard = target.closest('.actspan-result-card') as HTMLElement | null;
     if (resultCard) {
       const url = resultCard.getAttribute('data-url');
       if (url) window.open(url, '_blank');
@@ -1467,18 +1467,18 @@ export function FloatingChat({ mode = 'float' }: FloatingChatProps) {
   const handleResultKeyDown = useCallback((e: React.KeyboardEvent) => {
     const target = e.target as HTMLElement;
     if (e.key !== 'Enter') return;
-    if (target.classList.contains('mole-approval-reject-text')) {
+    if (target.classList.contains('actspan-approval-reject-text')) {
       e.preventDefault();
-      const card = target.closest('.mole-approval-card') as HTMLElement;
+      const card = target.closest('.actspan-approval-card') as HTMLElement;
       if (!card || card.classList.contains('settled')) return;
-      const confirmBtn = card.querySelector('.mole-approval-reject-confirm') as HTMLElement;
+      const confirmBtn = card.querySelector('.actspan-approval-reject-confirm') as HTMLElement;
       if (confirmBtn) confirmBtn.click();
     }
-    if (target.classList.contains('mole-ask-user-text')) {
+    if (target.classList.contains('actspan-ask-user-text')) {
       e.preventDefault();
-      const card = target.closest('.mole-ask-user-card') as HTMLElement;
+      const card = target.closest('.actspan-ask-user-card') as HTMLElement;
       if (!card || card.classList.contains('settled')) return;
-      const submitBtn = card.querySelector('.mole-ask-user-submit') as HTMLElement;
+      const submitBtn = card.querySelector('.actspan-ask-user-submit') as HTMLElement;
       if (submitBtn) submitBtn.click();
     }
   }, []);

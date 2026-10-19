@@ -78,7 +78,7 @@ const exportLogs = async () => {
     }
 
     const blob = new Blob([text], { type: 'text/plain' });
-    const fileName = `Mole-LOG-${dayjs().format('YYYY-MM-DD_HH:mm:ss')}`;
+    const fileName = `Actspan-LOG-${dayjs().format('YYYY-MM-DD_HH:mm:ss')}`;
 
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
