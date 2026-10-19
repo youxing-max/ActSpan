@@ -1,6 +1,20 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readMigratedStorage } from './legacy-storage.ts';
+import { build } from 'esbuild';
+const bundle = await build({
+  stdin: {
+    contents: `export { readMigratedStorage } from './src/lib/legacy-storage.ts';`,
+    resolveDir: process.cwd(),
+    loader: 'ts',
+  },
+  bundle: true,
+  write: false,
+  format: 'esm',
+  platform: 'node',
+});
+const { readMigratedStorage } = await import(
+  `data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].contents).toString('base64')}`,
+);
 
 const storage = (initial = {}) => {
   const values = { ...initial };
