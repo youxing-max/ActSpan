@@ -96,12 +96,16 @@ async function main(config) {
         void hub.connect().catch((error) => log(`bridge connect failed: ${safeError(error)}`));
         log(`host initialized slug=${host.slug} source=${host.source}`);
     };
+    // SDK 1.11 没有 registerTool：legacy tool() 只认 raw shape，把 ZodObject 直接传进去会被
+    // 当成 annotations，参数表退化成空对象（模型看不到任何参数）。这里两种形态都归一成 shape。
     const registerTool = (name, definition, handler) => {
         if (typeof server.registerTool === 'function') {
             server.registerTool(name, definition, handler);
             return;
         }
-        server.tool(name, definition.description, definition.inputSchema, handler);
+        const schema = definition.inputSchema;
+        const shape = schema && typeof schema.shape === 'object' ? schema.shape : schema;
+        server.tool(name, definition.description, shape, handler);
     };
 
 
