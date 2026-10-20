@@ -1,6 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Actspan",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAktAyufAUexbFFANX4kaBpsTY4BtytJq8WYSOk5ng28LsHgAHB0dK6XuIQ4QtY7AV5JezZGmjpmjSb0g4cF9ptqNxuipDFp8ceX5iLou3y/Eiah8jX0hguLN7kkf2nmeCyBTufEo+L786WvCdwxxjHb4dRi4YriDnPo7CJ4tlGcBNbAnqTDOYgKZCyyC7DILlYm8AXzs3WveNa5b5OZBYnNLSIGdo9CI+HyIgBHVmXbu1eyrpc+4nnDtP73TqnEzcmnb2XnSoiBZYnn/1B7S5iVIGQfHygxaLUpO8E7OcaSWJCoVX20JPkIUPwT8gbFPK6iNUrDsGW9nfHztAlJ7SfwIDAQAB",
   "version": "1.1.0",
   "description": "Actspan — your AI assistant for live browser tasks and workflows.",
   "permissions": [
@@ -17,13 +18,23 @@
     "downloads",
     "webRequest",
     "debugger",
-    "sidePanel"
+    "webNavigation",
+    "sidePanel",
+    "offscreen"
   ],
   "side_panel": {
     "default_path": "sidepanel.html"
   },
   "host_permissions": [
     "<all_urls>"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "all_frames": true,
+      "run_at": "document_idle"
+    }
   ],
   "action": {
     "default_popup": "index.html"

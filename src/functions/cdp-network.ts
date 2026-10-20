@@ -7,12 +7,99 @@
 import type { FunctionDefinition, FunctionResult, ToolExecutionContext } from './types';
 import { CDPSessionManager } from '../lib/cdp-session';
 import { getActiveTabId } from './tab-utils';
+import { redactSensitive } from './redact';
 
 const MAX_BODY_SIZE = 50 * 1024; // 响应 body 最大返回 50KB
+type NetworkCaptureOptions = {
+  mode: 'list' | 'detail' | 'query';
+  urlFilter?: string;
+  requestId?: string;
+  index?: number;
+  limit?: number;
+  reload?: boolean;
+  includeBody?: boolean;
+};
+
+/** Read real completed CDP requests. Starting capture cannot recover traffic sent before attachment. */
+export async function inspectNetworkCapture(tabId: number, options: NetworkCaptureOptions, signal?: AbortSignal) {
+  if (signal?.aborted) throw new Error('Network inspection cancelled');
+  const started = !CDPSessionManager.isNetworkListening(tabId);
+  if (started) {
+    const result = await CDPSessionManager.startNetworkListening(tabId, { maxEvents: 2000 });
+    if (!result.success) throw new Error(`Could not start CDP network capture: ${result.error || 'debugger unavailable'}. Check debugger access and try again.`);
+  }
+  const beforeReload = options.reload ? new Set(CDPSessionManager.getNetworkEvents(tabId, { limit: 2000 })) : undefined;
+  if (options.reload && (typeof chrome.tabs?.reload !== 'function' || !chrome.tabs.onUpdated)) {
+    throw new Error('Tab reload is unavailable in this browser context; capture is active. Navigate through the page UI, then list observed requests.');
+  }
+  if (options.reload) {
+    if (signal?.aborted) throw new Error('Network inspection cancelled before reload');
+    await new Promise<void>((resolve, reject) => {
+      let done = false;
+      const finish = (error?: Error) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        chrome.tabs.onUpdated.removeListener(onUpdated);
+        signal?.removeEventListener('abort', onAbort);
+        if (error) reject(error); else resolve();
+      };
+      const onUpdated = (id: number, info: chrome.tabs.TabChangeInfo) => {
+        if (id === tabId && info.status === 'complete') {
+          // Give requests triggered at load a brief chance to finish before inspecting completed events.
+          setTimeout(() => finish(), 250);
+        }
+      };
+      const onAbort = () => finish(new Error('Network inspection cancelled during reload'));
+      const timer = setTimeout(() => finish(new Error('Reload did not finish within 15 seconds; capture remains active. Check the page and list again.')), 15000);
+      chrome.tabs.onUpdated.addListener(onUpdated);
+      signal?.addEventListener('abort', onAbort, { once: true });
+      void chrome.tabs.reload(tabId).catch((error) => finish(new Error(`Could not reload tab ${tabId}: ${String(error)}. Capture remains active.`)));
+    });
+  }
+  if (signal?.aborted) throw new Error('Network inspection cancelled');
+  const events = CDPSessionManager.getNetworkEvents(tabId, { limit: 2000 })
+    .filter((event) => !beforeReload?.has(event))
+    .filter((event) => !options.urlFilter || event.url.toLowerCase().includes(options.urlFilter.toLowerCase()));
+  const describe = (event: typeof events[number]) => {
+    const declaredSize = Object.entries(event.responseHeaders || {}).find(([name]) => name.toLowerCase() === 'content-length')?.[1];
+    const contentLength = declaredSize && /^\d+$/.test(String(declaredSize)) ? Number(declaredSize) : null;
+    return {
+      requestId: event.requestId, method: event.method,
+      url: redactSensitive({ url: event.url }).url,
+      resourceType: event.resourceType, statusCode: event.statusCode ?? null,
+      mimeType: event.mimeType ?? null, contentLength, error: event.error ?? null,
+      timestamp: event.timestamp,
+    };
+  };
+  if (options.mode === 'list') {
+    const limit = options.limit ?? 100;
+    return {
+      tabId, total: events.length, events: events.slice(-limit).reverse().map(describe),
+      ...(events.length ? {} : { diagnostic: options.reload
+        ? 'Reload completed, but no matching completed requests were captured. Check URL filter or interact with the page and list again.'
+        : started ? 'CDP capture started after page load; earlier requests cannot be recovered. Use reload:true to capture first-load requests or interact with the page and list again.'
+          : 'No matching completed requests observed. Check URL filter or interact with the page and list again.' }),
+    };
+  }
+  const matches = options.requestId ? events.filter((event) => event.requestId === options.requestId) : events;
+  const index = options.index ?? 0;
+  const chosen = matches[matches.length - 1 - index];
+  if (!chosen) throw new Error(`No matching completed requests observed for index ${index} (${matches.length} matching requests). ${options.reload ? 'Reload completed without a matching response; check the filter and page.' : 'List observed requests first, interact with the page, or use reload:true for first-load XHR.'}`);
+  const result = { tabId, index, matching: matches.length, ...describe(chosen) };
+  if (options.mode === 'detail' && !options.includeBody) return result;
+  const body = await cdpNetworkFunction.execute({ action: 'get_body', request_id: chosen.requestId, tab_id: tabId }, { signal });
+  if (!body.success) throw new Error(`Observed ${result.url} but its response body was unavailable: ${body.error}. Inspect another batch or repeat the page action and query again.`);
+  const safeBody = redactSensitive(body.data);
+  if (typeof body.data?.body === 'string' && /json/i.test(chosen.mimeType || '')) {
+    try { safeBody.body = JSON.stringify(redactSensitive(JSON.parse(body.data.body))); } catch { /* Non-JSON bodies retain text redaction. */ }
+  }
+  return { ...result, ...safeBody };
+}
 
 export const cdpNetworkFunction: FunctionDefinition = {
   name: 'cdp_network',
-  description: 'Network request monitoring and Cookie management (CDP enhanced). Monitor page network requests, retrieve complete request/response data (including body and headers), aggregate statistics, and cross-origin Cookie read/write.\n\n⚠️ Do NOT use this tool for:\n- Getting page content (use page_viewer or fetch_url)\n- Only use for debugging API requests or managing Cookies',
+  description: 'START HERE when you need DATA rather than an action. Never guess an endpoint name from memory — list actual requests before choosing an endpoint, then pick by response size. A: try fetch with changed parameters first. B: use the page-driven network fallback when replay is blocked, returns 406, or needs page-generated signatures: drive the UI and read the resulting network response instead of fighting the signature. C: inspect an alternate site data entry before persisting with a failing endpoint. Inspect actual requests for API debugging; use reload only when first-load traffic was missed. Response bodies are bounded and sensitive fields are redacted; do not use this for page content (use page(action=\'view\') or fetch_url).',
   supportsParallel: false,
   permissionLevel: 'interact',
   actionPermissions: {
@@ -242,15 +329,25 @@ export const cdpNetworkFunction: FunctionDefinition = {
         let truncated = false;
 
         if (base64Encoded) {
-          // 二进制内容，只返回大小信息
-          const sizeKB = Math.round((body.length * 3) / 4 / 1024);
+          const originalLength = body.length;
+          const maxBase64Length = Math.ceil(MAX_BODY_SIZE / 3) * 4;
+          const originalBytes = Math.floor(originalLength * 3 / 4) - (body.endsWith('==') ? 2 : body.endsWith('=') ? 1 : 0);
+          if (originalBytes > MAX_BODY_SIZE) {
+            const padding = (3 - MAX_BODY_SIZE % 3) % 3;
+            body = body.slice(0, maxBase64Length - padding) + '='.repeat(padding);
+            truncated = true;
+          }
+          const sizeKB = Math.round(originalBytes / 1024);
           return {
             success: true,
             data: {
               request_id: params.request_id,
               base64_encoded: true,
+              body_base64: body,
+              truncated,
+              original_length: originalLength,
               size_kb: sizeKB,
-              message: `响应为二进制内容（约 ${sizeKB}KB），无法以文本显示`,
+              message: truncated ? `二进制响应已截断至约 ${MAX_BODY_SIZE} 字节` : `响应为二进制内容（约 ${sizeKB}KB）`,
             },
           };
         }

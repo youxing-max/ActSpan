@@ -79,14 +79,23 @@ test('normalizes workflow triggers by trimming and deduplicating values', async 
 
   assert.deepEqual((await service.get('catalog', 'domain')).workflows[0].triggers, ['search', 'find']);
 });
-test('keeps legacy workflows without triggers readable', async () => {
-  const area = storage();
+test('keeps persisted legacy workflows without triggers readable', async () => {
+  const area = storage({
+    actspan_skills: {
+      schemaVersion: 1,
+      revision: 4,
+      updatedAt: 4,
+      skills: [skill({ source: 'user' })],
+    },
+  });
   const service = new RegistryService({ storage: area, now: () => 100 });
   await service.initialize();
 
-  await service.upsertSkill(skill({ source: 'user' }));
-
+  const snapshot = await service.listAll();
+  assert.equal(snapshot.revision, 4);
+  assert.equal(snapshot.skills.length, 1);
   const storedWorkflow = (await service.get('catalog', 'domain')).workflows[0];
+  assert.equal(storedWorkflow.name, 'search');
   assert.equal(Object.hasOwn(storedWorkflow, 'triggers'), false);
 });
 test('normalizes unsupported structured workflow error policies to stop', async () => {
@@ -239,5 +248,49 @@ test('broadcasts registry_changed with changed skill names and revision', async 
     changedSkills: ['catalog'],
     reason: 'user_save',
     timestamp: 400,
+  }]);
+});
+
+test('keeps a higher-version remote skill when a stale manifest arrives', async () => {
+  const area = storage();
+  const service = new RegistryService({ storage: area, now: () => 100 });
+  await service.initialize();
+  await service.replaceSourceSkills('remote', 'https://manifest.example/skills.json', [
+    skill({ source: 'remote', manifestUrl: undefined, version: 5, updatedAt: 500, label: 'New' }),
+  ]);
+  const result = await service.replaceSourceSkills('remote', 'https://manifest.example/skills.json', [
+    skill({ source: 'remote', version: 3, updatedAt: 300, label: 'Stale' }),
+  ]);
+  assert.equal(result.changed, false);
+  assert.equal((await service.get('catalog', 'domain')).version, 5);
+  assert.equal((await service.get('catalog', 'domain')).label, 'New');
+});
+
+test('reloads an externally updated canonical store and broadcasts the new revision', async () => {
+  const area = storage({ actspan_skills: {
+    schemaVersion: 1,
+    revision: 1,
+    updatedAt: 1,
+    skills: [skill({ source: 'remote', version: 1, updatedAt: 1 })],
+  } });
+  const service = new RegistryService({ storage: area, now: () => 100 });
+  await service.initialize();
+  const events = [];
+  service.subscribe(event => events.push(event));
+  area.values.actspan_skills = {
+    schemaVersion: 1,
+    revision: 2,
+    updatedAt: 2,
+    skills: [skill({ source: 'remote', version: 2, updatedAt: 2, label: 'Reloaded' })],
+  };
+  await service.reload();
+  assert.equal((await service.listAll()).revision, 2);
+  assert.equal((await service.get('catalog', 'domain')).label, 'Reloaded');
+  assert.deepEqual(events, [{
+    type: 'registry_changed',
+    revision: 2,
+    changedSkills: ['catalog'],
+    reason: 'remote_sync',
+    timestamp: 2,
   }]);
 });

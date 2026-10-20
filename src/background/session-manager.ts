@@ -4,23 +4,25 @@
  * 具体的状态、事件、资源、持久化、历史、回放、审查/压缩 逻辑已拆分到 spoke 模块
  */
 import Channel from '../lib/channel';
+import { CDPSessionManager } from '../lib/cdp-session';
 import { handleChat } from '../ai/orchestrator';
 import { getTextContent } from '../ai/context-manager';
 import { mcpClient } from '../functions/registry';
 import { sendFeishuCompletion } from '../functions/webhook';
 import type { HandleChatOptions } from '../ai/orchestrator';
+import { taskManager } from './task-manager';
+import { tabLeaseManager } from './tab-lease-manager';
+import { clearStatusForTask } from './status-bridge';
 import type {
     AIStreamEvent,
-    AIErrorPayload,
+    AgentPhase,
     AgentStateTransition,
     InputItem,
-    OutputItem,
     Session,
     SessionEventLogItem,
     SessionFailureCode,
     SessionStatus,
     TaskLifecycleEventPayload,
-    TurnLifecycleEventPayload,
 } from '../ai/types';
 
 // ============ 从 spoke 模块导入 ============
@@ -33,7 +35,6 @@ import type {
     RunningSessionTask,
     SessionTaskRunner,
     SessionTaskRunContext,
-    ActiveTurnRuntime,
 } from './session-types';
 import {
     MAX_SESSIONS,
@@ -43,7 +44,6 @@ import {
     DEFAULT_COMPACT_TASK_QUERY,
     SESSION_CONTEXT_COMPRESSION_TAG,
     LEGACY_SESSION_CONTEXT_COMPRESSION_TAG,
-    GRACEFUL_ABORT_TIMEOUT_MS,
     SESSION_SYNC_EVENT_TYPES,
     SESSION_IMMEDIATE_PERSIST_EVENT_TYPES,
     SESSION_PRE_EMIT_PERSIST_EVENT_TYPES,
@@ -52,7 +52,6 @@ import {
 // 状态
 import {
     sessions,
-    getActiveSessionId,
     setActiveSessionId,
     activeControllers,
     sessionTaskKinds,
@@ -62,16 +61,12 @@ import {
     ensureActiveTurnRuntime,
     registerActiveSessionTask,
     dispatchSessionOp,
-    respondSessionOp,
-    buildSessionOpQueueSnapshot,
-    delayMs,
     normalizeTaskKind,
 } from './session-state';
 
 // 事件
 import {
     reconcileSessionStateFromEventLog,
-    extractLatestStartedRunId,
     parseTurnLifecycleEventPayload,
     applyTurnLifecycleEventToSession,
     resolveFailureCode,
@@ -84,7 +79,7 @@ import {
 import { RuntimeResourceManager, trackRuntimeResourceFromEvent } from './session-resource';
 
 // 持久化
-import { persistRuntimeSessions, persistRuntimeSessionsImmediate, restoreRuntimeSessions } from './session-persistence';
+import { persistRuntimeSessions, persistRuntimeSessionsImmediate } from './session-persistence';
 
 // 历史
 import { persistSessionHistory } from './session-history';
@@ -94,6 +89,7 @@ import { buildSessionReplayPayload, buildSessionSyncPayload } from './session-re
 
 // 审查+压缩
 import { runReviewTaskStandalone, runCompactTaskStandalone, compactSessionContext } from './session-context-tasks';
+import { abortTaskResources } from './session-abort';
 
 
 // ============ Re-export spoke 模块的公共 API，保持向后兼容 ============
@@ -206,6 +202,7 @@ function registerActiveTask(
     controller: AbortController,
     runner: SessionTaskRunner,
     runId: string,
+    tabId?: number,
 ): RunningSessionTask {
     const runtime = ensureActiveTurnRuntime();
     const notifier = createTaskDoneNotifier();
@@ -216,6 +213,7 @@ function registerActiveTask(
         runner,
         controller,
         createdAt: Date.now(),
+        tabId,
         done: notifier.done,
         markDone: notifier.markDone,
     };
@@ -491,7 +489,7 @@ function resolveTaskLifecycleEventType(
 }
 
 function emitTaskLifecycleEvent(
-    pushEvent: (event: { type: string; content: string }) => void,
+    pushEvent: (event: AIStreamEvent) => void,
     taskKind: SessionTaskKind,
     phase: 'entered' | 'exited',
     message: string,
@@ -624,17 +622,20 @@ export function createSessionPushEvent(session: Session) {
 
 // ============ Checkpoint ============
 
+/** 收窄检查点阶段：仅接受合法的 AgentPhase，其余回落到 idle */
+function isAgentPhase(value: string): value is AgentPhase {
+    return value === 'plan' || value === 'act' || value === 'observe' || value === 'verify' || value === 'finalize';
+}
+
 export function createSessionCheckpointHandler(session: Session): NonNullable<HandleChatOptions['onCheckpoint']> {
     return (checkpoint) => {
         if (session.status !== 'running') return;
         if (Array.isArray(checkpoint.contextSnapshot) && checkpoint.contextSnapshot.length > 0) {
             session.context = compactSessionContext(checkpoint.contextSnapshot);
         }
-        const normalizedPhase = checkpoint.phase === 'execute'
-            ? 'act'
-            : checkpoint.phase;
+        const rawPhase = checkpoint.phase === 'execute' ? 'act' : checkpoint.phase;
         session.agentState = {
-            phase: normalizedPhase,
+            phase: isAgentPhase(rawPhase) ? rawPhase : 'idle',
             round: checkpoint.round,
             reason: checkpoint.summary || session.agentState.reason,
             updatedAt: checkpoint.updatedAt || Date.now(),
@@ -663,18 +664,41 @@ async function runSessionTaskChat(
     pushEvent: (event: AIStreamEvent) => void,
     taskScopedOptions: TaskScopedHandleChatOptions,
 ) {
-    const finalInput = await handleChat(taskScopedQuery, (event: AIStreamEvent) => {
-        pushEvent(event);
-    }, tabId, signal, session.context.length > 0 ? session.context : undefined, {
-        disallowTools: taskScopedOptions.disallowTools,
-        maxRounds: taskScopedOptions.maxRounds,
-        maxToolCalls: taskScopedOptions.maxToolCalls,
-        maxSameToolCalls: taskScopedOptions.maxSameToolCalls,
-        appendUserQuery: taskScopedOptions.appendUserQuery,
-        suppressNextStepHint: taskScopedOptions.suppressNextStepHint,
-        maxInputItems: MAX_MODEL_CONTEXT_ITEMS,
-        onCheckpoint: createSessionCheckpointHandler(session),
+    const taskId = `loop:${session.id}`;
+    const clientId = `extension-loop:${session.id}`;
+    const requestId = `${taskId}:${Date.now()}`;
+    const task = taskManager.get(taskId) || taskManager.create({
+        taskId,
+        sessionId: session.id,
+        clientId,
+        owner: 'extension-agent',
     });
+    let leasedForLoop = false;
+    if (typeof tabId === 'number') {
+        try {
+            tabLeaseManager.acquire(task, tabId, clientId);
+            leasedForLoop = true;
+        } catch { /* status stays unavailable when another exact owner holds the tab */ }
+    }
+    let finalInput: InputItem[] | undefined;
+    try {
+        finalInput = await handleChat(taskScopedQuery, (event: AIStreamEvent) => {
+            pushEvent(event);
+        }, tabId, signal, session.context.length > 0 ? session.context : undefined, {
+            disallowTools: taskScopedOptions.disallowTools,
+            maxRounds: taskScopedOptions.maxRounds,
+            maxToolCalls: taskScopedOptions.maxToolCalls,
+            maxSameToolCalls: taskScopedOptions.maxSameToolCalls,
+            appendUserQuery: taskScopedOptions.appendUserQuery,
+            suppressNextStepHint: taskScopedOptions.suppressNextStepHint,
+            maxInputItems: MAX_MODEL_CONTEXT_ITEMS,
+            onCheckpoint: createSessionCheckpointHandler(session),
+            toolContext: { clientId, requestId, taskId, sessionId: session.id, owner: 'extension-agent' },
+        });
+    } finally {
+        clearStatusForTask(taskId);
+        if (leasedForLoop) tabLeaseManager.release(taskId, tabId, clientId);
+    }
 
     if (finalInput) {
         session.context = compactSessionContext(finalInput);
@@ -702,7 +726,7 @@ async function runSessionShortcutTask(
     session: Session,
     normalizedQuery: string,
     signal: AbortSignal,
-    pushEvent: (event: { type: string; content: string }) => void,
+    pushEvent: (event: AIStreamEvent) => void,
 ): Promise<boolean> {
     const shortcut = await parseShortcut(normalizedQuery);
     if (!shortcut) return false;
@@ -955,7 +979,7 @@ async function executeSessionChat(session: Session, query: string, tabId?: numbe
     const runId = `${session.id}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
     const controller = new AbortController();
     options?.signal?.addEventListener('abort', () => controller.abort(), { once: true });
-    const runningTask = registerActiveTask(session.id, controller, taskRunner, runId);
+    registerActiveTask(session.id, controller, taskRunner, runId, tabId);
     const pushEvent = createRunScopedPushEvent(session, runId, sessionPushEvent);
 
     session.startedAt = Date.now();
@@ -1112,7 +1136,6 @@ export function createSession(summary: string, originTabId?: number): Session {
             reason: '会话创建，等待规划',
             updatedAt: Date.now(),
         },
-        taskRuntime: undefined,
         failureCode: undefined,
         lastError: undefined,
         originTabId,
@@ -1152,25 +1175,15 @@ export async function abortSessionTask(
     const taskKind = task?.runner.kind || task?.kind || getSessionTaskKind(sessionId);
     const runningSession = sessions.get(sessionId);
     if (task) {
-        task.controller.abort();
-        await Promise.race([task.done, delayMs(GRACEFUL_ABORT_TIMEOUT_MS)]);
-        task.markDone();
-        if (reason === 'interrupted') {
-            await RuntimeResourceManager.closeByRun(sessionId, task.runId);
-        }
-        if (runningSession && task.runner.abort) {
-            try {
-                await task.runner.abort({
-                    session: runningSession,
-                    reason,
-                    message,
-                    failureCode,
-                    task,
-                });
-            } catch (err) {
-                console.warn('[Actspan] 执行任务 abort hook 失败:', err);
-            }
-        }
+        await abortTaskResources({
+            task,
+            runningSession,
+            reason,
+            message,
+            failureCode,
+            detach: task.tabId === undefined ? undefined : () => CDPSessionManager.detachTab(task.tabId!),
+            closeByRun: (sid, runId) => RuntimeResourceManager.closeByRun(sid, runId),
+        });
     }
     if (reason === 'interrupted' && !task) {
         await RuntimeResourceManager.closeAll(sessionId);

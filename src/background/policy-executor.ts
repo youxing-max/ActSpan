@@ -2,22 +2,44 @@ import { TabLeaseError, tabLeaseManager, TabLeaseManager } from './tab-lease-man
 import { TaskManager, taskManager } from './task-manager';
 import type { CapabilityHandler, PermissionLevel, PolicyDecision, TaskContext } from './task-types';
 
+type CapabilityPolicy = PermissionLevel | ((input: Record<string, unknown>) => PermissionLevel);
+
 const CAPABILITIES: Record<string, PermissionLevel> = {
-  ping: 'read', 'tabs.list': 'read', 'registry.list': 'read', 'registry.detail': 'read', 'task.status': 'read', 'task.result': 'read',
-  'page.read': 'read', 'tab.open': 'interact', 'tab.navigate': 'interact', 'page.click': 'interact', 'page.type': 'interact',
+  ping: 'read', 'tabs.list': 'read', 'tabs.select': 'read', 'registry.list': 'read', 'registry.detail': 'read', 'task.status': 'read', 'task.result': 'read',
+  'page.read': 'read', 'page.snapshot': 'read', 'tab.open': 'interact', 'tab.navigate': 'interact', 'page.click': 'interact', 'page.type': 'interact',
   'task.submit': 'interact', 'workflow.run': 'interact', 'agent_delegate': 'interact', 'feishu.push': 'interact', 'task.cancel': 'interact', 'tab.close': 'sensitive',
   'page.screenshot': 'sensitive', 'page.eval': 'dangerous', 'task.*': 'interact',
 };
 
 export class PolicyError extends Error {
-  constructor(message: string, public readonly code = 'E_POLICY') { super(message); this.name = 'PolicyError'; }
+  readonly code: string;
+  constructor(message: string, code = 'E_POLICY') { super(message); this.name = 'PolicyError'; this.code = code; }
 }
 
 export class Policy {
-  check(capability: string, context: TaskContext): PolicyDecision {
+  private readonly capabilityPolicies = new Map<string, CapabilityPolicy>();
+
+  registerCapabilityPolicy(capability: string, policy: CapabilityPolicy): void {
+    this.capabilityPolicies.set(capability, policy);
+  }
+
+  unregisterCapabilityPolicy(capability: string): void {
+    this.capabilityPolicies.delete(capability);
+  }
+
+  check(capability: string, context: TaskContext, input: Record<string, unknown> = {}): PolicyDecision {
     if (!context.clientId || !context.requestId || !context.taskId || !context.sessionId) throw new PolicyError('缺少请求绑定上下文', 'E_CONTEXT');
-    const level = CAPABILITIES[capability] || CAPABILITIES[capability.split('.')[0] + '.*'] || 'dangerous';
-    const requiresApproval = level === 'dangerous' || level === 'sensitive' || (level === 'interact' && context.tabId !== undefined);
+    const configured = this.capabilityPolicies.get(capability);
+    const level = configured
+      ? (typeof configured === 'function' ? configured(input) : configured)
+      : CAPABILITIES[capability] || CAPABILITIES[capability.split('.')[0] + '.*'] || 'dangerous';
+    // 会改动既有标签页的 interact 能力一律要确认：page.* 的写动作，加上 tab.navigate。
+    // 判据必须是 capability——context.tabId 是调用方可选参数（bridge.js 直接取 params.tabId），
+    // 省略它就能跳过确认，而 resolveTab 在 mutate 模式下会回退到任务的活动标签页，动作照样落地。
+    // tab.open 只是新建标签页，不在此列。
+    const tabScoped = capability.startsWith('page.') || capability === 'tab.navigate';
+    const requiresApproval = level === 'dangerous' || level === 'sensitive'
+      || (level === 'interact' && (tabScoped || context.tabId !== undefined));
     return { level, requiresApproval };
   }
 }
@@ -26,11 +48,18 @@ export class PolicyExecutor {
   private readonly handlers = new Map<string, CapabilityHandler>();
   private readonly controllers = new Map<string, Set<AbortController>>();
   private readonly approvals = new Set<string>();
+  private readonly tasks: TaskManager;
+  private readonly leases: TabLeaseManager;
+  private readonly policy: Policy;
   constructor(
-    private readonly tasks: TaskManager = taskManager,
-    private readonly leases: TabLeaseManager = tabLeaseManager,
-    private readonly policy = new Policy(),
+    tasks: TaskManager = taskManager,
+    leases: TabLeaseManager = tabLeaseManager,
+    policy = new Policy(),
   ) {
+    // erasableSyntaxOnly 禁用参数属性：赋值必须显式写出。
+    this.tasks = tasks;
+    this.leases = leases;
+    this.policy = policy;
     this.handlers.set('task.submit', async (input, context) => {
       const task = this.tasks.get(context.taskId) || this.tasks.create({ taskId: context.taskId, sessionId: context.sessionId, owner: context.owner, clientId: context.clientId, registryRevision: typeof input.registryRevision === 'number' ? input.registryRevision : 0, mode: input.mode === 'continue' || input.mode === 'replace' ? input.mode : 'independent' });
       void this.tasks.submit(task.taskId, input, context).catch(() => undefined);
@@ -44,9 +73,14 @@ export class PolicyExecutor {
     this.handlers.set('task.cancel', async (_input, context) => ({ taskId: context.taskId, cancelled: await this.cancel(context.taskId) }));
   }
 
-  registerCapabilityHandler(capability: string, handler: CapabilityHandler): () => void {
+  registerCapabilityHandler(capability: string, handler: CapabilityHandler, policy?: CapabilityPolicy): () => void {
     this.handlers.set(capability, handler);
-    return () => { if (this.handlers.get(capability) === handler) this.handlers.delete(capability); };
+    if (policy) this.policy.registerCapabilityPolicy(capability, policy);
+    return () => {
+      if (this.handlers.get(capability) !== handler) return;
+      this.handlers.delete(capability);
+      if (policy) this.policy.unregisterCapabilityPolicy(capability);
+    };
   }
   approve(requestId: string, clientId: string, taskId: string, tabId?: number): void {
     this.approvals.add(this.approvalKey(requestId, clientId, taskId, tabId));
@@ -56,9 +90,16 @@ export class PolicyExecutor {
     return `${requestId}:${clientId}:${taskId}:${tabId ?? ''}`;
   }
 
+  check(context: TaskContext, capability: string, input: Record<string, unknown> = {}): PolicyDecision {
+    const tabId = typeof input.tabId === 'number' ? input.tabId
+      : typeof input.tab_id === 'number' ? input.tab_id : context.tabId;
+    return this.policy.check(capability, tabId === context.tabId ? context : { ...context, tabId }, input);
+  }
+
   async execute(context: TaskContext, capability: string, input: Record<string, unknown> = {}): Promise<unknown> {
-    const tabId = typeof input.tabId === 'number' ? input.tabId : context.tabId;
-    const decision = this.policy.check(capability, tabId === context.tabId ? context : { ...context, tabId });
+    const tabId = typeof input.tabId === 'number' ? input.tabId
+      : typeof input.tab_id === 'number' ? input.tab_id : context.tabId;
+    const decision = this.check(context, capability, input);
     const approvalKey = this.approvalKey(context.requestId, context.clientId, context.taskId, tabId);
     if (decision.requiresApproval && !this.approvals.delete(approvalKey)) throw new PolicyError('该能力需要绑定请求的明确确认', 'E_APPROVAL_REQUIRED');
     let task = this.tasks.get(context.taskId);
@@ -72,7 +113,8 @@ export class PolicyExecutor {
     if (task && task.sessionId !== context.sessionId) throw new PolicyError('任务不属于当前 session', 'E_TASK_OWNERSHIP');
     if (task && task.clientId && task.clientId !== context.clientId) throw new PolicyError('任务不属于当前 client', 'E_TASK_OWNERSHIP');
     if (task) this.tasks.assertNotCancelled(context.taskId);
-    if (tabId !== undefined && task) {
+    // tabs.select only updates our session's default slot; foreign IDs return a warning without touching the tab.
+    if (tabId !== undefined && task && capability !== 'tabs.select') {
       this.leases.authorize(context, tabId, !readOnly);
     }
     const handler = this.handlers.get(capability) || this.handlers.get(capability.split('.')[0] + '.*');
@@ -85,9 +127,20 @@ export class PolicyExecutor {
     if (!set) { set = new Set(); this.controllers.set(context.taskId, set); }
     set.add(controller);
     const runContext = { ...context, signal: controller.signal };
+    const assertActive = () => {
+      if (controller.signal.aborted || (task && this.tasks.isCancelled(context.taskId))) {
+        throw new PolicyError('任务已取消，未执行后续副作用', 'E_TASK_CANCELLED');
+      }
+    };
+    const cancellationExempt = capability === 'task.cancel' || capability === 'task.status' || capability === 'task.result';
     const invoke = async () => {
-      if (task && capability !== 'task.cancel' && capability !== 'task.status' && capability !== 'task.result') { this.tasks.assertNotCancelled(context.taskId); this.tasks.markRunning(context.taskId); }
+      if (task && !cancellationExempt) {
+        assertActive();
+        this.tasks.markRunning(context.taskId);
+      }
+      if (!cancellationExempt) assertActive();
       const result = await handler(input, runContext);
+      if (!cancellationExempt) assertActive();
       if (task && capability === 'tab.open' && result && typeof result === 'object' && 'tabId' in result && typeof result.tabId === 'number') {
         this.leases.acquire(task, result.tabId, context.clientId);
       }
@@ -95,13 +148,16 @@ export class PolicyExecutor {
         this.leases.release(context.taskId, tabId, context.clientId);
         this.tasks.releaseOwnedTab(context.taskId, tabId);
       }
-      if (task && capability !== 'task.cancel' && capability !== 'task.submit' && capability !== 'task.status' && capability !== 'task.result' && context.workflowStep !== true && context.finalize !== false) { this.tasks.assertNotCancelled(context.taskId); this.tasks.markSucceeded(context.taskId, result); }
+      if (task && capability !== 'task.cancel' && capability !== 'task.submit' && capability !== 'task.status' && capability !== 'task.result' && context.workflowStep !== true && context.finalize !== false) {
+        this.tasks.assertNotCancelled(context.taskId);
+        this.tasks.markSucceeded(context.taskId, result);
+      }
       return result;
     };
-    try { return tabId !== undefined ? await this.leases.serialize(tabId, invoke) : await invoke(); }
+    try { return tabId !== undefined && capability !== 'tabs.select' ? await this.leases.serialize(tabId, invoke, controller.signal) : await invoke(); }
     catch (err) {
       if (task && this.tasks.isCancelled(context.taskId)) throw new PolicyError('任务已取消，未执行后续副作用', 'E_TASK_CANCELLED');
-      if (task) this.tasks.markFailed(context.taskId, normalizeError(err));
+      if (task && context.workflowStep !== true) this.tasks.markFailed(context.taskId, normalizeError(err));
       throw err;
     } finally {
       external?.removeEventListener('abort', abort);
@@ -122,10 +178,18 @@ export class PolicyExecutor {
 
 function normalizeError(err: unknown): { code: string; message: string } {
   if (err instanceof TabLeaseError || err instanceof PolicyError) return { code: err.code, message: err.message };
+  if (err && typeof err === 'object' && 'code' in err) {
+    const code = err.code;
+    if (typeof code === 'string' && (code === 'NEEDS_L2' || code === 'L2_BUSY')) {
+      const message = 'message' in err && typeof err.message === 'string' ? err.message : code;
+      return { code, message };
+    }
+  }
   return { code: 'E_TASK_EXECUTION', message: err instanceof Error ? err.message : String(err) };
 }
 
 export const policyExecutor = new PolicyExecutor();
 export const getTaskExecutor = () => policyExecutor;
-export const registerCapabilityHandler = (capability: string, handler: CapabilityHandler) => policyExecutor.registerCapabilityHandler(capability, handler);
+export const registerCapabilityHandler = (capability: string, handler: CapabilityHandler, policy?: CapabilityPolicy) =>
+  policyExecutor.registerCapabilityHandler(capability, handler, policy);
 export const getTaskManager = () => taskManager;

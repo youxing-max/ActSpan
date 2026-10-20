@@ -6,6 +6,8 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "skipLibCheck": true,
+    /* 扩展代码跑在浏览器里：只吃 chrome 全局，@types/node 的 setTimeout→Timeout 会污染定时器类型。 */
+    "types": ["chrome", "react", "react-dom"],
 
     /* Bundler mode */
     "moduleResolution": "bundler",

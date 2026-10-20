@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ActSpan 缺口靶场</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 24px; }
+  .tab { padding: 8px 12px; }
+  .tab.is-active { font-weight: 700; }
+  .card { border: 1px solid #ccc; padding: 12px; margin: 12px 0; }
+</style>
+</head>
+<body data-gaps-fixture>
+  <h1>G11 / G15 靶场</h1>
+
+  <!-- G11：aria-selected 三态 + class 状态进快照 -->
+  <div role="tablist" aria-label="Plan tabs">
+    <button id="tab-a" role="tab" aria-selected="true" class="tab is-active">Tab A</button>
+    <button id="tab-b" role="tab" aria-selected="false" class="tab">Tab B</button>
+    <button id="tab-c" role="tab" class="tab">Tab C</button>
+  </div>
+  <p id="tab-result" role="status">none</p>
+
+  <!-- G15：嵌套装饰候选折叠进可点祖先，名字不丢 -->
+  <button id="icon-button" class="card-action">Favorite <span id="icon-glyph" role="img" aria-label="star">★</span></button>
+  <p id="icon-result" role="status">none</p>
+
+  <!-- G15：label[for] 折叠进关联控件 -->
+  <label for="gap-email">Email</label>
+  <input id="gap-email" name="email" type="email">
+
+  <!-- G15：弱候选（onclick / tabindex）一律保留 -->
+  <div id="weak-card" class="card" tabindex="0">
+    Card body
+    <span id="card-close" class="card-close" onclick="document.getElementById('weak-result').textContent = 'closed'">×</span>
+  </div>
+  <p id="weak-result" role="status">none</p>
+
+  <script>
+    document.getElementById('tab-a').addEventListener('click', function () { document.getElementById('tab-result').textContent = 'tab-a'; });
+    document.getElementById('tab-b').addEventListener('click', function () { document.getElementById('tab-result').textContent = 'tab-b'; });
+    document.getElementById('icon-button').addEventListener('click', function () { document.getElementById('icon-result').textContent = 'icon-hit'; });
+  </script>
+</body>
+</html>

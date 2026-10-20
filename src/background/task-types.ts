@@ -35,6 +35,17 @@ export interface TabLease {
   releasedAt?: number;
 }
 
+export interface SessionTabRecord {
+  taskId: string;
+  sessionId: string;
+  clientId: string;
+  tabId: number;
+  label?: string;
+  defaultSlot: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface TaskContext {
   clientId: string;
   requestId: string;
@@ -65,6 +76,7 @@ export interface PersistedTaskState {
   version: 1;
   tasks: BrowserTask[];
   leases: TabLease[];
+  ownTabs?: SessionTabRecord[];
   updatedAt: number;
 }
 

@@ -8,7 +8,7 @@ import { readMigratedStorage } from '../../../lib/legacy-storage';
 import { useActspan } from '../context/useActspan';
 
 const storageArea = {
-  get: (keys: string | string[]) => new Promise<Record<string, unknown>>((resolve) => chrome.storage.local.get(keys, resolve)),
+  get: (keys: string | string[]) => new Promise<Record<string, unknown>>((resolve) => chrome.storage.local.get<Record<string, unknown>>(keys, resolve)),
   set: (items: Record<string, unknown>) => new Promise<void>((resolve) => chrome.storage.local.set(items, resolve)),
 };
 

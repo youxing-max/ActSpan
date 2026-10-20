@@ -16,7 +16,6 @@ import { VERSION } from './config';
 import { LEGACY_STORAGE_KEY_AI_SETTINGS, STORAGE_KEY_AI_SETTINGS } from './ai/llm-client';
 import { readMigratedStorage } from './lib/legacy-storage';
 import Channel from './lib/channel';
-import Storage from './lib/storage';
 // [!] registry 必须在 bg-tasks-manager 之前导入，否则循环依赖会导致 TDZ 错误
 // 依赖链：bg-tasks-manager → resident-runtime → remote-workflow → registry（循环）
 import { ensureToolRegistryReady } from './functions/registry';
@@ -95,11 +94,3 @@ chrome.runtime.onInstalled.addListener((details) => {
     }
 })();
 
-// ============ 保持 Service Worker 活跃 ============
-
-// 定期发送心跳，防止 Service Worker 被回收
-setInterval(() => {
-    Storage.get('heartbeat').then(() => {
-        Storage.save('heartbeat', Date.now());
-    });
-}, 20 * 1000);

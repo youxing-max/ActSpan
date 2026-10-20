@@ -314,13 +314,18 @@ export const dataPipelineFunction: FunctionDefinition = {
           if (!buffer) {
             return { success: false, error: `缓冲区 ${params.buffer_id} 不存在` };
           }
-          const limit = params.limit || 5;
-          const offset = params.offset || 0;
+          const limit = params.limit === undefined || !Number.isFinite(params.limit) ? 5 : Math.min(MAX_BUFFER_ITEMS, Math.max(1, Math.floor(params.limit)));
+          const offset = params.offset === undefined || !Number.isFinite(params.offset) ? 0 : Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.floor(params.offset)));
           const items = buffer.items.slice(offset, offset + limit);
           return {
             success: true,
             data: {
               items,
+              total: buffer.items.length,
+              offset,
+              limit,
+              has_more: offset + items.length < buffer.items.length,
+              next_offset: offset + items.length < buffer.items.length ? offset + items.length : null,
               total_count: buffer.items.length,
               fields: getFields(buffer.items),
               showing: { offset, limit, count: items.length },

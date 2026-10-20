@@ -4,7 +4,7 @@
  * 与 content script 悬浮球完全同步的对话入口
  */
 
-import { useEffect, useRef, useCallback, useState } from 'react';
+import { useEffect, useRef, useCallback } from 'react';
 import Channel from '../../lib/channel';
 import type { SessionSyncPayload, SessionReplayPayload, SessionOpQueueSnapshot } from '../../ai/types';
 import { escapeHtml, markdownToHtml } from '../../content/float-ball/markdown';
@@ -89,10 +89,6 @@ export function FloatingChat({ mode = 'float' }: FloatingChatProps) {
   const footerTextRef = useRef<HTMLSpanElement>(null);
   const footerTimeRef = useRef<HTMLSpanElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-
-  // 强制重渲染（用于 ref 中的状态变化触发 UI 更新）
-  const [, setTick] = useState(0);
-  const forceUpdate = useCallback(() => setTick(prev => prev + 1), []);
 
   // ---- DOM 操作函数 ----
 
@@ -886,6 +882,7 @@ export function FloatingChat({ mode = 'float' }: FloatingChatProps) {
           <div class="actspan-ask-user-question">${escapeHtml(question)}</div>
           ${optionsHtml}
           ${inputRowHtml}
+          <button type="button" class="actspan-ask-user-option actspan-ask-user-deny">拒绝</button>
         </div>
       `;
       el.appendChild(wrapper);
@@ -903,7 +900,7 @@ export function FloatingChat({ mode = 'float' }: FloatingChatProps) {
       card.querySelectorAll('button, input').forEach(el2 => { (el2 as HTMLButtonElement).disabled = true; });
       const resultText = document.createElement('div');
       resultText.className = 'actspan-ask-user-result';
-      resultText.textContent = '已取消';
+      resultText.textContent = data?.code === 'denied' ? '已拒绝' : data?.code === 'until' ? '条件已满足' : data?.code === 'timed_out' ? '已超时' : '已取消';
       card.appendChild(resultText);
       saveSnapshot();
     };
@@ -1097,7 +1094,7 @@ export function FloatingChat({ mode = 'float' }: FloatingChatProps) {
           activeRunId: typeof response.activeRunId === 'string' || response.activeRunId === null ? response.activeRunId : null,
           query: response.summary || '',
           title: buildTaskTitle(response.summary || ''),
-          status: response.status || 'done',
+          status: response.status === 'running' || response.status === 'error' ? response.status : 'done',
           resultHtml: '',
           callStack: [],
           errorMsg: response.lastError || '',
@@ -1410,6 +1407,24 @@ export function FloatingChat({ mode = 'float' }: FloatingChatProps) {
         Channel.send('__approval_response', { requestId, approved: false, userMessage });
         disableCard(false);
       }
+      return;
+    }
+
+    // 提问卡片拒绝
+    const askUserDeny = target.closest('.actspan-ask-user-deny') as HTMLElement | null;
+    if (askUserDeny) {
+      const card = askUserDeny.closest('.actspan-ask-user-card') as HTMLElement;
+      if (!card || card.classList.contains('settled')) return;
+      const requestId = card.getAttribute('data-request-id');
+      if (!requestId) return;
+      Channel.send('__ask_user_response', { requestId, denied: true, source: 'deny' });
+      card.classList.add('settled');
+      card.querySelectorAll('button, input').forEach(el => { (el as HTMLButtonElement).disabled = true; });
+      const resultText = document.createElement('div');
+      resultText.className = 'actspan-ask-user-result';
+      resultText.textContent = '已拒绝';
+      card.appendChild(resultText);
+      saveSnapshot();
       return;
     }
 

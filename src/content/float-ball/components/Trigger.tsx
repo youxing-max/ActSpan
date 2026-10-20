@@ -4,7 +4,7 @@
  */
 
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { SHORTCUT_TEXT, DISABLED_DOMAINS_KEY } from '../constants';
+import { DISABLED_DOMAINS_KEY } from '../constants';
 import { useActspan } from '../context/useActspan';
 import { useDrag } from '../hooks/useDrag';
 import { usePosition } from '../hooks/usePosition';
@@ -53,6 +53,12 @@ const PillActionCard: React.FC<{
     hideSelf();
   }, [askUserRequest, textInput, hideSelf]);
 
+  const handleDeny = useCallback(() => {
+    if (!askUserRequest) return;
+    Channel.send('__ask_user_response', { requestId: askUserRequest.requestId, denied: true, source: 'deny' });
+    hideSelf();
+  }, [askUserRequest, hideSelf]);
+
   const clipText = (s: string, max = 40) => s.length > max ? s.slice(0, max) + '...' : s;
 
   return (
@@ -94,13 +100,14 @@ const PillActionCard: React.FC<{
               <button className="pac-btn pac-send" onClick={handleSendText}>发送</button>
             </div>
           )}
+          <button type="button" className="pac-btn pac-reject pac-deny" onClick={handleDeny}>拒绝</button>
         </div>
       )}
     </div>
   );
 };
 
-export const Trigger: React.FC<{ onRecordClick: () => void }> = ({ onRecordClick }) => {
+export const Trigger: React.FC<{ onRecordClick: () => void; statusText?: string }> = ({ onRecordClick, statusText: liveStatusText }) => {
   const { state, dispatch } = useActspan();
   const { side, currentY, savePosition, getTriggerX } = usePosition();
   const [isHovering, setIsHovering] = useState(false);
@@ -232,10 +239,10 @@ export const Trigger: React.FC<{ onRecordClick: () => void }> = ({ onRecordClick
   const pillState = task ? task.status : 'idle';
   const statusText = state.isRecorderAuditing
     ? '整理工作流中...'
-    : '';
+    : liveStatusText || '';
   const metaText = state.isRecorderAuditing
     ? '录制完成，AI 处理中'
-    : `${SHORTCUT_TEXT} 打开`;
+    : statusText ? '正在执行 · 点击查看' : '点击打开';
 
   // CSS class 拼接
   const triggerClass = [

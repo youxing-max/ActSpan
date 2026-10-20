@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Flow Fixture</title></head>
+<body>
+  <h1>Multi-step flow fixture</h1>
+  <!-- #flow-result, [data-flow-step], #flow-event-log expose transitions; all steps are local and require actual user actions. -->
+  <ol id="flow">
+    <li data-flow-step="start" aria-current="step">Start</li>
+    <li data-flow-step="middle">Middle</li>
+    <li data-flow-step="finish">Finish</li>
+  </ol>
+  <label>Task name <input id="flow-name" type="text" placeholder="Name your task"></label>
+  <button id="next-step" type="button">Next step</button>
+  <p id="flow-result" role="status">Step 1 of 3</p>
+  <div id="flow-middle" hidden>
+    <button id="add-item" type="button">Add item</button>
+    <ul id="flow-items"></ul>
+    <button id="optional-banner" type="button">Dismiss optional banner</button>
+    <p id="optional-result" role="status">Optional banner showing</p>
+  </div>
+  <div id="flow-finish" hidden>
+    <button id="finish-flow" type="button">Finish workflow</button>
+    <p id="finish-result" role="status">Workflow unfinished</p>
+  </div>
+  <pre id="flow-event-log" aria-live="polite"></pre>
+  <script>
+    let step = 0;
+    let itemsAdded = 0;
+    const byId = (id) => document.getElementById(id);
+    const steps = [...document.querySelectorAll('[data-flow-step]')];
+    const record = (name) => { byId('flow-event-log').textContent += `${name}\n`; };
+    byId('next-step').addEventListener('click', () => {
+      if (step === 0 && !byId('flow-name').value.trim()) {
+        byId('flow-result').textContent = 'Task name is required';
+        record('next-step:validation-error');
+        return;
+      }
+      if (step === 1 && itemsAdded < 2) {
+        byId('flow-result').textContent = 'Add at least two items';
+        record('next-step:validation-error');
+        return;
+      }
+      if (step >= 2) return;
+      step++;
+      steps.forEach((item, index) => item.toggleAttribute('aria-current', index === step));
+      byId('flow-middle').hidden = step !== 1;
+      byId('flow-finish').hidden = step !== 2;
+      byId('next-step').disabled = step === 2;
+      byId('flow-result').textContent = `Step ${step + 1} of ${steps.length}`;
+      record(`next-step:${step + 1}`);
+    });
+    byId('add-item').addEventListener('click', () => {
+      const item = document.createElement('li');
+      item.textContent = `Item ${++itemsAdded}`;
+      byId('flow-items').append(item);
+      record(`add-item:${itemsAdded}`);
+    });
+    byId('optional-banner').addEventListener('click', () => {
+      byId('optional-banner').hidden = true;
+      byId('optional-result').textContent = 'Optional banner dismissed';
+      record('optional-banner:dismissed');
+    });
+    byId('finish-flow').addEventListener('click', () => {
+      byId('finish-result').textContent = `Workflow completed: ${byId('flow-name').value.trim()}, ${itemsAdded} items`;
+      byId('finish-flow').disabled = true;
+      record('finish-flow:completed');
+    });
+  </script>
+</body>
+</html>

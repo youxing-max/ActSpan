@@ -15,9 +15,7 @@ const bundle = await build({
   format: 'esm',
   platform: 'node',
 });
-const { getBrowserState } = await import(
-  `data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].contents).toString('base64')}`,
-);
+const { getBrowserState } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].contents).toString('base64')}`);
 
 test('browser state follows the task tab instead of the focused tab', async () => {
   const tabs = [

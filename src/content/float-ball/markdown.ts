@@ -14,9 +14,6 @@ export const escapeHtml = (text: string): string => {
 /** 常见图片扩展名 */
 const IMG_EXT_RE = /\.(jpe?g|png|gif|webp|svg|bmp|avif)(\?[^\s)]*)?$/i;
 
-/** 匹配 markdown 图片语法 ![alt](url) */
-const MD_IMG_RE = /^!\[([^\]]*)\]\(([^)]+)\)\s*$/;
-
 /** 内联 Markdown：图片、链接、加粗、斜体、删除线、行内代码 */
 export const inlineMarkdown = (escaped: string): string => {
   // 先用占位符保护图片和链接语法，防止内部的特殊字符被其他规则误匹配

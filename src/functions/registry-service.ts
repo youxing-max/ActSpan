@@ -201,6 +201,7 @@ export class RegistryService {
   private initialized = false;
   private initializing: Promise<void> | null = null;
   private pendingWrite: Promise<void> = Promise.resolve();
+  private reloading: Promise<void> | null = null;
   private storageListenerRegistered = false;
 
   constructor(options: RegistryServiceOptions = {}) {
@@ -336,6 +337,10 @@ export class RegistryService {
       reason,
       timestamp,
     };
+    this.notify(event);
+    return nextRevision;
+  }
+  private notify(event: RegistryChangedEvent): void {
     this.emitExternal?.(event);
     for (const listener of this.listeners) listener(clone(event));
     if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
@@ -345,7 +350,6 @@ export class RegistryService {
         // Runtime messaging is best-effort; storage remains authoritative.
       }
     }
-    return nextRevision;
   }
 
   async listAll(): Promise<RegistrySnapshot> {
@@ -424,18 +428,22 @@ export class RegistryService {
       .map(item => normalizeSkill({ ...item, source, ...(source === 'remote' && sourceId ? { manifestUrl: sourceId } : {}) }, this.now()))
       .filter((item): item is SkillSpec => item !== null)
       .filter(item => !scope || item.scope === scope);
-    const kept = this.rawSkills.filter(skill => {
-      const owned = skill.source === source && (!scope || skill.scope === scope)
-        && (source !== 'remote' || skill.manifestUrl === sourceId);
-      return !owned;
-    });
+    const owned = this.rawSkills.filter(skill => skill.source === source && (!scope || skill.scope === scope)
+      && (source !== 'remote' || skill.manifestUrl === sourceId));
+    const kept = this.rawSkills.filter(skill => !owned.includes(skill));
+    const existingByIdentity = new Map(owned.map(skill => [skillKey(skill), skill]));
+    const merged = new Map<string, SkillSpec>();
+    for (const candidate of normalized) {
+      const identity = skillKey(candidate);
+      const current = merged.get(identity) || existingByIdentity.get(identity);
+      merged.set(identity, current ? winner(current, candidate) : candidate);
+    }
     const changedNames = new Set<string>([
-      ...this.rawSkills.filter(skill => skill.source === source && (!scope || skill.scope === scope)
-        && (source !== 'remote' || skill.manifestUrl === sourceId)).map(skill => skill.name),
+      ...owned.map(skill => skill.name),
       ...normalized.map(skill => skill.name),
     ]);
     const before = JSON.stringify(this.store().skills);
-    const nextSkills = [...kept, ...normalized];
+    const nextSkills = [...kept, ...merged.values()];
     const changed = before !== JSON.stringify(this.store(nextSkills).skills);
     if (!changed) return { success: true, revision: this.revision, changed: false };
     const revision = await this.commit(nextSkills, Array.from(changedNames), 'remote_sync');
@@ -454,10 +462,32 @@ export class RegistryService {
   }
 
   async reload(): Promise<void> {
-    await this.pendingWrite;
-    this.initialized = false;
-    this.initializing = null;
-    await this.initialize();
+    if (this.reloading) return this.reloading;
+    const wasInitialized = this.initialized;
+    const previousRevision = this.revision;
+    const previousSkills = this.rawSkills;
+    this.reloading = (async () => {
+      await this.pendingWrite;
+      this.initialized = false;
+      this.initializing = null;
+      await this.initialize();
+      if (!wasInitialized) return;
+      const changed = previousRevision !== this.revision
+        || JSON.stringify(previousSkills) !== JSON.stringify(this.rawSkills);
+      if (!changed) return;
+      const changedSkills = new Set<string>([
+        ...previousSkills.map(skill => skill.name),
+        ...this.rawSkills.map(skill => skill.name),
+      ]);
+      this.notify({
+        type: 'registry_changed',
+        revision: this.revision,
+        changedSkills: Array.from(changedSkills).sort(),
+        reason: 'remote_sync',
+        timestamp: this.updatedAt || this.now(),
+      });
+    })().finally(() => { this.reloading = null; });
+    return this.reloading;
   }
 }
 

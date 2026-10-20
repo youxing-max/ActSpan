@@ -14,7 +14,7 @@ export interface ScreenshotArtifactRecord {
 import { readMigratedStorage } from './legacy-storage';
 
 const storageArea = {
-  get: (keys: string | string[]) => new Promise<Record<string, unknown>>((resolve) => chrome.storage.local.get(keys, resolve)),
+  get: (keys: string | string[]) => new Promise<Record<string, unknown>>((resolve) => chrome.storage.local.get<Record<string, unknown>>(keys, resolve)),
   set: (items: Record<string, unknown>) => new Promise<void>((resolve) => chrome.storage.local.set(items, resolve)),
 };
 const ARTIFACT_STORAGE_KEY = 'actspan_artifacts_v1';

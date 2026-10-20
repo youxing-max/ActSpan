@@ -12,16 +12,32 @@ export const TASK_STATES = new Set([
 
 export const TOOL_NAMES = Object.freeze([
     'actspan_status',
+    'actspan_status_update',
     'actspan_feishu_push',
     'actspan_tabs_list',
+    'actspan_tabs_select',
     'actspan_tab_open',
     'actspan_tab_close',
     'actspan_tab_navigate',
+    'actspan_page_snapshot',
     'actspan_page_read',
     'actspan_page_click',
     'actspan_page_type',
     'actspan_page_eval',
     'actspan_screenshot',
+    'actspan_adopt',
+    'actspan_act',
+    'actspan_page_select',
+    'actspan_page_upload',
+    'actspan_page_key',
+    'actspan_page_wait',
+    'actspan_page_scroll',
+    'actspan_network_list',
+    'actspan_network_detail',
+    'actspan_network_query',
+    'actspan_data_fetch',
+    'actspan_data_paginate',
+    'actspan_data_download',
     'actspan_skills_list',
     'actspan_skill_detail',
     'actspan_workflow_run',
@@ -39,28 +55,17 @@ export function validateConfig(env = process.env) {
     const apiKey = String(env.ACTSPAN_API_KEY || '').trim();
     const bridgeUrl = String(env.ACTSPAN_BRIDGE_URL || DEFAULT_BRIDGE_URL).trim();
 
-    if (!apiUrl) errors.push('ACTSPAN_API_URL is required and must be an HTTPS URL');
-    else {
-        try {
-            const parsed = new URL(apiUrl);
-            if (parsed.protocol !== 'https:') errors.push('ACTSPAN_API_URL must use https://');
-        } catch {
-            errors.push('ACTSPAN_API_URL must be a valid HTTPS URL, for example https://api.example.com');
-        }
-    }
-    if (!apiKey) errors.push('ACTSPAN_API_KEY is required; set it in the MCP client env (never on the command line)');
-
     let parsedBridge;
     try {
         parsedBridge = new URL(bridgeUrl);
         if (!['ws:', 'wss:'].includes(parsedBridge.protocol)) {
-            errors.push('ACTSPAN_BRIDGE_URL must use ws:// or wss://');
+            errors.push('[local bridge] ACTSPAN_BRIDGE_URL must use ws:// or wss://');
         }
         if (!['127.0.0.1', 'localhost', '[::1]', '::1'].includes(parsedBridge.hostname)) {
-            errors.push('ACTSPAN_BRIDGE_URL must point to the local extension Bridge');
+            errors.push('[local bridge] ACTSPAN_BRIDGE_URL must point to the local extension Bridge');
         }
     } catch {
-        errors.push('ACTSPAN_BRIDGE_URL must be a valid local ws:// URL');
+        errors.push('[local bridge] ACTSPAN_BRIDGE_URL must be a valid local ws:// URL');
     }
 
     const extensionIds = String(env.ACTSPAN_EXTENSION_IDS || '')
@@ -68,9 +73,23 @@ export function validateConfig(env = process.env) {
         .map(value => value.trim())
         .filter(Boolean)
         .map(value => value.startsWith('chrome-extension://') ? value : `chrome-extension://${value}`);
-    if (!extensionIds.length) errors.push('ACTSPAN_EXTENSION_IDS is required; list the exact Chrome extension ID(s) allowed to pair');
     const invalidIds = extensionIds.filter(value => !extensionIdPattern.test(value.slice('chrome-extension://'.length)));
-    if (invalidIds.length) errors.push('ACTSPAN_EXTENSION_IDS must be comma-separated 32-character Chrome extension IDs (a-p only)');
+    if (invalidIds.length) errors.push('[local bridge] ACTSPAN_EXTENSION_IDS must be comma-separated 32-character Chrome extension IDs (a-p only)');
+
+    // The control plane is optional: the local Bridge never calls it. When the user enables it, both
+    // halves are required so a half-configured control plane fails loudly instead of silently downgrading.
+    const controlPlane = Boolean(apiUrl || apiKey);
+    if (controlPlane) {
+        if (!apiUrl) errors.push('[control plane] ACTSPAN_API_URL is required when ACTSPAN_API_KEY is set');
+        else {
+            try {
+                if (new URL(apiUrl).protocol !== 'https:') errors.push('[control plane] ACTSPAN_API_URL must use https://');
+            } catch {
+                errors.push('[control plane] ACTSPAN_API_URL must be a valid HTTPS URL, for example https://api.example.com');
+            }
+        }
+        if (!apiKey) errors.push('[control plane] ACTSPAN_API_KEY is required when ACTSPAN_API_URL is set; set it in the MCP client env (never on the command line)');
+    }
 
     return {
         valid: errors.length === 0,
@@ -81,16 +100,22 @@ export function validateConfig(env = process.env) {
             bridgeUrl,
             bridgePort: parsedBridge?.port ? Number(parsedBridge.port) : 30121,
             pairOrigins: invalidIds.length ? [] : extensionIds,
+            pairingRequired: extensionIds.length === 0,
+            controlPlane,
         },
     };
 }
 
-export function createRequestContext({ clientId, taskId, sessionId } = {}) {
+export function createRequestContext({ clientId, taskId, sessionId, host } = {}) {
+    if (host !== undefined && !/^[a-z0-9](?:[a-z0-9-]{0,127})$/.test(host)) {
+        throw new Error('Invalid host identity');
+    }
     return {
         clientId: clientId || randomUUID(),
         requestId: randomUUID(),
         taskId: taskId || randomUUID(),
         sessionId: sessionId || randomUUID(),
+        ...(host ? { host } : {}),
     };
 }
 

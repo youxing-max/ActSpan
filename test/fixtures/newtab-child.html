@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>New Tab Child Fixture</title></head>
+<body data-newtab-child="true">
+  <h1>New-tab child fixture</h1>
+  <!-- #child-result identifies the opened page; #child-event-log changes only after acting in the child tab. -->
+  <p id="child-result" role="status">Child loaded</p>
+  <button id="child-action" type="button">Act in child tab</button>
+  <pre id="child-event-log" aria-live="polite"></pre>
+  <script>
+    document.getElementById('child-action').addEventListener('click', () => {
+      document.getElementById('child-result').textContent = 'Child action completed';
+      document.getElementById('child-event-log').textContent += 'child-action:click\n';
+    });
+  </script>
+</body>
+</html>

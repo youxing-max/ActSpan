@@ -28,20 +28,63 @@ const LEGACY_TOOL_NAME_MAP: Record<string, string> = {
   site_workflow: 'skill',
 };
 
-const resolveBuiltinFunction = (name: string): FunctionDefinition | undefined => {
+export const resolveRemotePlanAction = (name: string): { name: string; definition: FunctionDefinition } | undefined => {
   const direct = resolveBuiltin(name);
-  if (direct) return direct;
+  if (direct) return { name, definition: direct };
   const mapped = LEGACY_TOOL_NAME_MAP[name];
-  return mapped ? resolveBuiltin(mapped) : undefined;
+  const definition = mapped ? resolveBuiltin(mapped) : undefined;
+  return definition ? { name: mapped, definition } : undefined;
 };
+
+const resolveBuiltinFunction = (name: string): FunctionDefinition | undefined =>
+  resolveRemotePlanAction(name)?.definition;
 
 /** Return the built-in action names after the registry has wired its resolver. */
 export const getSupportedRemotePlanActions = (): string[] => resolveNames();
 
-/** Validate a workflow plan action without importing the registry module. */
+/** 注册表在静态工具列表初始化后注入解析器；plan 动作白名单在解析结果之上再收窄一次。 */
 
 export const isBuiltinResolverReady = (): boolean => resolverReady;
-export const isSupportedRemotePlanAction = (name: string): boolean => Boolean(resolveBuiltinFunction(name));
+
+/**
+ * 工作流 plan 动作白名单：只有录制器文档化且不绕过桥接策略的动作可执行。
+ * 值为该动作允许的子动作集合；null 表示子动作不在 plan 层收窄（仍受桥接权限与租约约束）。
+ * cdp_frame / cdp_input 等可执行任意 JS 或直接触发页面副作用的动作一律不在白名单内，
+ * 必须走 page.eval / page.click / page.type 的桥接策略路径。
+ */
+const WORKFLOW_PLAN_ACTION_SUB_ACTIONS: Record<string, readonly string[] | null> = {
+  tab_navigate: null,
+  page: ['view', 'snapshot', 'skeleton', 'assert', 'repair'],
+  cdp_dom: [
+    'query_selector', 'query_selector_all', 'get_outer_html', 'get_attributes', 'get_box_model',
+    'get_document', 'get_text', 'get_html', 'get_computed_style_simple', 'wait_for',
+    'css_get_computed_style', 'css_get_matched_rules', 'css_get_stylesheets', 'css_get_stylesheet',
+  ],
+  extract_data: null,
+  screenshot: null,
+};
+
+/** 白名单内的 plan 动作名（已排除旧名别名解析后不在白名单的目标）。 */
+export const getWorkflowPlanActionNames = (): string[] => Object.keys(WORKFLOW_PLAN_ACTION_SUB_ACTIONS);
+
+/** 解析 plan 动作：只有白名单内的内置动作（含旧名别名）才返回定义。 */
+export const resolveWorkflowPlanAction = (name: string): { name: string; definition: FunctionDefinition } | undefined => {
+  const resolved = resolveRemotePlanAction(name);
+  return resolved && Object.hasOwn(WORKFLOW_PLAN_ACTION_SUB_ACTIONS, resolved.name) ? resolved : undefined;
+};
+
+export const isWorkflowPlanActionAllowed = (name: string): boolean => Boolean(resolveWorkflowPlanAction(name));
+
+/** 子动作收窄：白名单动作若声明了允许集合，则只放行集合内的子动作。 */
+export const isWorkflowPlanSubActionAllowed = (name: string, subAction: string): boolean => {
+  const resolved = resolveWorkflowPlanAction(name);
+  if (!resolved) return false;
+  const allowed = WORKFLOW_PLAN_ACTION_SUB_ACTIONS[resolved.name];
+  return allowed === null || allowed.includes(subAction);
+};
+
+/** 保存与执行共用的 plan 动作校验：与执行边界同一份白名单。 */
+export const isSupportedRemotePlanAction = (name: string): boolean => isWorkflowPlanActionAllowed(name);
 
 type PlanStepErrorPolicy = 'abort' | 'continue';
 
@@ -149,7 +192,7 @@ const sendFloatBallTakeoverStateToTab = async (tabId: number, payload: FloatBall
   });
 };
 
-const readPathValue = (source: unknown, path: string): unknown => {
+export const readPathValue = (source: unknown, path: string): unknown => {
   if (!path) return undefined;
   const tokens = path
     .split('.')

@@ -154,7 +154,7 @@ const readRuntimeStore = async (): Promise<ResidentRuntimeStoreShape | null> => 
   if (!hasChromeStorage()) return null;
   const raw = await readMigratedStorage<unknown>({
     get: (keys) => new Promise<Record<string, unknown>>((resolve) => {
-      chrome.storage.local.get(keys, resolve);
+      chrome.storage.local.get<Record<string, unknown>>(keys, resolve);
     }),
     set: (items) => new Promise<void>((resolve) => {
       chrome.storage.local.set(items, resolve);
@@ -277,7 +277,7 @@ const executePostAction = async (job: ResidentJob, replyText: string): Promise<F
 };
 
 /** 更新 job 成功状态 */
-const updateJobSuccess = (job: ResidentJob, startedAt: number, data: unknown): void => {
+const updateJobSuccess = (job: ResidentJob, startedAt: number, _data: unknown): void => {
   const finishedAt = Date.now();
   job.updatedAt = finishedAt;
   job.lastRunAt = finishedAt;

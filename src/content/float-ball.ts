@@ -1,7 +1,7 @@
 /**
  * Actspan 悬浮胶囊模块
- * 胶囊形态贴边微隐藏，hover 滑出露出快捷键提示
- * 点击或快捷键（⌘M / Ctrl+M）弹出全局搜索框
+ * 胶囊形态贴边微隐藏，hover 滑出操作提示
+ * 点击悬浮球弹出全局搜索框
  * 搜索框接入 AI 对话，支持流式响应和函数调用状态展示
  * 使用 Shadow DOM 隔离样式
  */
@@ -20,25 +20,23 @@ import type {
 import {
   STORAGE_KEY, LEGACY_STORAGE_KEY, DISABLED_DOMAINS_KEY, LEGACY_DISABLED_DOMAINS_KEY,
   INPUT_HISTORY_KEY, LEGACY_INPUT_HISTORY_KEY, DRAG_THRESHOLD, PILL_HEIGHT, PILL_WIDTH,
-  PILL_COMPACT_WIDTH, LOGO_SIZE, TUCK_OFFSET, EDGE_MARGIN, MAX_RECENT_COMPLETED_TASKS,
-  isMac, SHORTCUT_TEXT,
+  EDGE_MARGIN,
   AGENT_PHASE_LABELS, SHOW_AGENT_STATE_PANEL,
-  INTERNAL_STATUS_HINT, INTERNAL_STATUS_LINE_HINT, INTERNAL_STATUS_SEGMENT_HINT,
 } from './float-ball/constants';
-import type { Side, RuntimeTextMode, RecentCompletedTaskItem, SavedPosition } from './float-ball/constants';
+import type { Side, SavedPosition } from './float-ball/constants';
 import { FUNCTION_ICONS, FUNCTION_LABELS, LOGO_ASK_USER, LOGO_REQUEST_CONFIRMATION } from './float-ball/icons';
 import { getStyles } from './float-ball/styles';
 import { escapeHtml, markdownToHtml } from './float-ball/markdown';
 import {
-  replaceInternalToolTerms, inferFriendlyRuntimeText, sanitizeUserFacingRuntimeText,
-  toFriendlyPlanningText, isGenericThinkingText, toLiveActionText, toFriendlyToolProgress,
-  formatRecentTaskTime, getRecentTaskStatusLabel, clipIntentText, buildToolIntentText,
+  sanitizeUserFacingRuntimeText,
+  toFriendlyPlanningText, isGenericThinkingText, toFriendlyToolProgress,
+  clipIntentText, buildToolIntentText,
   buildUserFacingActionSummary, formatClock, formatDuration, formatQueueLatency,
   formatInterval, clipRuntimeText, buildTaskTitle,
 } from './float-ball/text-utils';
 
 const storageArea = {
-  get: (keys: string | string[]) => new Promise<Record<string, unknown>>((resolve) => chrome.storage.local.get(keys, resolve)),
+  get: (keys: string | string[]) => new Promise<Record<string, unknown>>((resolve) => chrome.storage.local.get<Record<string, unknown>>(keys, resolve)),
   set: (items: Record<string, unknown>) => new Promise<void>((resolve) => chrome.storage.local.set(items, resolve)),
 };
 
@@ -70,9 +68,42 @@ const clampY = (y: number): number => {
   return Math.max(EDGE_MARGIN, Math.min(y, window.innerHeight - PILL_HEIGHT - EDGE_MARGIN));
 };
 
-const determineSide = (triggerX: number): Side => {
-  const center = triggerX + (PILL_WIDTH + 10) / 2;
-  return center < getViewportWidth() / 2 ? 'left' : 'right';
+const MAX_SEARCH_INPUT_FOCUS_ATTEMPTS = 4;
+
+/** 在遮罩真正可见且输入框可用后聚焦，避免渲染竞态抢走用户焦点。 */
+export const focusSearchInputWhenVisible = (
+  inputEl: HTMLInputElement,
+  overlay: HTMLElement,
+  trigger: HTMLElement,
+  scheduleFrame: (callback: FrameRequestCallback) => number = (callback) => requestAnimationFrame(callback),
+) => {
+  let attempts = 0;
+  const attemptFocus = () => {
+    if (!overlay.classList.contains('visible') || attempts >= MAX_SEARCH_INPUT_FOCUS_ATTEMPTS) return;
+
+    const root = inputEl.getRootNode?.();
+    const activeElement = root && 'activeElement' in root
+      ? (root as Document | ShadowRoot).activeElement
+      : typeof document !== 'undefined' ? document.activeElement : null;
+    const body = typeof document !== 'undefined' ? document.body : null;
+    const hasOtherFocus = activeElement
+      && activeElement !== inputEl
+      && activeElement !== trigger
+      && activeElement !== overlay
+      && activeElement !== body;
+    if (hasOtherFocus) return;
+
+    if (!inputEl.disabled) {
+      inputEl.focus();
+      return;
+    }
+
+    attempts += 1;
+    scheduleFrame(attemptFocus);
+  };
+
+  // 等待两帧：第一帧让 visible 样式提交，第二帧再处理输入框状态更新。
+  scheduleFrame(() => scheduleFrame(attemptFocus));
 };
 
 // ============ 初始化 ============
@@ -125,7 +156,7 @@ export const initFloatBall = async () => {
 
   const pillMetaEl = document.createElement('span');
   pillMetaEl.className = 'actspan-pill-meta';
-  pillMetaEl.textContent = `${SHORTCUT_TEXT} 打开`;
+  pillMetaEl.textContent = '点击打开';
 
   const pillInfoEl = document.createElement('div');
   pillInfoEl.className = 'actspan-pill-info';
@@ -381,13 +412,10 @@ export const initFloatBall = async () => {
   let isDragging = false;
   let isOpen = false;
   let currentTask: TaskItem | null = null;
-  let recentCompletedTasks: RecentCompletedTaskItem[] = [];
   let side: Side = 'right';
   let currentY = 0;
   let startMouseX = 0;
   let startMouseY = 0;
-  let startTriggerX = 0;
-  let startTriggerY = 0;
   let pillNoticeTimer: number | null = null;
   let pillAnnounceTimer: number | null = null;
   let lastPillState: 'idle' | 'running' | 'done' | 'error' = 'idle';
@@ -633,22 +661,12 @@ export const initFloatBall = async () => {
   };
 
   const loadRecentCompletedTasks = () => {
+    // 读取历史记录（含旧键迁移标记写入），随后刷新运行时面板
     void readMigratedStorage<SessionHistoryRecord[]>(
       chrome.storage.local,
       SESSION_HISTORY_STORAGE_KEY,
       LEGACY_SESSION_HISTORY_STORAGE_KEY,
-    ).then((historyRaw) => {
-      const history = Array.isArray(historyRaw) ? historyRaw : [];
-      recentCompletedTasks = history
-        .filter((item) => item && typeof item === 'object' && item.status !== 'running')
-        .map((item) => ({
-          sessionId: String(item.sessionId || '').trim(),
-          title: buildTaskTitle(item.summary || item.assistantReply || '历史任务'),
-          status: String(item.status || 'done'),
-          updatedAt: Number(item.updatedAt || item.endedAt || item.startedAt || 0),
-        }))
-        .filter((item) => item.sessionId && item.title)
-        .slice(0, MAX_RECENT_COMPLETED_TASKS + 2);
+    ).then(() => {
       renderTaskRuntimeBoard();
     });
   };
@@ -702,7 +720,7 @@ export const initFloatBall = async () => {
       reviewOutput: null,
       compactSummary: '',
       assistantReply: '',
-      failureCode: '',
+      failureCode: undefined,
       reason: '',
     };
   };
@@ -1077,7 +1095,7 @@ export const initFloatBall = async () => {
           trigger.classList.add('announce');
         } else {
           shortcutEl.textContent = '';
-          pillMetaEl.textContent = `${SHORTCUT_TEXT} 打开`;
+          pillMetaEl.textContent = '点击打开';
           if (!trigger.classList.contains('notice-visible')) {
             trigger.classList.remove('announce');
           }
@@ -1553,7 +1571,7 @@ export const initFloatBall = async () => {
     startRecording();
   });
 
-  // AI 审计完成后注入对话（替代原直接保存模式）
+  // AI 审计并自动保存完成后注入对话
   Channel.on('__recorder_audit_done', (data: any) => {
     isRecorderAuditing = false;
     trigger.classList.remove('recording', 'auditing');
@@ -1568,8 +1586,8 @@ export const initFloatBall = async () => {
     // 创建本地任务以接收后续的对话流式事件
     currentTask = {
       id: data.sessionId,
-      query: '确认录制的工作流',
-      title: buildTaskTitle('确认录制的工作流'),
+      query: '录制并保存的工作流',
+      title: buildTaskTitle('录制并保存的工作流'),
       status: 'running',
       resultHtml: '',
       callStack: [],
@@ -1587,7 +1605,7 @@ export const initFloatBall = async () => {
 
     toggleSearch(true);
     updateInputUI();
-    showPillNotice('请确认录制的工作流', 'info');
+    showPillNotice(data?.error ? '录制工作流保存失败' : '工作流已自动保存', data?.error ? 'error' : 'success');
   });
 
   const updateFooterTime = () => {
@@ -2562,8 +2580,8 @@ export const initFloatBall = async () => {
     // 如果面板未打开，自动展开
     if (!isOpen) {
       isOpen = true;
-      panel.classList.add('show');
-      trigger.classList.add('open');
+      overlay.classList.add('visible');
+      trigger.classList.add('active');
     }
 
     // 在 resultEl 中直接追加独立确认卡片
@@ -3576,7 +3594,7 @@ export const initFloatBall = async () => {
         activeRunId: typeof response.activeRunId === 'string' || response.activeRunId === null ? response.activeRunId : null,
         query: response.summary || '',
         title: buildTaskTitle(response.summary || ''),
-        status: response.status || 'done',
+        status: response.status === 'running' || response.status === 'error' ? response.status : 'done',
         resultHtml: '',
         callStack: [],
         errorMsg: response.lastError || '',
@@ -3809,9 +3827,7 @@ export const initFloatBall = async () => {
       updateInputUI();
       queryBgTasks();
 
-      requestAnimationFrame(() => {
-        if (!inputEl.disabled) inputEl.focus();
-      });
+      focusSearchInputWhenVisible(inputEl, overlay, trigger);
     } else {
       trigger.classList.remove('active');
       overlay.classList.remove('visible');
@@ -4274,8 +4290,6 @@ export const initFloatBall = async () => {
 
     startMouseX = e.clientX;
     startMouseY = e.clientY;
-    startTriggerX = trigger.offsetLeft;
-    startTriggerY = currentY;
     isDragging = false;
 
     trigger.classList.remove('snapping');
@@ -4442,15 +4456,6 @@ export const initFloatBall = async () => {
     }
   });
 
-  // 全局快捷键：Cmd+M (Mac) / Ctrl+M (Win) 唤起/关闭搜索框
-  document.addEventListener('keydown', (e) => {
-    const modKey = isMac ? e.metaKey : e.ctrlKey;
-    if (modKey && e.key.toLowerCase() === 'm') {
-      e.preventDefault();
-      e.stopPropagation();
-      toggleSearch();
-    }
-  });
 
   // ---- resize ----
   window.addEventListener('resize', () => {

@@ -38,6 +38,9 @@ import { askUserFunction } from './ask-user';
 import { saveWorkflowFunction } from './save-workflow';
 import { loadToolsFunction } from './load-tools';
 import { webhookFunction } from './webhook';
+import { statusFunction } from './status';
+import { siteExperienceFunction } from './site-experience-tool';
+import { adoptFunction } from './adopt';
 import { registerBuiltinFunctionResolver } from './remote-workflow';
 
 const DYNAMIC_TOOL_STORAGE_KEY = 'actspan_dynamic_tools_v1';
@@ -108,6 +111,9 @@ const BUILTIN_FUNCTIONS: FunctionDefinition[] = [
   saveWorkflowFunction,
   loadToolsFunction,
   webhookFunction,
+  statusFunction,
+  siteExperienceFunction,
+  adoptFunction,
 ];
 
 const builtinToolNames = new Set(BUILTIN_FUNCTIONS.map((tool) => tool.name));
@@ -153,7 +159,7 @@ const readDynamicToolStore = async (): Promise<DynamicToolStoreShape | null> => 
   if (!hasChromeStorage()) return null;
   const raw = await readMigratedStorage<unknown>({
     get: (keys) => new Promise<Record<string, unknown>>((resolve) => {
-      chrome.storage.local.get(keys, resolve);
+      chrome.storage.local.get<Record<string, unknown>>(keys, resolve);
     }),
     set: (items) => new Promise<void>((resolve) => {
       chrome.storage.local.set(items, resolve);

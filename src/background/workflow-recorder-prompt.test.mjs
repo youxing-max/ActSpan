@@ -63,10 +63,10 @@ test('录制审计 prompt 优先根据步骤自动补全并仅在无法推断时
   assert.match(prompt, /只有.*无法.*(?:推断|判断).*询问|无法.*才.*询问/s);
 });
 
-test('录制审计 prompt 要求修改后展示完整 JSON 且严格 JSON 输出', () => {
-  assert.match(prompt, /修改.*(?:完整 workflow JSON|完整 JSON).*展示|更新.*完整.*JSON/s);
+test('录制审计 prompt 要求自动保存并输出完整 JSON', () => {
+  assert.match(prompt, /自动(?:调用|保存)|直接调用 save_workflow/);
+  assert.doesNotMatch(prompt, /(?:不得|禁止|不).*save_workflow/);
   assert.match(prompt, /严格 JSON/);
-  assert.match(prompt, /workflow_json.*(?:不|禁止|不得).*(?:保存|save_workflow)|(?:不|禁止|不得).*(?:保存|save_workflow).*workflow_json/s);
   assert.match(prompt, /readable_steps/);
   assert.match(prompt, /plan/);
   assert.match(prompt, /parameters/);

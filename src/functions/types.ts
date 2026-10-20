@@ -7,6 +7,11 @@ export type PermissionLevel = 'read' | 'interact' | 'sensitive' | 'dangerous';
 
 /** 单个工具函数的定义 */
 export interface ToolExecutionContext {
+  clientId?: string;
+  requestId?: string;
+  taskId?: string;
+  sessionId?: string;
+  owner?: 'ide-agent' | 'extension-agent' | 'user';
   tabId?: number;
   isolatedDebug?: boolean;
   debugTabIds?: Set<number>;
@@ -16,7 +21,7 @@ export interface ToolExecutionContext {
 export interface FunctionDefinition {
   /** 函数唯一标识，如 "jd_search" */
   name: string;
-  /** 给 AI 看的函数描述（中文），AI 据此判断是否调用 */
+  /** 给 AI 看的工具描述（中文），AI 据此判断是否调用 */
   description: string;
   /** JSON Schema 格式的参数描述 */
   parameters: Record<string, any>;
@@ -34,9 +39,20 @@ export interface FunctionDefinition {
   execute: (params: any, context?: ToolExecutionContext) => Promise<FunctionResult>;
 }
 
+/** 工具失败时必须随结果返回的可执行诊断。 */
+export interface ToolDiagnostic {
+  /** 实际执行了哪个工具动作 */
+  action: string;
+  /** 工具观察到的失败事实 */
+  observed: string;
+  /** 下一步建议，避免 agent 原样撞运气重试 */
+  next: string;
+}
+
 /** 函数执行结果 */
 export interface FunctionResult {
   success: boolean;
   data?: any;
   error?: string;
+  diagnostic?: ToolDiagnostic;
 }

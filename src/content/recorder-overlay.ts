@@ -155,12 +155,16 @@ const OVERLAY_CSS = `
 `;
 
 /** 显示录制覆盖层 */
-export function showRecorderOverlay(onComplete?: () => void, onCancel?: () => void): void {
+export function showRecorderOverlay(
+  onComplete?: () => void,
+  onCancel?: () => void,
+  startedAt = Date.now(),
+): void {
   if (document.getElementById(OVERLAY_ID)) return;
 
   onCompleteCallback = onComplete || null;
   onCancelCallback = onCancel || null;
-  startTime = Date.now();
+  startTime = startedAt > 0 ? startedAt : Date.now();
 
   // 注入样式
   const style = document.createElement('style');
@@ -247,7 +251,7 @@ export function showRecorderOverlay(onComplete?: () => void, onCancel?: () => vo
 export function updateRecorderStepCount(count: number): void {
   const el = document.querySelector(`#${OVERLAY_ID} [${STEP_ATTR}]`);
   if (!el) return;
-  el.textContent = count >= 10 ? '10/10 步' : `${count} 步`;
+  el.textContent = `${count} 步`;
 }
 
 /** 移除录制覆盖层 */

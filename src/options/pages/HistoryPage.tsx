@@ -43,7 +43,7 @@ const STATUS_COLOR: Record<string, string> = {
 /** 从 storage 读取会话历史记录 */
 const readSessionHistory = async (): Promise<SessionHistoryRecord[]> => {
   const result = await new Promise<Record<string, unknown>>((resolve) => {
-    chrome.storage.local.get(SESSION_HISTORY_STORAGE_KEY, resolve);
+    chrome.storage.local.get<Record<string, unknown>>(SESSION_HISTORY_STORAGE_KEY, resolve);
   });
   const raw = result[SESSION_HISTORY_STORAGE_KEY];
   if (Array.isArray(raw)) return raw as SessionHistoryRecord[];

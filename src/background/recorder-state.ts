@@ -4,25 +4,22 @@ export interface RecorderStateLike {
 }
 
 export const isRecorderStateForTab = (
-    state: RecorderStateLike | null | undefined,
+    state: unknown,
     tabId: number | undefined,
-): boolean => (
-    state !== null
-    && state !== undefined
-    && typeof tabId === 'number'
-    && state.tabId === tabId
-);
+): boolean => {
+    if (state === null || typeof state !== 'object' || typeof tabId !== 'number') return false;
+    const candidate = state as { tabId?: unknown };
+    return candidate.tabId === tabId;
+};
 
 export const isRecorderOwnerTab = isRecorderStateForTab;
 
 export const shouldTransferRecorderToTab = (
-    state: RecorderStateLike | null | undefined,
+    state: unknown,
     sourceTabId: number | undefined,
     targetTabId: number | undefined,
-): boolean => (
-    state?.active === true
-    && typeof sourceTabId === 'number'
-    && typeof targetTabId === 'number'
-    && state.tabId === sourceTabId
-    && sourceTabId !== targetTabId
-);
+): boolean => {
+    if (!isRecorderStateForTab(state, sourceTabId) || typeof targetTabId !== 'number') return false;
+    const candidate = state as { active?: unknown };
+    return candidate.active === true && sourceTabId !== targetTabId;
+};

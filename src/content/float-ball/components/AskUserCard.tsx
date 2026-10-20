@@ -38,13 +38,18 @@ export const AskUserCard: React.FC<AskUserCardProps> = ({
     setAnswer(value);
   }, [requestId, textInput]);
 
+  const handleDeny = useCallback(() => {
+    Channel.send('__ask_user_response', { requestId, denied: true, source: 'deny' });
+    setSettled(true);
+  }, [requestId]);
+
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
       handleSubmitText();
     }
   }, [handleSubmitText]);
 
-  const headerText = settled ? '已回答' : 'Actspan 有个问题';
+  const headerText = settled ? (answer ? '已回答' : '已拒绝') : 'Actspan 有个问题';
 
   return (
     <div className={`actspan-ask-user-standalone${settled ? ' settled' : ''}`}>
@@ -80,8 +85,9 @@ export const AskUserCard: React.FC<AskUserCardProps> = ({
             <button className="actspan-ask-user-submit" onClick={handleSubmitText}>发送</button>
           </div>
         )}
+        {!settled && <button type="button" className="actspan-ask-user-option actspan-ask-user-deny" onClick={handleDeny}>拒绝</button>}
         {settled && (
-          <div className="actspan-ask-user-result">已回答：{answer}</div>
+          <div className="actspan-ask-user-result">{answer ? `已回答：${answer}` : '已拒绝'}</div>
         )}
       </div>
     </div>

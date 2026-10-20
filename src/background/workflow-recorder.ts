@@ -7,17 +7,18 @@ import Channel from '../lib/channel';
 import { chatComplete } from '../ai/llm-client';
 import { buildSessionSyncPayload, createSession, createSessionPushEvent, flushFeishuCompletionNotifications, persistRuntimeSessions } from './session-manager';
 import { readMigratedStorage } from '../lib/legacy-storage';
+import { ArtifactStore } from '../lib/artifact-store';
+import { isPlainObject } from '../lib/guards';
 import { isRecorderOwnerTab, isRecorderStateForTab, shouldTransferRecorderToTab } from './recorder-state';
+import { saveAuditedWorkflow } from './workflow-recorder-save';
 import { buildRecorderAuditPrompt } from './workflow-recorder-prompt';
-import type { InputItem, AIStreamEvent, Session, SessionSyncPayload } from '../ai/types';
+import type { InputItem } from '../ai/types';
 
 const RECORDER_STATE_KEY = 'actspan_recorder_state';
 const LEGACY_RECORDER_STATE_KEY = 'mole_recorder_state';
 
 // ============ 类型定义 ============
 
-/** 最大录制步数 */
-const MAX_RECORDER_STEPS = 10;
 
 /** 录制步骤 */
 export interface RecorderStep {
@@ -245,13 +246,6 @@ Channel.on('__recorder_step', (data, sender) => {
     recorderState.steps.push(step);
     void saveRecorderState();
 
-    // 10 步兜底：达到上限时通知 content 自动停止
-    if (recorderState.steps.length >= MAX_RECORDER_STEPS) {
-        recorderState.active = false;
-        void saveRecorderState();
-        unregisterRecorderNavListener();
-        Channel.sendToTab(recorderState.tabId, '__recorder_auto_stop', {});
-    }
 
     // 串行队列截图（不阻塞消息处理）
     const tabId = recorderState.tabId;
@@ -286,7 +280,7 @@ Channel.on('__recorder_cancel_audit', (_data, sender, sendResponse) => {
     return true;
 });
 
-/** 提交录制结果给 AI 审计，审计后通过对话确认 */
+/** 提交录制结果给 AI 审计，审计后自动保存并通过对话展示结果 */
 Channel.on('__recorder_submit', (_data, sender, sendResponse) => {
     if (!recorderState || recorderState.steps.length === 0) {
         sendResponse?.({ success: false, error: '没有可提交的录制步骤' });
@@ -355,7 +349,7 @@ Channel.on('__recorder_submit', (_data, sender, sendResponse) => {
                 return;
             }
 
-            const metadataPlaceholder = '待 AI 根据步骤补全（不会写入 workflow JSON）';
+            const metadataPlaceholder = '无法从录制内容推断';
             const isValidWorkflowName = (value: unknown): value is string =>
                 typeof value === 'string'
                 && /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/.test(value)
@@ -373,6 +367,10 @@ Channel.on('__recorder_submit', (_data, sender, sendResponse) => {
                     typeof trigger === 'string'
                     && trigger.trim().length > 0
                     && /[\u3400-\u9fff]/.test(trigger));
+            const saveResult = await saveAuditedWorkflow(workflowJson);
+            const saveError = saveResult.success
+                ? null
+                : `工作流自动保存失败：${saveResult.error || '未知错误'}`;
             const metadataValid = {
                 name: isValidWorkflowName(workflowJson.name),
                 label: isValidChineseMetadata(workflowJson.label),
@@ -382,23 +380,32 @@ Channel.on('__recorder_submit', (_data, sender, sendResponse) => {
             const missingMetadata = (['name', 'label', 'description', 'triggers'] as const)
                 .filter(field => !metadataValid[field]);
             const readableSteps = workflowJson.readable_steps || '（步骤解析中…）';
-            const sessionQuery = '确认录制的工作流';
+            const savedWorkflowName = typeof saveResult.data?.name === 'string'
+                ? saveResult.data.name
+                : workflowJson.name;
+            // F4：剧本体检的逐条点名要当面转述，不能只留在工具返回值里。
+            const saveWarnings = Array.isArray(saveResult.data?.warnings)
+                ? saveResult.data.warnings.filter((warning: unknown): warning is string => typeof warning === 'string')
+                : [];
+            const sessionQuery = saveError ? '处理录制工作流保存失败' : '录制并保存的工作流';
             const session = createSession(sessionQuery, tabId);
 
-            // 注入 system context：原始 workflow JSON 供 AI 后续使用
+            // 注入 system context：原始 workflow JSON 供 AI 后续修改或再次保存
             session.context.push({
                 role: 'system',
                 content: [
-                    '以下是用户刚刚录制并经过审计的工作流 JSON 草稿，用户尚未确认，禁止直接保存。',
-                    '保存前必须向用户展示并询问是否修改全部元数据：机器名 name、显示名 label、一句话 description、调用关键词 triggers、parameters 和 plan.steps。',
-                    '若任一元数据缺失、空白或不符合规则，先根据录制步骤、起始 URL、页面语义和参数自动补全或修正；只有确实无法推断目标时才用 ask_user 或自然语言询问，不能把“待 AI 根据步骤补全”等提示当作保存值。',
-                    '用户要求修改任何字段后，必须基于最新 JSON 再展示完整修订摘要，并等待用户明确确认；未明确确认前不得调用 save_workflow。',
-                    '只有用户明确确认全部内容后，才调用 save_workflow 工具保存完整 JSON。',
+                    saveError
+                        ? `以下是用户刚刚录制并经过审计的工作流 JSON。后台已尝试自动保存，但失败：${saveError}`
+                        : `以下是用户刚刚录制并经过审计、已自动保存的工作流 JSON（注册表名称：${savedWorkflowName}）。`,
+                    '若任一元数据缺失、空白或不符合规则，先根据录制步骤、起始 URL、页面语义和参数自动补全或修正；不能把“待 AI 根据步骤补全”等提示当作保存值。',
+                    saveError
+                        ? '请向用户说明保存失败原因；用户修正后若明确要求保存，直接调用 save_workflow。'
+                        : '用户若提出修改，必须基于最新 JSON 更新并展示完整修订摘要；用户明确要求保存时直接调用 save_workflow，无需再次确认。',
                     '```json',
                     JSON.stringify(workflowJson, null, 2),
                     '```',
                 ].join('\n'),
-            } as InputItem);
+            });
 
             // 注入模拟用户请求 + AI 回复展示审计结果
             session.context.push({
@@ -406,24 +413,36 @@ Channel.on('__recorder_submit', (_data, sender, sendResponse) => {
                 content: '我刚录制了一个操作流程，帮我整理一下。',
             } as InputItem);
 
-            const paramEntries = Object.entries(workflowJson.parameters?.properties || {});
+            const parameters: Record<string, unknown> = isPlainObject(workflowJson.parameters) ? workflowJson.parameters : {};
+            const parameterProperties: Record<string, unknown> = isPlainObject(parameters.properties) ? parameters.properties : {};
+            const paramEntries = Object.entries(parameterProperties);
             const paramLine = paramEntries.length > 0
-                ? `**参数**：${paramEntries.map(([k, v]: [string, Record<string, unknown>]) => `\`${k}\` — ${(v as Record<string, unknown>).description || k}`).join('、')}`
+                ? `**参数**：${paramEntries.map(([k, v]) => {
+                    const description = isPlainObject(v) ? v.description : undefined;
+                    return `\`${k}\` — ${typeof description === 'string' && description ? description : k}`;
+                }).join('、')}`
                 : '**参数**：无';
             const triggerLine = isValidTriggers(workflowJson.triggers)
                 ? workflowJson.triggers.map(trigger => `\`${trigger}\``).join('、')
                 : metadataPlaceholder;
 
             const aiSummary = [
-                '我帮你整理了刚才录制的流程，请先审核以下待确认摘要：',
+                saveError
+                    ? '我已整理刚才录制的流程，但自动保存失败，请检查下面的结果。'
+                    : '我已整理并自动保存刚才录制的流程。',
+                saveError ? `**保存状态**：${saveError}` : `**保存状态**：已保存为 \`${savedWorkflowName}\``,
                 `**名称**：机器名 \`${metadataValid.name ? workflowJson.name : metadataPlaceholder}\`；显示名 **${metadataValid.label ? workflowJson.label : metadataPlaceholder}**`,
                 `**描述**：${metadataValid.description ? workflowJson.description : metadataPlaceholder}`,
+                `**调用关键词**：${triggerLine}`,
                 paramLine,
                 '**步骤**：',
                 readableSteps,
                 '',
-                ...(missingMetadata.length ? [`**待补充**：${missingMetadata.join('、')}。先根据录制步骤自动补全；只有确实无法推断时才请用户提供，再确认完整工作流。`] : []),
-                '你可以修改名称、描述、调用关键词、参数或步骤。每次修改后我会展示完整修订 JSON；仅在你明确确认全部内容后才保存。',
+                ...(missingMetadata.length ? [`**待补充**：${missingMetadata.join('、')}。先根据录制步骤自动补全；只有确实无法推断时才请用户提供。`] : []),
+                ...(saveWarnings.length ? [`**体检提示**：${saveWarnings.join('；')}。剧本已按现状保存，不阻塞使用。`] : []),
+                saveError
+                    ? '请修正缺失内容；你明确说保存工作流后，我会直接保存完整 JSON。'
+                    : '你可以继续修改名称、描述、调用关键词、参数或步骤；明确说保存工作流后会直接保存完整修订 JSON。',
             ].join('\n');
 
             session.context.push({
@@ -435,10 +454,11 @@ Channel.on('__recorder_submit', (_data, sender, sendResponse) => {
             recorderState = null;
             void saveRecorderState();
 
-            // 通知悬浮球审计完成，准备对话确认
+            // 通知悬浮球审计和自动保存完成
             Channel.broadcast('__recorder_audit_done', {
                 sessionId: session.id,
                 summary: aiSummary,
+                ...(saveError ? { error: saveError } : {}),
             });
 
             // 广播会话同步 + AI 文本展示
@@ -453,7 +473,7 @@ Channel.on('__recorder_submit', (_data, sender, sendResponse) => {
             session.agentState = {
                 phase: 'finalize',
                 round: 0,
-                reason: '等待用户确认工作流',
+                reason: saveError ? '自动保存失败，等待用户修正' : '工作流已自动保存',
                 updatedAt: Date.now(),
             };
             Channel.broadcast('__session_sync', buildSessionSyncPayload(session));
@@ -471,7 +491,7 @@ Channel.on('__recorder_submit', (_data, sender, sendResponse) => {
             await flushFeishuCompletionNotifications(session);
             persistRuntimeSessions();
 
-            sendResponse?.({ success: true });
+            sendResponse?.({ success: !saveError, ...(saveError ? { error: saveError } : {}) });
         } catch (err: unknown) {
             const errMsg = err instanceof Error ? err.message : '提交处理失败';
             console.error('[Actspan] 工作流录制提交失败:', err);

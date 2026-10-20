@@ -45,6 +45,7 @@ export interface RunningSessionTask {
     runner: SessionTaskRunner;
     controller: AbortController;
     createdAt: number;
+    tabId?: number;
     done: Promise<void>;
     markDone: () => void;
 }
@@ -115,6 +116,10 @@ export interface ExecuteSessionOptions {
     maxRounds?: number;
     maxToolCalls?: number;
     maxSameToolCalls?: number;
+    /** 是否把本轮 query 追加进上下文（默认 true，与 HandleChatOptions 对齐） */
+    appendUserQuery?: boolean;
+    /** 抑制下一步建议（向后兼容，与 HandleChatOptions 对齐） */
+    suppressNextStepHint?: boolean;
     coalesceKey?: string;
     allowConcurrent?: boolean;
     signal?: AbortSignal;
@@ -232,7 +237,7 @@ export const COMPACT_TASK_INSTRUCTIONS = [
     '删除重复描述，不新增推测信息，不编造未执行结果。',
     '输出简短明确，最多 8 行。',
 ].join('\n');
-export const GRACEFUL_ABORT_TIMEOUT_MS = 120;
+export const GRACEFUL_ABORT_TIMEOUT_MS = 5000;
 
 export const SESSION_SYNC_EVENT_TYPES = new Set<string>([
     'agent_state',

@@ -28,13 +28,13 @@ const MAX_LIMIT = 2000;
 const toLocaleTime = (ts?: number): string | undefined => (ts ? new Date(ts).toLocaleString('zh-CN') : undefined);
 
 const clampLimit = (input?: number): number => {
-  const value = Math.floor(Number(input) || DEFAULT_LIMIT);
+  const value = input === undefined || !Number.isFinite(input) ? DEFAULT_LIMIT : Math.floor(input);
   return Math.min(Math.max(1, value), MAX_LIMIT);
 };
 
 const clampOffset = (input?: number): number => {
-  const value = Math.floor(Number(input) || 0);
-  return Math.max(0, value);
+  const value = input === undefined || !Number.isFinite(input) ? 0 : Math.floor(input);
+  return Math.min(Math.max(0, value), Number.MAX_SAFE_INTEGER);
 };
 
 const isFolderNode = (node: chrome.bookmarks.BookmarkTreeNode): boolean => !node.url;
@@ -396,22 +396,8 @@ export const bookmarkOpsFunction: FunctionDefinition = {
 
       case 'recent': {
         try {
-          const results = await chrome.bookmarks.getRecent(Math.max(limit + offset, limit));
-          const normalized = results
-            .filter((item) => include_folders || !!item.url)
-            .map((item): FlatBookmarkItem => ({
-              bookmark_id: item.id,
-              type: item.url ? 'bookmark' : 'folder',
-              title: item.title,
-              url: item.url,
-              folder: '',
-              parent_id: item.parentId,
-              index: item.index,
-              date_added_ms: item.dateAdded,
-              date_added: toLocaleTime(item.dateAdded),
-              date_group_modified: toLocaleTime(item.dateGroupModified),
-            }));
-          const sorted = sortItems(normalized, 'date_added', 'desc');
+          const results = buildFlatList(await chrome.bookmarks.getTree(), { includeFolders: include_folders });
+          const sorted = sortItems(results, 'date_added', 'desc');
           const page = paginateItems(sorted, limit, offset);
           return {
             success: true,

@@ -233,6 +233,43 @@ export const getStyles = () => `
     transition: color 0.2s ease;
   }
 
+  /* Driving cockpit: capsule is interactive; curtain only mirrors the live action. */
+  .actspan-status-curtain {
+    position: fixed;
+    bottom: 24px;
+    left: 50vw;
+    transform: translateX(-50%);
+    z-index: 2147483646;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    max-width: min(480px, calc(100vw - 32px));
+    padding: 8px 12px;
+    border: 1px solid var(--ec-border);
+    border-radius: 12px;
+    background: var(--ec-surface-strong);
+    box-shadow: var(--ec-card-shadow);
+    color: var(--ec-text);
+    font-size: 12px;
+    line-height: 1.4;
+    pointer-events: none;
+  }
+
+  .actspan-status-curtain-mark {
+    flex: 0 0 6px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--ec-primary);
+    box-shadow: 0 0 0 3px var(--ec-primary-soft);
+  }
+
+  .actspan-status-curtain-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   /* 胶囊任务状态 */
   .actspan-task-dot {
     display: inline-block;

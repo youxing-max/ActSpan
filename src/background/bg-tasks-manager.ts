@@ -51,9 +51,9 @@ Channel.on('__bg_tasks_query', async (_data, _sender, sendResponse) => {
             TimerStore.getAll(),
             getActiveResidentJobs(),
         ]);
-        sendResponse({ timers, residentJobs });
+        sendResponse?.({ timers, residentJobs });
     } catch (err: unknown) {
-        sendResponse({ timers: [], residentJobs: [], error: err instanceof Error ? err.message : '查询失败' });
+        sendResponse?.({ timers: [], residentJobs: [], error: err instanceof Error ? err.message : '查询失败' });
     }
     return true;
 });
@@ -63,7 +63,7 @@ Channel.on('__bg_task_close', async (data, _sender, sendResponse) => {
     const kind = data?.kind as string;
     const id = data?.id as string;
     if (!kind || !id) {
-        sendResponse({ success: false, error: '缺少 kind 或 id' });
+        sendResponse?.({ success: false, error: '缺少 kind 或 id' });
         return true;
     }
     try {
@@ -75,18 +75,18 @@ Channel.on('__bg_task_close', async (data, _sender, sendResponse) => {
         } else if (kind === 'resident') {
             const result = await stopResidentJobById(id);
             if (!result.success) {
-                sendResponse(result);
+                sendResponse?.(result);
                 void broadcastBgTasksChanged();
                 return true;
             }
         } else {
-            sendResponse({ success: false, error: `未知 kind: ${kind}` });
+            sendResponse?.({ success: false, error: `未知 kind: ${kind}` });
             return true;
         }
-        sendResponse({ success: true });
+        sendResponse?.({ success: true });
         void broadcastBgTasksChanged();
     } catch (err: unknown) {
-        sendResponse({ success: false, error: err instanceof Error ? err.message : '关闭失败' });
+        sendResponse?.({ success: false, error: err instanceof Error ? err.message : '关闭失败' });
     }
     return true;
 });

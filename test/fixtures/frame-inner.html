@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh">
+<head><meta charset="utf-8"><title>跨源内层框架</title></head>
+<body data-frame-inner>
+<button id="frame-action" data-testid="frame-action">Frame action</button>
+<div id="frame-value-result"></div>
+<div id="frame-event-log"></div>
+<button id="inner-btn">inner-button</button>
+<div id="inner-out"></div>
+<script>
+  const byId = (id) => document.getElementById(id);
+  const record = (name, type) => { byId('frame-event-log').textContent += name + ':' + type + ' '; };
+  byId('frame-action').addEventListener('click', () => {
+    byId('frame-value-result').textContent = 'Frame action completed';
+    record('frame-action', 'click');
+  });
+  byId('inner-btn').addEventListener('click', () => {
+    byId('inner-out').textContent = 'inner-hit';
+    record('inner-btn', 'click');
+  });
+</script>
+</body>
+</html>

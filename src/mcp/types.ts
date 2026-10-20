@@ -3,6 +3,8 @@
  * 自实现轻量 MCP 层，仅覆盖 tools/list 和 tools/call 协议
  */
 
+import type { FunctionDefinition } from '../functions/types';
+
 /** MCP 工具定义 */
 export interface MCPTool {
   /** 工具唯一名称 */
@@ -50,6 +52,20 @@ export interface MCPToolCallResult {
 export interface MCPListToolsResponse {
   /** 可用工具列表 */
   tools: MCPTool[];
+}
+
+/** MCP 协议错误。错误也通过响应返回，避免传输层抛出不可序列化异常。 */
+export interface MCPErrorResponse {
+  error: {
+    code: number;
+    message: string;
+    data?: Record<string, unknown>;
+  };
+}
+
+/** 动态 manifest 的最小内存接口载荷。 */
+export interface MCPToolManifest {
+  tools: FunctionDefinition[];
 }
 
 /** MCP 请求方法类型 */

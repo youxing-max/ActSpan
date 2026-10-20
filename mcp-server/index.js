@@ -3,7 +3,16 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { ExtensionHub, log } from './bridge.js';
+import { log } from './bridge.js';
+import { createLazyBridgeDaemonClient } from './daemon-rpc.js';
+import { ensureBridgeDaemon } from './bridge-lock.js';
+import { createStableSessionId, normalizeHostIdentity } from './identity.js';
+import { readUsage } from './usage.js';
+import registerActTool from './act-tool.js';
+import { registerInteractionTools } from './interaction-tools.js';
+import registerNetworkTools from './network-tool.js';
+import registerDataTools from './data-tools.js';
+import { registerStatusTool } from './status-tool.js';
 import {
     RegistryCatalog,
     createRequestContext,
@@ -27,27 +36,36 @@ const fail = (error) => ({
 });
 
 async function main(config) {
-    const hub = new ExtensionHub(undefined, {
-        port: config.bridgePort,
-        pairOrigins: config.pairOrigins,
-    });
+    const clientId = randomUUID();
+    const fallbackIndex = process.argv.indexOf('--client');
+    const fallbackClient = fallbackIndex < 0 ? '' : process.argv[fallbackIndex + 1] || '';
+    let host = normalizeHostIdentity('', fallbackClient);
+    let sessionId = createStableSessionId(host.slug, process.pid);
+    // 零环境契约：daemon 与元数据在任何 MCP 握手之前就位，`actspan_status` 才有真状态可报。
     try {
-        await hub.start();
+        await ensureBridgeDaemon({ port: config.bridgePort, pairOrigins: config.pairOrigins });
     } catch (error) {
         process.stderr.write(`[actspan-mcp] Bridge startup failed: ${safeError(error)}\n`);
         process.exitCode = 1;
         return;
     }
-
-    const clientId = randomUUID();
-    const sessionId = randomUUID();
+    // K2：label 连上就冻结，所以 IPC 连接推迟到 `oninitialized` 之后——那时自报身份已压过 --client。
+    const hub = createLazyBridgeDaemonClient({ port: config.bridgePort, pairOrigins: config.pairOrigins,
+        clientId, sessionId, label: host.slug });
     const defaultTaskId = randomUUID();
+    const usageForHost = (slug) => {
+        const entry = readUsage().hosts[slug];
+        return entry
+            ? { host: slug, calls: entry.calls, firstAt: entry.firstAt, lastAt: entry.lastAt, tools: { ...entry.tools } }
+            : { host: slug, calls: 0, firstAt: null, lastAt: null, tools: {} };
+    };
+
     const catalog = new RegistryCatalog(hub);
 
     const callBridge = (method, params = {}, timeoutMs = 60000, task = {}) => {
         const taskId = task.taskId || params.taskId || defaultTaskId;
         const requestSessionId = task.sessionId || params.sessionId || sessionId;
-        return hub.call(method, params, timeoutMs, createRequestContext({ clientId, taskId, sessionId: requestSessionId }));
+        return hub.call(method, params, timeoutMs, createRequestContext({ clientId, taskId, sessionId: requestSessionId, host: host.slug }));
     };
 
     const run = (fn) => async (args) => {
@@ -70,12 +88,24 @@ async function main(config) {
     };
 
     const server = new McpServer({ name: 'actspan-mcp', version: '1.0.0' });
+    server.server.oninitialized = () => {
+        host = normalizeHostIdentity(server.server.getClientVersion()?.name, fallbackClient);
+        sessionId = createStableSessionId(host.slug, process.pid);
+        hub.label = host.slug;
+        hub.sessionId = sessionId;
+        void hub.connect().catch((error) => log(`bridge connect failed: ${safeError(error)}`));
+        log(`host initialized slug=${host.slug} source=${host.source}`);
+    };
+    // SDK 1.11 没有 registerTool：legacy tool() 只认 raw shape，把 ZodObject 直接传进去会被
+    // 当成 annotations，参数表退化成空对象（模型看不到任何参数）。这里两种形态都归一成 shape。
     const registerTool = (name, definition, handler) => {
         if (typeof server.registerTool === 'function') {
             server.registerTool(name, definition, handler);
             return;
         }
-        server.tool(name, definition.description, definition.inputSchema, handler);
+        const schema = definition.inputSchema;
+        const shape = schema && typeof schema.shape === 'object' ? schema.shape : schema;
+        server.tool(name, definition.description, shape, handler);
     };
 
 
@@ -84,24 +114,40 @@ async function main(config) {
         description: 'Check whether the local Actspan browser extension Bridge is connected.',
         inputSchema: {},
     }, run(async () => {
+        // The daemon pushes events but not status frames, so pull the authoritative snapshot before
+        // deciding whether an extension is actually paired.
+        await hub.status();
         const owner = {
             connectedAt: hub.connectedAt,
             ownerOrigin: hub.clientOrigin || null,
             lastReplacementReason: hub.lastReplacementReason || null,
+            compatibility: hub.compatibility || null,
+            appVersion: hub.compatibility?.localVersion || null,
+            protocolVersion: hub.compatibility?.localProtocol || null,
+            host: { slug: host.slug, display: host.display, source: host.source },
+            // K3：宿主身份不只进日志——配额/积分系统按同一个 slug 取数。
+            usage: usageForHost(host.slug),
         };
-        if (!hub.isConnected()) {
+        // Startup (this process + the local Bridge daemon) is independent from an authenticated browser
+        // pairing: zero-env runs must answer here instead of failing, and browser capabilities stay
+        // unavailable until an allowlisted extension completes the pairing handshake.
+        if (!hub.extensionConnected) {
             return {
                 connected: false,
+                loop_mode: 'disabled',
+                pairing_required: Boolean(config.pairingRequired),
                 hub_listening: hub.listening,
                 port: hub.port,
                 ...owner,
                 lastError: hub.lastError || null,
-                hint: hub.listening
-                    ? 'Bridge is listening but the allowlisted Actspan extension is not connected.'
-                    : `Bridge could not listen on port ${hub.port}: ${hub.lastError || 'not listening'}`,
+                hint: config.pairingRequired
+                    ? 'No ACTSPAN_EXTENSION_IDS allowlist is configured; the Bridge accepts no extension until `actspan-install` records the exact ID from the pairing page.'
+                    : hub.listening
+                        ? 'Bridge is listening but the allowlisted Actspan extension is not connected.'
+                        : `Bridge could not listen on port ${hub.port}: ${hub.lastError || 'not listening'}`,
             };
         }
-        return { ...await callBridge('ping', {}, 5000), connected: true, ...owner };
+        return { ...await callBridge('ping', {}, 5000), connected: true, loop_mode: 'enabled', pairing_required: false, ...owner };
     }));
     registerTool('actspan_feishu_push', {
         title: 'Push Feishu notification',
@@ -114,8 +160,8 @@ async function main(config) {
     }, run((args) => callBridge('feishu.push', args, 30000)));
 
     registerTool('actspan_tabs_list', {
-        title: 'List browser tabs', description: 'List browser tabs visible to the current Actspan task.', inputSchema: {},
-    }, run((args) => callBridge('tabs.list', args)));
+        title: 'List browser tabs', description: 'List browser tabs visible to the current Actspan task.', inputSchema: taskParams,
+    }, run((args) => callBridge('tabs.list', args, 10000, args)));
 
     registerTool('actspan_tab_open', {
         title: 'Open tab', description: 'Open a browser tab for the current task.',
@@ -123,8 +169,15 @@ async function main(config) {
             ...taskParams,
             url: z.string().url(),
             active: z.boolean().default(false),
+            label: z.string().trim().min(1).max(80).optional(),
         },
     }, run((args) => callBridge('tab.open', args, 30000, args)));
+
+    registerTool('actspan_tabs_select', {
+        title: 'Select active tab', description: 'Select a task-owned tab as the active browser tab.',
+        inputSchema: { ...taskParams, tabId: z.number().int().nonnegative() },
+    }, run((args) => callBridge('tabs.select', args, 10000, args)));
+
 
     registerTool('actspan_tab_close', {
         title: 'Close tab', description: 'Close a tab owned by the current task.',
@@ -136,31 +189,88 @@ async function main(config) {
         inputSchema: { ...taskParams, tabId: tabIdParam, url: z.string().url() },
     }, run((args) => callBridge('tab.navigate', args, 30000, args)));
 
+    const findParam = z.object({
+        role: z.string().trim().min(1).max(80).optional(),
+        name: z.string().trim().min(1).max(200).optional(),
+        nth: z.number().int().nonnegative().optional(),
+    }).strict().describe('Locate by accessible role and/or name without a snapshot. Exact name match wins; multiple matches error instead of guessing, so pass nth (0-based) or use a selector.');
+    const targetFields = {
+        selector: z.string().trim().min(1).max(2000).optional(),
+        ref: z.string().trim().min(1).max(200).optional(),
+        snapshotId: z.string().trim().min(1).max(200).optional(),
+        find: findParam.optional(),
+    };
+    // `.superRefine()` 返回 ZodEffects，而 SDK 的 normalizeObjectSchema 认不出 ZodEffects：
+    // 直接把它当 inputSchema，tools/list 里这个工具的参数表会变成空对象，模型看不到任何参数。
+    // 所以发布用 ZodObject，交叉字段校验挂在 parse 用的副本上。
+    const targetSchema = (fields, required) => {
+        const schema = z.object({ ...taskParams, tabId: tabIdParam, ...targetFields, ...fields }).strict();
+        const validate = schema.superRefine((args, ctx) => {
+            const provided = [args.selector, args.ref, args.find].filter(Boolean).length;
+            if (required && provided === 0) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Provide exactly one of selector, ref+snapshotId, or find' });
+            if (provided > 1) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'selector, ref, and find are mutually exclusive' });
+            if (Boolean(args.ref) !== Boolean(args.snapshotId)) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'ref requires snapshotId and snapshotId requires ref' });
+            if (args.find && !args.find.role && !args.find.name) ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'find requires role or name' });
+        });
+        return { schema, validate };
+    };
+    // ZodError 默认的 message 是一串 JSON；交叉字段校验的错误必须能直接读。
+    const parseTarget = (validate, args) => {
+        const parsed = validate.safeParse(args);
+        if (!parsed.success) throw new Error(parsed.error.issues.map((issue) => issue.message).join('; '));
+        return parsed.data;
+    };
+    const readTarget = targetSchema({
+        format: z.enum(['text', 'html']).default('text'),
+        maxChars: z.number().int().min(1000).max(200000).default(20000),
+    }, false);
+    const realParam = z.boolean().default(false).describe('Force real CDP input events instead of synthetic DOM events. Use when the synthetic click or type produced no observable effect; sensitive submit/payment/delete targets never auto-escalate and require this flag.');
+    const clickTarget = targetSchema({ real: realParam }, true);
+    const typeTarget = targetSchema({ text: z.string(), submit: z.boolean().default(false), real: realParam }, true);
+    const snapshotSchema = z.object({
+        ...taskParams,
+        tabId: tabIdParam,
+        query: z.string().trim().min(1).max(200).optional(),
+        scope_selector: z.string().trim().min(1).max(2000).optional(),
+        include_non_interactive: z.boolean().default(false),
+        include_hidden: z.boolean().default(false),
+        only_viewport: z.boolean().default(false),
+        limit: z.number().int().min(1).max(60).default(20),
+    }).strict();
+
+    registerTool('actspan_page_snapshot', {
+        title: 'Snapshot page elements',
+        description: 'Return a deterministic semantic snapshot of a task-owned tab: interactive elements with refs. Elements inside open shadow roots are included. Elements inside child frames (including cross-origin iframes) are included with a frame-qualified ref ending in @fN; pass that ref back verbatim with the returned snapshotId to act or read inside that exact frame.',
+        inputSchema: snapshotSchema,
+    }, run((args) => {
+        const checked = snapshotSchema.parse(args);
+        return callBridge('page.snapshot', checked, 30000, checked);
+    }));
+
+
     registerTool('actspan_page_read', {
-        title: 'Read page', description: 'Read text or HTML from a task-owned tab; when tabId is omitted, read the active tab.',
-        inputSchema: {
-            ...taskParams,
-            tabId: tabIdParam,
-            format: z.enum(['text', 'html']).default('text'),
-            maxChars: z.number().int().min(1000).max(200000).default(20000),
-        },
-    }, run((args) => callBridge('page.read', args, 30000, args)));
+        title: 'Read page', description: 'Read text or HTML from a task-owned tab; when tabId is omitted, read the active tab. Pass selector, ref+snapshotId, or find to read one element instead of the whole page.',
+        inputSchema: readTarget.schema,
+    }, run((args) => {
+        const checked = parseTarget(readTarget.validate, args);
+        return callBridge('page.read', checked, 30000, checked);
+    }));
 
     registerTool('actspan_page_click', {
-        title: 'Click page element', description: 'Click a DOM element in a tab owned by the current task.',
-        inputSchema: { ...taskParams, tabId: tabIdParam, selector: z.string().min(1) },
-    }, run((args) => callBridge('page.click', args, 30000, args)));
+        title: 'Click page element', description: 'Click a DOM element in a tab owned by the current task. Locate it by exactly one of selector, ref+snapshotId (from a snapshot), or find {role, name, nth}. Synthetic DOM events are used first; when they produce no observable effect the click is automatically replayed as real CDP input events. Submit/payment/delete targets never auto-escalate; pass real:true to force real events (recorded in the audit trail).',
+        inputSchema: clickTarget.schema,
+    }, run((args) => {
+        const checked = parseTarget(clickTarget.validate, args);
+        return callBridge('page.click', checked, 30000, checked);
+    }));
 
     registerTool('actspan_page_type', {
-        title: 'Type into page', description: 'Type into a DOM input in a tab owned by the current task.',
-        inputSchema: {
-            ...taskParams,
-            tabId: tabIdParam,
-            selector: z.string().min(1),
-            text: z.string(),
-            submit: z.boolean().default(false),
-        },
-    }, run((args) => callBridge('page.type', args, 30000, args)));
+        title: 'Type into page', description: 'Type into a DOM input in a tab owned by the current task. Locate it by exactly one of selector, ref+snapshotId (from a snapshot), or find {role, name, nth}. Synthetic DOM events are used first; when they produce no observable effect the input is automatically replayed as real CDP input events. Submit/payment/delete targets never auto-escalate; pass real:true to force real events (recorded in the audit trail).',
+        inputSchema: typeTarget.schema,
+    }, run((args) => {
+        const checked = parseTarget(typeTarget.validate, args);
+        return callBridge('page.type', checked, 30000, checked);
+    }));
 
     registerTool('actspan_page_eval', {
         title: 'Evaluate page expression', description: 'Evaluate a page expression; policy approval remains enforced by the extension.',
@@ -181,12 +291,12 @@ async function main(config) {
 
     registerTool('actspan_skills_list', {
         title: 'List skills and workflows', description: 'Read the current Actspan registry revision and skill summaries.', inputSchema: {},
-    }, run(() => catalog.list(createRequestContext({ clientId, taskId: defaultTaskId, sessionId }))));
+    }, run(() => catalog.list(createRequestContext({ clientId, taskId: defaultTaskId, sessionId, host: host.slug }))));
 
     registerTool('actspan_skill_detail', {
         title: 'Get skill detail', description: 'Read a complete skill and its structured workflow contracts.',
         inputSchema: { name: z.string().min(1) },
-    }, run((args) => catalog.detail(args.name, createRequestContext({ clientId, taskId: defaultTaskId, sessionId }))));
+    }, run((args) => catalog.detail(args.name, createRequestContext({ clientId, taskId: defaultTaskId, sessionId, host: host.slug }))));
 
     const workflowRun = run(async (args) => {
         const taskId = args.taskId || randomUUID();
@@ -199,6 +309,7 @@ async function main(config) {
         title: 'Run workflow', description: 'Start a structured workflow and return an asynchronous task handle.',
         inputSchema: {
             ...taskParams,
+            mode: z.enum(['independent', 'continue', 'replace']).default('independent'),
             name: z.string().min(1),
             input: z.record(z.unknown()).default({}),
         },
@@ -235,7 +346,22 @@ async function main(config) {
         title: 'Cancel agent task', description: 'Cancel an agent task by taskId.', inputSchema: taskParams,
     }, taskCall('task.cancel'));
 
-    await server.connect(new StdioServerTransport());
+    registerActTool({ registerTool, callBridge, run, tabIdParam, taskParams });
+    registerInteractionTools({ registerTool, callBridge, run, tabIdParam, taskParams });
+    registerNetworkTools({ registerTool, callBridge, run, tabIdParam, taskParams });
+    registerDataTools({ registerTool, callBridge, run, tabIdParam, taskParams });
+    registerStatusTool({ registerTool, callBridge, run, tabIdParam, taskParams });
+
+    const transport = new StdioServerTransport();
+    server.server.onclose = () => { void hub.stop(); };
+    const onStdioClose = () => { void server.close().finally(() => process.exit(0)); };
+    process.stdin.once('end', onStdioClose);
+    process.stdin.once('close', onStdioClose);
+    process.once('exit', () => { hub.stop(); });
+    for (const signal of ['SIGINT', 'SIGTERM']) {
+        process.once(signal, () => { void server.close().finally(() => process.exit(0)); });
+    }
+    await server.connect(transport);
     log('Actspan stdio MCP server ready');
 }
 

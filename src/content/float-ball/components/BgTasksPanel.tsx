@@ -7,7 +7,6 @@ import React, { useEffect, useCallback, useState } from 'react';
 import Channel from '../../../lib/channel';
 import { useActspan } from '../context/useActspan';
 import { FUNCTION_ICONS } from '../icons';
-import { escapeHtml } from '../markdown';
 import { formatClock, formatInterval } from '../text-utils';
 
 export const BgTasksPanel: React.FC = () => {

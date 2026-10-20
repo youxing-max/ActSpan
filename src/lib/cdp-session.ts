@@ -119,8 +119,20 @@ interface FetchInterceptionState {
 
 // ============ 内部状态 ============
 
-/** 活跃 debugger 会话 */
+/** L2 debugger idle lifecycle. */
+export const L2_IDLE_MS = 5000;
+export type CDPLifecycleErrorCode = 'NEEDS_L2' | 'L2_BUSY';
+
+export interface CDPCommandResult {
+  success: boolean;
+  result?: any;
+  error?: string;
+  code?: CDPLifecycleErrorCode;
+}
+
 const sessions = new Map<number, CDPSessionEntry>();
+const idleTimers = new Map<number, ReturnType<typeof setTimeout>>();
+const inFlightCommands = new Map<number, number>();
 
 /** debugger 协议版本 */
 const PROTOCOL_VERSION = '1.3';
@@ -153,43 +165,101 @@ const isSupported = (): boolean => {
   return typeof chrome !== 'undefined' && Boolean(chrome.debugger);
 };
 
-const attach = async (tabId: number): Promise<{ success: boolean; error?: string }> => {
+const clearIdleTimer = (tabId: number): void => {
+  const timer = idleTimers.get(tabId);
+  if (timer !== undefined) clearTimeout(timer);
+  idleTimers.delete(tabId);
+};
+
+const notifyCommandIdle = (tabId: number): void => {
+  if ((inFlightCommands.get(tabId) || 0) > 0) return;
+  scheduleIdleDetach(tabId);
+};
+
+const scheduleIdleDetach = (tabId: number): void => {
+  clearIdleTimer(tabId);
+  if (!sessions.has(tabId)) return;
+  idleTimers.set(tabId, setTimeout(() => {
+    idleTimers.delete(tabId);
+    if ((inFlightCommands.get(tabId) || 0) === 0) void detach(tabId);
+    else scheduleIdleDetach(tabId);
+  }, L2_IDLE_MS));
+};
+
+const touchSession = (tabId: number): void => {
+  if (sessions.has(tabId)) scheduleIdleDetach(tabId);
+};
+
+const errorMessage = (error: unknown): string => {
+  if (error && typeof error === 'object' && 'message' in error) {
+    const message = error.message;
+    return typeof message === 'string' ? message : String(message);
+  }
+  return String(error || '');
+};
+
+type AttachResult = { success: boolean; error?: string; code?: CDPLifecycleErrorCode };
+const attachInFlight = new Map<number, Promise<AttachResult>>();
+
+const attach = async (tabId: number): Promise<AttachResult> => {
   if (!isSupported()) {
-    return { success: false, error: 'chrome.debugger API 不可用' };
+    return { success: false, code: 'NEEDS_L2', error: '需要启用高保真调试器权限：请点开扩展图标启用高保真模式' };
   }
 
   if (sessions.has(tabId)) {
+    touchSession(tabId);
     return { success: true };
   }
+  const pending = attachInFlight.get(tabId);
+  if (pending) return pending;
 
-  try {
-    await chrome.debugger.attach({ tabId }, PROTOCOL_VERSION);
-    const entry: CDPSessionEntry = { tabId, attachedAt: Date.now(), domainsEnabled: new Set() };
-    sessions.set(tabId, entry);
-
-    // 自动启用 Page 和 Runtime 域
+  const operation = (async (): Promise<AttachResult> => {
     try {
-      await chrome.debugger.sendCommand({ tabId }, 'Page.enable', {});
-      entry.domainsEnabled.add('Page');
-    } catch { /* 忽略 */ }
+      await chrome.debugger.attach({ tabId }, PROTOCOL_VERSION);
+      const entry: CDPSessionEntry = { tabId, attachedAt: Date.now(), domainsEnabled: new Set() };
+      sessions.set(tabId, entry);
 
-    try {
-      await chrome.debugger.sendCommand({ tabId }, 'Runtime.enable', {});
-      entry.domainsEnabled.add('Runtime');
-    } catch { /* 忽略 */ }
+      // 自动启用 Page 和 Runtime 域
+      try {
+        await chrome.debugger.sendCommand({ tabId }, 'Page.enable', {});
+        entry.domainsEnabled.add('Page');
+      } catch { /* 忽略 */ }
 
-    return { success: true };
-  } catch (err: any) {
-    const msg = String(err?.message || '');
-    if (msg.includes('Another debugger is already attached')) {
-      return { success: false, error: '该标签页已被其他调试器占用，请关闭 DevTools 后重试' };
+      try {
+        await chrome.debugger.sendCommand({ tabId }, 'Runtime.enable', {});
+        entry.domainsEnabled.add('Runtime');
+      } catch { /* 忽略 */ }
+
+      scheduleIdleDetach(tabId);
+      return { success: true };
+    } catch (err: unknown) {
+      const msg = errorMessage(err);
+      if (msg.includes('Another debugger is already attached')) {
+        return {
+          success: false,
+          code: 'L2_BUSY',
+          error: 'L2_BUSY：多半是你自己开着 DevTools——一个标签页只允许一个调试器。已自动降级；如需真实事件请关闭 DevTools 后重试',
+        };
+      }
+      return {
+        success: false,
+        code: 'NEEDS_L2',
+        error: `NEEDS_L2：需要启用高保真调试器权限，请点开扩展图标启用高保真模式（${msg || 'debugger attach 失败'}）`,
+      };
     }
-    return { success: false, error: msg || 'debugger attach 失败' };
+  })();
+  attachInFlight.set(tabId, operation);
+  try {
+    return await operation;
+  } finally {
+    attachInFlight.delete(tabId);
   }
 };
 
 /** 清理指定 tab 的所有关联状态 */
 const cleanupTabState = (tabId: number): void => {
+  clearIdleTimer(tabId);
+  inFlightCommands.delete(tabId);
   sessions.delete(tabId);
   pendingDialogs.delete(tabId);
   dialogPolicies.delete(tabId);
@@ -204,17 +274,28 @@ const cleanupTabState = (tabId: number): void => {
   fetchInterception.delete(tabId);
 };
 
+const waitForCommands = async (tabId: number): Promise<void> => {
+  if ((inFlightCommands.get(tabId) || 0) === 0) return;
+  await new Promise<void>((resolve) => {
+    const timer = setInterval(() => {
+      if ((inFlightCommands.get(tabId) || 0) === 0) {
+        clearInterval(timer);
+        resolve();
+      }
+    }, 10);
+  });
+};
+
 const detach = async (tabId: number): Promise<{ success: boolean; error?: string }> => {
+  clearIdleTimer(tabId);
+  if (!sessions.has(tabId)) return { success: true };
+  await waitForCommands(tabId);
   cleanupTabState(tabId);
-  if (!isSupported()) {
-    return { success: true };
-  }
+  if (!isSupported()) return { success: true };
   try {
     await chrome.debugger.detach({ tabId });
-    return { success: true };
-  } catch {
-    return { success: true };
-  }
+  } catch { /* 已由用户或浏览器断开 */ }
+  return { success: true };
 };
 
 const isAttached = (tabId: number): boolean => {
@@ -225,20 +306,36 @@ const sendCommand = async (
   tabId: number,
   method: string,
   params?: Record<string, any>,
-): Promise<{ success: boolean; result?: any; error?: string }> => {
+): Promise<CDPCommandResult> => {
   const attachResult = await attach(tabId);
   if (!attachResult.success) {
-    return { success: false, error: `无法 attach debugger: ${attachResult.error}` };
+    return { success: false, code: attachResult.code, error: attachResult.error };
   }
+  touchSession(tabId);
+  inFlightCommands.set(tabId, (inFlightCommands.get(tabId) || 0) + 1);
   try {
+    const pausedRequest = method === 'Fetch.continueRequest' || method === 'Fetch.fulfillRequest' || method === 'Fetch.failRequest'
+      ? fetchPausedRequests.get(tabId)?.get(params?.requestId) : undefined;
     const result = await chrome.debugger.sendCommand({ tabId }, method, params || {});
+    if (pausedRequest && fetchPausedRequests.get(tabId)?.get(params?.requestId) === pausedRequest) {
+      fetchPausedRequests.get(tabId)?.delete(params?.requestId);
+    }
     return { success: true, result };
-  } catch (err: any) {
-    const msg = String(err?.message || 'CDP 命令执行失败');
+  } catch (err: unknown) {
+    const msg = errorMessage(err) || 'CDP 命令执行失败';
+    if (msg.includes('Another debugger is already attached')) {
+      return { success: false, code: 'L2_BUSY', error: `L2_BUSY：${msg}。已自动降级；如需真实事件请关闭 DevTools 后重试` };
+    }
     if (msg.includes('Debugger is not attached') || msg.includes('No tab with given id')) {
       cleanupTabState(tabId);
+      return { success: false, code: 'NEEDS_L2', error: `NEEDS_L2：${msg}` };
     }
     return { success: false, error: msg };
+  } finally {
+    const remaining = Math.max(0, (inFlightCommands.get(tabId) || 1) - 1);
+    if (remaining === 0) inFlightCommands.delete(tabId);
+    else inFlightCommands.set(tabId, remaining);
+    notifyCommandIdle(tabId);
   }
 };
 
@@ -900,6 +997,7 @@ if (isSupported() && chrome.debugger.onEvent) {
 // ============ 导出 ============
 
 export const CDPSessionManager = {
+  L2_IDLE_MS,
   isSupported,
   attach,
   detach,

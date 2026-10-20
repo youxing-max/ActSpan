@@ -3,7 +3,7 @@
  * 从 session-manager.ts 提取，负责构建回放负载和 session_sync 负载。
  */
 
-import type { Session, SessionEventLogItem, SessionReplayPayload, SessionOpQueueSnapshot, SessionTaskKind } from './session-types';
+import type { Session, SessionEventLogItem, SessionReplayPayload, SessionTaskKind } from './session-types';
 import { getActiveTurnRuntime, buildSessionOpQueueSnapshot, sessionTaskKinds } from './session-state';
 import { reconcileSessionStateFromEventLog } from './session-event';
 

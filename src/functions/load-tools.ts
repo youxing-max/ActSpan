@@ -1,7 +1,7 @@
 /**
- * load_tools — 按需加载额外工具的元工具
+ * load_tools — 旧版按需加载调用的兼容入口
  *
- * execute 仅返回信息，实际工具注入由 orchestrator 的 loop 处理
+ * 工具在新会话中默认常驻；execute 只返回分类信息，不承诺注入新 schema。
  */
 
 import type { FunctionDefinition } from './types';
@@ -9,7 +9,7 @@ import { ON_DEMAND_CATEGORIES, getToolsByCategory } from './tool-tiers';
 
 export const loadToolsFunction: FunctionDefinition = {
   name: 'load_tools',
-  description: 'Load additional tools on demand. When you need to use tools listed in the on-demand tool catalog, call this tool first to load the corresponding category. The new tool schemas will be available in the next round.',
+  description: 'Legacy compatibility command for tool categories. Tool schemas are already available in the current conversation; use this only to confirm the category contents. It does not load new tools or promise new schemas in the next round.',
   parameters: {
     type: 'object',
     properties: {
@@ -37,9 +37,10 @@ export const loadToolsFunction: FunctionDefinition = {
       success: true,
       data: {
         loaded: tools,
+        already_available: true,
         category,
         label: catInfo?.label || category,
-        message: `已加载 ${tools.length} 个工具：${tools.join(', ')}`,
+        message: `${tools.length} tools are already available in the ${catInfo?.label || category} category: ${tools.join(', ')}`,
       },
     };
   },

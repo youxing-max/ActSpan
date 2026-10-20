@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>New Tab Fixture</title></head>
+<body>
+  <h1>New-tab routing fixture</h1>
+  <!-- Both launchers target only the local child. #newtab-result indicates the request, not proof of a child tab; the child proves loading via #child-result. -->
+  <a id="data-newtab-launcher" data-newtab-launcher href="newtab-child.html" target="_blank" rel="noopener">Open child fixture link</a>
+  <button id="newtab-window-open" type="button">Open child using window.open</button>
+  <p id="newtab-result" role="status">No launch requested</p>
+  <pre id="newtab-event-log" aria-live="polite"></pre>
+  <script>
+    const log = document.getElementById('newtab-event-log');
+    document.getElementById('data-newtab-launcher').addEventListener('click', () => {
+      document.getElementById('newtab-result').textContent = 'Link launch requested';
+      log.textContent += 'data-newtab-launcher:click\n';
+    });
+    document.getElementById('newtab-window-open').addEventListener('click', () => {
+      window.open('newtab-child.html', '_blank', 'noopener');
+      document.getElementById('newtab-result').textContent = 'window.open requested (verify child tab separately)';
+      log.textContent += 'newtab-window-open:click\n';
+    });
+  </script>
+</body>
+</html>

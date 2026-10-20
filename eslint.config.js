@@ -11,12 +11,19 @@ export default [
   },
   js.configs.recommended,
   {
-    files: ['mcp-server/**/*.{js,mjs}', 'src/**/*.test.mjs'],
+    files: ['mcp-server/**/*.{js,mjs}', 'src/**/*.test.mjs', 'test/**/*.mjs'],
     languageOptions: {
-      globals: globals.node,
+      globals: { ...globals.node, ...globals.browser, chrome: 'readonly' },
     },
     rules: {
       'no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
+      'no-constant-condition': 'warn',
+    },
+  },
+  {
+    files: ['public/**/*.js'],
+    languageOptions: {
+      globals: { ...globals.browser, chrome: 'readonly' },
     },
   },
   {
@@ -47,6 +54,8 @@ export default [
       '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
       // TypeScript 自身负责未定义变量检查，此规则关闭避免误报
       'no-undef': 'off',
+      // TypeScript 方法重载会被基础 JavaScript 规则误判为重复成员
+      'no-dupe-class-members': 'off',
       // 常量条件（如 while(true)）给出警告
       'no-constant-condition': 'warn',
       // 无用转义字符给出警告

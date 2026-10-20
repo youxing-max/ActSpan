@@ -4,6 +4,14 @@
  */
 
 import Channel from '../lib/channel';
+import { detectObstruction, getElementCenter, withVirtualCursorBeforeObstruction } from './virtual-cursor';
+
+/**
+ * 隔离世界私有的 ref 解析入口：页面脚本不可见，供注入脚本（interactOnPage）复用同一套句柄校验。
+ */
+declare global {
+  var __actspan_resolve_element_handle: ((elementId: string, snapshotId?: string) => FindResolution) | undefined;
+}
 
 interface PageSnapshotParams {
   query?: string;
@@ -12,15 +20,32 @@ interface PageSnapshotParams {
   include_hidden?: boolean;
   only_viewport?: boolean;
   limit?: number;
+  /** G5：桥接层为每个 frame 指定自己的 snapshotId；缺省时本 frame 自行生成 */
+  snapshot_id?: string;
+}
+
+/** role+name 定位目标，不依赖快照；nth 为 0-based 索引，仅在多命中时用于消歧 */
+export interface FindTarget {
+  role?: string;
+  name?: string;
+  nth?: number;
 }
 
 interface ElementHandleActionParams {
-  action: 'click' | 'fill' | 'focus' | 'get_info' | 'press_key' | 'scroll_into_view' | 'select' | 'hover';
+  action: 'click' | 'fill' | 'focus' | 'get_info' | 'press_key' | 'scroll_into_view' | 'select' | 'hover' | 'inspect' | 'observe' | 'read';
   element_id?: string;
+  snapshot_id?: string;
   selector?: string;
+  find?: FindTarget;
   value?: string;
   key?: string;
   modifiers?: string[];
+  approved_signature?: string;
+  submit?: boolean;
+  max_chars?: number;
+  /** 条件探针：只回报布尔观测，原始 value 与页面文本绝不回传。 */
+  attr?: 'exists' | 'checked' | 'value' | 'text' | 'textContains';
+  expect?: string;
 }
 
 interface PageAssertionItem {
@@ -59,10 +84,52 @@ const SKIP_TAGS = new Set([
 /** 节点遍历上限，避免超大 DOM 页面卡死 */
 const MAX_NODES = 8000;
 
+/**
+ * G4：把开放 shadow root 的后代一并纳入候选。
+ * 闭合 shadow root 无法访问，按契约不在范围内；跨源 iframe 由桥接层按 frame 路由，不在这里穿透。
+ */
+const collectDeepElements = (root: ParentNode, selector: string): Element[] => {
+  const collected: Element[] = [];
+  const visit = (scope: ParentNode): void => {
+    for (const el of Array.from(scope.querySelectorAll('*'))) {
+      if (selector === '*' || el.matches(selector)) collected.push(el);
+      const shadow = el.shadowRoot;
+      if (shadow) visit(shadow);
+    }
+  };
+  visit(root);
+  const rootShadow = (root as Element).shadowRoot;
+  if (rootShadow) visit(rootShadow);
+  return collected;
+};
+
 export const HANDLE_PREFIX = `ec-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 let handleSeq = 0;
+let snapshotSeq = 0;
 export const elementHandleMap = new Map<string, Element>();
 export const elementToHandleMap = new WeakMap<Element, string>();
+export const elementHandleSnapshotMap = new Map<string, { snapshotId: string; fingerprint: string }>();
+
+export const createSnapshotId = (): string => `${HANDLE_PREFIX}-s${(++snapshotSeq).toString(36)}`;
+
+const getElementFingerprint = (el: Element): string => [
+  el.tagName.toLowerCase(),
+  el.getAttribute('role') || '',
+  normalizeText(getElementText(el)).slice(0, 120),
+].join('|');
+
+export const validateElementHandle = (
+  elementId: string,
+  snapshotId?: string,
+  metadata: Map<string, { snapshotId: string; fingerprint: string }> = elementHandleSnapshotMap,
+): string | null => {
+  const entry = metadata.get(elementId);
+  if (!entry) return null;
+  if (!snapshotId || snapshotId !== entry.snapshotId) {
+    return 'element_id 已过期，请重新调用 page(action="snapshot")，或改用 find 重新定位元素';
+  }
+  return null;
+};
 
 export const INTERACTIVE_SELECTOR = [
   'a[href]',
@@ -133,6 +200,26 @@ export const isElementEditable = (el: Element): boolean => {
   }
   return (el as HTMLElement).isContentEditable;
 };
+
+/**
+ * G11：读 aria-selected 三态状态，形状与 readStateProbe 的 checkedOf 一致。
+ * 属性缺失时返回 undefined，避免把「未声明」当成 false。
+ */
+const ariaSelectedOf = (el: Element): boolean | undefined => {
+  const aria = el.getAttribute('aria-selected');
+  if (aria === 'true') return true;
+  if (aria === 'false') return false;
+  return undefined;
+};
+
+/**
+ * G11：class 表达的状态（is-active / selected 之类）也要可读。
+ * 用 getAttribute('class') 而非 el.className：SVG 元素的 className 是 SVGAnimatedString 对象，不是字符串。
+ * 上限 120 与 aria_label / label 同属「身份元数据」一族（text 走 220 的内容族）；
+ * 空 class 返回 undefined，不给每个候选都塞空串。
+ */
+const CLASS_NAME_MAX = 120;
+const classNameOf = (el: Element): string | undefined => clipText(el.getAttribute('class') || '', CLASS_NAME_MAX) || undefined;
 
 /**
  * 判断元素是否可点击
@@ -230,6 +317,23 @@ const getElementInfo = (el: Element, cache: Map<Element, CachedElementInfo>): Ca
   return info;
 };
 
+/**
+ * 句柄表是强引用：元素脱离文档后 Map 仍会吊住整棵 DOM 子树。
+ * 只保留仍在文档里的句柄，已脱离的连同快照元数据一起丢掉。
+ * 仍在文档里的句柄一律保留，跨快照编号稳定（H1）不受影响。
+ */
+export const pruneDetachedHandles = (): void => {
+  for (const [id, el] of elementHandleMap) {
+    if (el.isConnected) continue;
+    elementHandleMap.delete(id);
+    elementHandleSnapshotMap.delete(id);
+  }
+};
+
+// ponytail: 固定 256 阈值换 O(1) 摊还；页面元素数极多时单次清理会变慢，届时改成按快照边界清理。
+const PRUNE_EVERY = 256;
+let handlesSincePrune = 0;
+
 export const getOrCreateElementHandle = (el: Element): string => {
   const existing = elementToHandleMap.get(el);
   if (existing) {
@@ -240,13 +344,16 @@ export const getOrCreateElementHandle = (el: Element): string => {
   const handleId = `${HANDLE_PREFIX}-${handleSeq.toString(36)}`;
   elementToHandleMap.set(el, handleId);
   elementHandleMap.set(handleId, el);
+  if (++handlesSincePrune >= PRUNE_EVERY) {
+    handlesSincePrune = 0;
+    pruneDetachedHandles();
+  }
   return handleId;
 };
 
 const buildSelectorCandidates = (el: Element): string[] => {
   const selectors: string[] = [];
   const tag = el.tagName.toLowerCase();
-  const htmlEl = el as HTMLElement;
 
   if (el.id) selectors.push(`#${escapeCssValue(el.id)}`);
 
@@ -278,26 +385,30 @@ const buildSelectorCandidates = (el: Element): string[] => {
     }
   }
 
-  if (htmlEl.dataset?.actspanHandle) {
-    selectors.unshift(`[data-actspan-handle="${escapeCssValue(htmlEl.dataset.actspanHandle)}"]`);
-  }
 
   return Array.from(new Set(selectors)).slice(0, 2);
+};
+
+export const sanitizeElementValue = (type: unknown, raw: unknown): string | undefined => {
+  if (String(type || '').toLowerCase() === 'password') return undefined;
+  return clipText(raw || '', 120);
 };
 
 /**
  * 构建元素描述符
  * @param cache 可选，元素信息缓存，传入时复用缓存数据避免重复 DOM 查询
  */
-const buildElementDescriptor = (el: Element, score: number = 0, matchReasons?: string[], cache?: Map<Element, CachedElementInfo>) => {
+const buildElementDescriptor = (el: Element, score: number = 0, matchReasons?: string[], cache?: Map<Element, CachedElementInfo>, snapshotId?: string) => {
   const htmlEl = el as HTMLElement;
   const handleId = getOrCreateElementHandle(el);
-  htmlEl.dataset.actspanHandle = handleId;
-  const role = el.getAttribute('role') || undefined;
+  if (snapshotId) {
+    elementHandleSnapshotMap.set(handleId, { snapshotId, fingerprint: getElementFingerprint(el) });
+  }
   const placeholder = el.getAttribute('placeholder') || undefined;
   const href = el instanceof HTMLAnchorElement ? el.href || undefined : undefined;
+  const role = el.getAttribute('role') || undefined;
   const value = el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement
-    ? clipText(el.value || '', 120)
+    ? sanitizeElementValue(el.getAttribute('type'), el.value)
     : undefined;
 
   // 有缓存时复用缓存数据，避免重复调用昂贵 DOM API
@@ -306,13 +417,16 @@ const buildElementDescriptor = (el: Element, score: number = 0, matchReasons?: s
     return {
       element_id: handleId,
       tag: el.tagName.toLowerCase(),
+      snapshot_id: snapshotId,
       role,
       type: el.getAttribute('type') || undefined,
       text: info.text || undefined,
       label: info.label || undefined,
       placeholder,
       aria_label: el.getAttribute('aria-label') || undefined,
+      aria_selected: ariaSelectedOf(el),
       name: el.getAttribute('name') || undefined,
+      class_name: classNameOf(el),
       href,
       value,
       clickable: info.clickable,
@@ -341,12 +455,15 @@ const buildElementDescriptor = (el: Element, score: number = 0, matchReasons?: s
   return {
     element_id: handleId,
     tag: el.tagName.toLowerCase(),
+    snapshot_id: snapshotId,
     role,
     type: el.getAttribute('type') || undefined,
     text: text || undefined,
     label: label || undefined,
     placeholder,
     aria_label: el.getAttribute('aria-label') || undefined,
+    aria_selected: ariaSelectedOf(el),
+    class_name: classNameOf(el),
     name: el.getAttribute('name') || undefined,
     href,
     value,
@@ -440,9 +557,55 @@ const scoreElementAgainstQuery = (el: Element, query: string, cache?: Map<Elemen
   return { score, reasons: Array.from(new Set(reasons)).slice(0, 4) };
 };
 
+/**
+ * G15：弱候选判定。带 onclick / tabindex 的非原生标签可能是独立操作（卡片上的「×」），
+ * 即使嵌在别的可点区域里也必须保留。
+ */
+const isWeakCandidate = (el: Element): boolean => el.hasAttribute('onclick') || el.hasAttribute('tabindex');
+
+/** G15：label 关联的控件；有 for 按 id 找，否则退回包裹式关联（label.control）。 */
+const labelControlOf = (el: Element): Element | null => {
+  if (el.tagName.toLowerCase() !== 'label') return null;
+  const htmlFor = el.getAttribute('for');
+  if (htmlFor) return document.getElementById(htmlFor);
+  return (el as HTMLLabelElement).control ?? null;
+};
+
+/** G15：沿祖先链（含 shadow 边界）判断元素是否落在另一个「真正可点」的候选内部。 */
+const nestedInClickableCandidate = (el: Element, kept: Set<Element>, cache: Map<Element, CachedElementInfo>): boolean => {
+  let node: Node | null = el.parentNode;
+  while (node) {
+    if ('tagName' in node) {
+      // role=group 这类容器也在候选里，但它们不代表同一个可点区域
+      if (kept.has(node as Element) && getElementInfo(node as Element, cache).clickable) return true;
+      node = node.parentNode;
+    } else {
+      node = (node as ShadowRoot).host ?? null;
+    }
+  }
+  return false;
+};
+
+/**
+ * G15：同一可点区域只算一个候选。
+ * label[for] 与其关联控件折叠为一个（保留控件，标签文本经 .labels 仍读得到）；
+ * 纯装饰的嵌套后代（按钮里的 <i class="fa">）不再单独占候选。
+ * 弱候选（onclick / tabindex）一律保留。
+ */
+const dedupeNestedCandidates = <T extends { el: Element }>(items: T[], cache: Map<Element, CachedElementInfo>): T[] => {
+  const candidates = new Set(items.map((item) => item.el));
+  const folded = items.filter((item) => {
+    const control = labelControlOf(item.el);
+    return !(control && candidates.has(control));
+  });
+  const kept = new Set(folded.map((item) => item.el));
+  return folded.filter((item) => isWeakCandidate(item.el) || !nestedInClickableCandidate(item.el, kept, cache));
+};
+
 const collectSnapshotElements = (params: PageSnapshotParams) => {
-  const limit = Math.min(Math.max(Number(params.limit) || 20, 1), 60);
+  const snapshotId = normalizeText(params.snapshot_id) || createSnapshotId();
   const query = normalizeText(params.query || '');
+  const limit = Math.min(Math.max(Number(params.limit) || 20, 1), 60);
   const includeHidden = params.include_hidden === true;
   const onlyViewport = params.only_viewport === true;
   const selector = params.include_non_interactive || query ? '*' : INTERACTIVE_SELECTOR;
@@ -455,7 +618,7 @@ const collectSnapshotElements = (params: PageSnapshotParams) => {
   // 创建本次快照的元素信息缓存，函数返回后自动回收
   const cache = new Map<Element, CachedElementInfo>();
 
-  let nodes = Array.from(scopeRoot.querySelectorAll(selector));
+  let nodes = collectDeepElements(scopeRoot, selector);
 
   // 优化 1：提前剪枝——过滤掉无意义标签和 SVG 内部元素
   if (selector === '*') {
@@ -499,13 +662,16 @@ const collectSnapshotElements = (params: PageSnapshotParams) => {
       };
     })
     .filter((item) => !query || item.score > 0)
-    .sort((left, right) => right.score - left.score)
-    .slice(0, limit);
+    .sort((left, right) => right.score - left.score);
 
-  const items = scored.map((item) => buildElementDescriptor(item.el, item.score, item.reasons, cache));
+  // G15：折叠后再取前 limit 个，避免被折叠掉的候选白占名额
+  const items = dedupeNestedCandidates(scored, cache)
+    .slice(0, limit)
+    .map((item) => buildElementDescriptor(item.el, item.score, item.reasons, cache, snapshotId));
   return {
     success: true,
     data: {
+      snapshot_id: snapshotId,
       url: window.location.href,
       title: document.title,
       matched_query: query || undefined,
@@ -519,6 +685,192 @@ const collectSnapshotElements = (params: PageSnapshotParams) => {
   };
 };
 
+/**
+ * 计算元素的隐式/显式语义角色。
+ * find 的 role 语义必须与快照暴露的 role 一致，否则 agent 从快照学到的角色无法用于 find。
+ */
+export const computeAccessibleRole = (el: Element): string => {
+  const explicit = normalizeText(el.getAttribute('role') || '').toLowerCase().split(/\s+/)[0];
+  if (explicit) return explicit;
+  const tag = el.tagName.toLowerCase();
+  if (tag === 'input') {
+    const type = (el.getAttribute('type') || 'text').toLowerCase();
+    if (type === 'checkbox') return 'checkbox';
+    if (type === 'radio') return 'radio';
+    if (type === 'file') return 'file';
+    if (['submit', 'button', 'reset', 'image'].includes(type)) return 'button';
+    if (['range', 'number'].includes(type)) return 'spinbutton';
+    return 'textbox';
+  }
+  if (tag === 'textarea') return 'textbox';
+  if (tag === 'select') return (el as HTMLSelectElement).multiple ? 'listbox' : 'combobox';
+  if (tag === 'a' || tag === 'area') return el.hasAttribute('href') ? 'link' : '';
+  if (tag === 'button' || tag === 'summary') return 'button';
+  if (/^h[1-6]$/.test(tag)) return 'heading';
+  if (tag === 'option') return 'option';
+  if (tag === 'li') return 'listitem';
+  if (tag === 'img') return 'img';
+  if (tag === 'table') return 'table';
+  if (tag === 'dialog') return 'dialog';
+  if (tag === 'nav') return 'navigation';
+  if (tag === 'main') return 'main';
+  if (tag === 'form') return 'form';
+  if (tag === 'section') return 'region';
+  return '';
+};
+
+/**
+ * 计算可访问名。与 bridge 的 pageAction 保持同一套规则：
+ * 不含 placeholder 与可编辑元素的文本，避免把用户输入/页面回填写进定位描述符。
+ */
+export const computeAccessibleName = (el: Element): string => {
+  const labelled = getElementLabel(el);
+  if (labelled) return labelled;
+  for (const attribute of ['alt', 'title']) {
+    const text = el.getAttribute(attribute);
+    if (text) return clipText(text, 120);
+  }
+  const tag = el.tagName.toLowerCase();
+  if (tag === 'input' && ['submit', 'button', 'reset', 'image'].includes((el.getAttribute('type') || '').toLowerCase())) {
+    const value = el.getAttribute('value');
+    if (value) return clipText(value, 120);
+  }
+  const name = el.getAttribute('name');
+  if (name) return clipText(name, 120);
+  const editable = tag === 'input' || tag === 'textarea' || tag === 'select'
+    || (el as HTMLElement).isContentEditable === true;
+  return editable ? '' : getElementText(el);
+};
+
+/** find 命中候选的可读描述，用于歧义/越界时并列展示而不猜测。 */
+export interface FindCandidate {
+  role?: string;
+  name?: string;
+  tag: string;
+  element_id?: string;
+  selector_candidates: string[];
+}
+
+const describeFindCandidate = (el: Element): FindCandidate => ({
+  role: computeAccessibleRole(el) || undefined,
+  name: clipText(computeAccessibleName(el), 80) || undefined,
+  tag: el.tagName.toLowerCase(),
+  element_id: elementToHandleMap.get(el),
+  selector_candidates: buildSelectorCandidates(el),
+});
+
+export interface FindResolution {
+  target: Element | null;
+  error?: string;
+  candidates?: FindCandidate[];
+  available_roles?: string[];
+}
+
+/**
+ * 按 role+name 定位元素，不依赖快照。
+ * 精确名称匹配优先于包含匹配；多命中拒绝猜测，返回候选与可用角色。
+ */
+export const resolveFindTarget = (find: FindTarget | undefined, root: ParentNode = document): FindResolution => {
+  const role = normalizeText(find?.role || '').toLowerCase();
+  const name = normalizeText(find?.name || '');
+  const nth = find?.nth;
+  if (!role && !name) return { target: null, error: 'find 需要至少提供 role 或 name' };
+  if (nth !== undefined && (!Number.isSafeInteger(nth) || Number(nth) < 0)) {
+    return { target: null, error: 'find.nth 必须是非负整数（0-based）' };
+  }
+
+  const rolesPresent = new Set<string>();
+  const matched: Element[] = [];
+  const exact: Element[] = [];
+  for (const el of collectDeepElements(root, '*')) {
+    const elRole = computeAccessibleRole(el);
+    if (elRole) rolesPresent.add(elRole);
+    if (role && elRole !== role) continue;
+    const elName = normalizeText(computeAccessibleName(el));
+    if (name) {
+      if (!elName) continue;
+      const lowered = elName.toLowerCase();
+      const wanted = name.toLowerCase();
+      if (lowered === wanted) {
+        exact.push(el);
+        matched.push(el);
+        continue;
+      }
+      if (!lowered.includes(wanted)) continue;
+    }
+    matched.push(el);
+  }
+
+  const pool = exact.length > 0 ? exact : matched;
+  const availableRoles = Array.from(rolesPresent).sort();
+  if (pool.length === 0) {
+    return {
+      target: null,
+      error: `find 未匹配到元素（role="${role}" name="${name}"）；请改用 page(action="snapshot") 或提供 selector`,
+      available_roles: availableRoles,
+    };
+  }
+  if (nth !== undefined) {
+    if (nth >= pool.length) {
+      return {
+        target: null,
+        error: `find.nth=${nth} 超出匹配数量 ${pool.length}；nth 为 0-based`,
+        candidates: pool.map(describeFindCandidate),
+        available_roles: availableRoles,
+      };
+    }
+    return { target: promoteSvgActionTarget(pool[nth]) };
+  }
+  if (pool.length === 1) return { target: promoteSvgActionTarget(pool[0]) };
+  return {
+    target: null,
+    error: `find 命中 ${pool.length} 个元素，未指定 nth，拒绝猜测；请用 nth（0-based）选择或改用 selector`,
+    candidates: pool.map(describeFindCandidate),
+    available_roles: availableRoles,
+  };
+};
+
+/**
+ * ref 句柄的唯一解析实现：快照 id、指纹、连接性全部对着私有句柄表校验。
+ * 页面可控属性（例如伪造的 data-actspan-handle）不参与解析，因此无法把 ref 重定向到别的元素。
+ */
+export const resolveElementHandle = (elementId: string, snapshotId?: string): FindResolution => {
+  const id = normalizeText(elementId || '');
+  if (!id) return { target: null, error: '缺少 element_id' };
+  const snapshotError = validateElementHandle(id, snapshotId);
+  if (snapshotError) return { target: null, error: snapshotError };
+  const found = elementHandleMap.get(id);
+  if (found?.isConnected) {
+    const recorded = elementHandleSnapshotMap.get(id);
+    if (recorded && recorded.fingerprint !== getElementFingerprint(found)) {
+      return { target: null, error: 'ref 指向的元素内容已改变（指纹不一致），该编号已失效；请重新调用 page(action="snapshot") 或改用 find 重新定位元素' };
+    }
+    return { target: promoteSvgActionTarget(found) };
+  }
+  if (found && !found.isConnected) {
+    elementHandleMap.delete(id);
+    elementHandleSnapshotMap.delete(id);
+  }
+  return { target: null, error: 'ref 对应的元素已不在文档中；请重新调用 page(action="snapshot") 或改用 find 重新定位元素' };
+};
+
+export const resolveActionTarget = (params: ElementHandleActionParams): FindResolution => {
+  const elementId = normalizeText(params.element_id || '');
+  const selector = normalizeText(params.selector || '');
+  const hasFind = !!params.find && typeof params.find === 'object' && !Array.isArray(params.find);
+  const provided = [elementId && 'ref', selector && 'selector', hasFind && 'find'].filter(Boolean) as string[];
+  if (provided.length > 1) {
+    return { target: null, error: `ref、selector、find 只能三选一，当前同时提供了：${provided.join('、')}` };
+  }
+  if (elementId) return resolveElementHandle(elementId, params.snapshot_id);
+  if (selector) {
+    const found = document.querySelector(selector);
+    return { target: found ? promoteSvgActionTarget(found) : null };
+  }
+  if (hasFind) return resolveFindTarget(params.find);
+  return { target: null };
+};
+
 const setNativeInputValue = (input: HTMLInputElement | HTMLTextAreaElement, value: string): void => {
   const prototype = Object.getPrototypeOf(input);
   const descriptor = Object.getOwnPropertyDescriptor(prototype, 'value');
@@ -529,25 +881,127 @@ const setNativeInputValue = (input: HTMLInputElement | HTMLTextAreaElement, valu
   }
 };
 
-const resolveActionTarget = (params: ElementHandleActionParams): Element | null => {
-  const elementId = normalizeText(params.element_id || '');
-  if (elementId) {
-    const found = elementHandleMap.get(elementId);
-    if (found?.isConnected) return found;
-    if (found && !found.isConnected) {
-      elementHandleMap.delete(elementId);
-    }
-  }
-  if (params.selector) {
-    return document.querySelector(params.selector);
-  }
-  return null;
+const ACTION_BEARING_ANCESTOR_SELECTOR = 'button,a,[role="button"],[role="link"],[role="tab"],[role="menuitem"],[onclick]';
+const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
+
+/** 将 SVG 内部节点提升到真正承载点击行为的复合控件祖先。 */
+export const promoteSvgActionTarget = (target: Element): Element => {
+  const tag = target.tagName.toLowerCase();
+  if (target.namespaceURI !== SVG_NAMESPACE && tag !== 'svg') return target;
+  const ancestor = typeof target.closest === 'function'
+    ? target.closest(ACTION_BEARING_ANCESTOR_SELECTOR)
+    : null;
+  return ancestor || target;
 };
 
-const buildActionInfo = (target: Element) => ({
-  ...buildElementDescriptor(target),
+/** 同步触发点击，再计算并返回成功回执所需的数据。 */
+export const clickAndReport = <T>(target: Element, report: () => T): T => {
+  if (isElementDisabled(target)) throw new Error('目标元素处于禁用状态，无法点击');
+  (target as HTMLElement).click();
+  return report();
+};
+
+
+const buildActionInfo = (target: Element, elementId?: string) => ({
+  ...buildElementDescriptor(target, 0, undefined, undefined, elementId),
   message: `已获取元素信息：${target.tagName.toLowerCase()}`,
 });
+
+export interface ElementObservableState {
+  visible: boolean;
+  text: string;
+  value?: string;
+  ariaExpanded?: string;
+  disabled: boolean;
+  className: string;
+}
+
+export interface EffectEvidence {
+  action: string;
+  status: 'changed' | 'requested' | 'unchanged' | 'validation_error';
+  changed: boolean;
+  target: { element_id?: string; tag: string; role?: string; text?: string };
+  changed_fields: string[];
+  observed: { visible: boolean; text?: string; value?: string; nearby_text?: string; validation_error?: string };
+  diagnostic: string;
+}
+
+const readTargetVisible = (target: Element): boolean => {
+  if (target.hasAttribute('hidden') || target.getAttribute('aria-hidden') === 'true') return false;
+  const htmlTarget = target as HTMLElement;
+  const style = typeof window !== 'undefined' && typeof window.getComputedStyle === 'function'
+    ? window.getComputedStyle(htmlTarget)
+    : undefined;
+  if (style && (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0)) return false;
+  const rect = typeof htmlTarget.getBoundingClientRect === 'function' ? htmlTarget.getBoundingClientRect() : undefined;
+  return !rect || (rect.width > 0 && rect.height > 0);
+};
+
+export const captureObservableState = (target: Element): ElementObservableState => {
+  const type = (target.getAttribute('type') || '').toLowerCase();
+  const rawValue = 'value' in target ? String((target as HTMLInputElement).value || '') : undefined;
+  return {
+    visible: readTargetVisible(target),
+    text: getElementText(target),
+    value: type === 'password' ? undefined : rawValue,
+    ariaExpanded: target.getAttribute('aria-expanded') || undefined,
+    disabled: isElementDisabled(target),
+    className: typeof (target as HTMLElement).className === 'string' ? (target as HTMLElement).className : '',
+  };
+};
+
+export const buildEffectEvidence = (
+  action: string,
+  target: Element,
+  before: ElementObservableState,
+  elementId?: string,
+): EffectEvidence => {
+  const after = captureObservableState(target);
+  const changedFields = (['visible', 'text', 'value', 'ariaExpanded', 'disabled', 'className'] as const)
+    .filter((field) => before[field] !== after[field]);
+  const invalid = typeof target.matches === 'function' && target.matches(':invalid');
+  const formInvalid = !invalid && typeof target.closest === 'function'
+    ? target.closest('form')?.querySelector(':invalid')
+    : null;
+  const validationError = invalid || formInvalid ? '页面表单校验未通过' : undefined;
+  const status = validationError
+    ? 'validation_error'
+    : changedFields.length > 0
+      ? 'changed'
+      : action === 'click'
+        ? 'requested'
+        : 'unchanged';
+  const type = (target.getAttribute('type') || '').toLowerCase();
+  const observedValue = type === 'password' ? undefined : after.value;
+  const nearbyText = typeof target.parentElement?.textContent === 'string'
+    ? clipText(target.parentElement.textContent, 160)
+    : undefined;
+  const diagnostic = validationError
+    ? `${action} 已执行，但目标附近报告表单校验错误；请修正字段后重试`
+    : changedFields.length > 0
+      ? `${action} 已执行，目标 ${target.tagName.toLowerCase()} 发生可观察变化：${changedFields.join(', ')}`
+      : `${action} 已请求目标 ${target.tagName.toLowerCase()}；目标附近未观察到同步 DOM 变化，不能据此判定页面无响应`;
+  return {
+    action,
+    status,
+    changed: changedFields.length > 0,
+    target: {
+      element_id: elementId,
+      tag: target.tagName.toLowerCase(),
+      role: target.getAttribute('role') || undefined,
+      text: clipText(getElementText(target), 120) || undefined,
+    },
+    changed_fields: changedFields,
+    observed: {
+      visible: after.visible,
+      text: after.text || undefined,
+      value: observedValue,
+      nearby_text: nearbyText,
+      validation_error: validationError,
+    },
+    diagnostic,
+  };
+};
 
 const runPageAssertions = (params: PageAssertParams) => {
   const mode = params.mode === 'any' ? 'any' : 'all';
@@ -632,6 +1086,89 @@ const runPageAssertions = (params: PageAssertParams) => {
   };
 };
 
+/**
+ * 从真实目标元素判定敏感动作分类。
+ * 规则与 bridge 的 pageAction 保持一致：支付/删除/普通三分，金额带进签名。
+ * 存在的意义是让 find/ref 目标也能在**真实元素**上被策略检查，而不是靠猜出来的选择器。
+ */
+export interface SensitiveTargetClassification {
+  kind: 'payment' | 'deletion' | 'ordinary';
+  amount: string;
+  label: string;
+  signature: string;
+}
+
+export const classifySensitiveTarget = (target: Element, submit = false): SensitiveTargetClassification => {
+  const htmlTarget = target as HTMLElement;
+  const form = (target as HTMLInputElement).form;
+  // 与执行路径同源：提交语义检查表单提交按钮（fill+submit 会 requestSubmit），
+  // 普通点击检查目标自身或它最近的按钮祖先（click 只点目标本身）。
+  const button = submit
+    ? (form?.querySelector('button[type="submit"], input[type="submit"], button:not([type])') as HTMLElement | null) || htmlTarget
+    : (typeof target.closest === 'function'
+      ? target.closest('button, a, [role="button"], input[type="submit"]') as HTMLElement | null
+      : null) || htmlTarget;
+  const label = (button.innerText || button.getAttribute?.('aria-label') || button.getAttribute?.('value') || button.textContent || '')
+    .trim().slice(0, 120);
+  const surrounding = (form?.innerText || button.parentElement?.innerText || '').slice(0, 500);
+  const amount = (surrounding.match(/(?:[$€£¥]\s*\d[\d,.]*|\d[\d,.]*\s*(?:元|円|美元|欧元|USD|CNY|EUR|GBP))/i) || [])[0] || '';
+  const kind = /(?:支付|付款|购买|结算|下单|充值|订阅|捐赠|pay\b|checkout\b|purchase\b|place order\b|subscribe\b|donate\b)/i.test(label)
+    ? 'payment' as const
+    : /(?:删除|清空|移除|delete\b|remove\b|erase\b)/i.test(label) ? 'deletion' as const
+      : amount && /(?:确认|确定|继续|提交|完成|confirm\b|continue\b|proceed\b|submit\b|complete\b)/i.test(label) ? 'payment' as const
+        : 'ordinary' as const;
+  return { kind, amount, label, signature: JSON.stringify([kind, label, amount]) };
+};
+
+/**
+ * 条件探针：在页面内把 DOM 状态折算成布尔观测。
+ * 原始 value 与页面文本绝不回传，桥接层只拿到 exists/matched。
+ */
+const readStateProbe = (target: Element | null, attr: string, expect?: string) => {
+  const normalized = (value: string) => value.replace(/\s+/g, ' ').trim();
+  const textOf = (el: Element) => normalized((el as HTMLElement).innerText || el.textContent || '');
+  const checkedOf = (el: Element): boolean | undefined => {
+    const aria = el.getAttribute('aria-checked');
+    if (aria === 'true') return true;
+    if (aria === 'false') return false;
+    const checked = (el as HTMLInputElement).checked;
+    return typeof checked === 'boolean' ? checked : undefined;
+  };
+  const valueOf = (el: Element): string | undefined => {
+    const value = (el as HTMLInputElement).value;
+    if (typeof value === 'string') return value;
+    const attribute = el.getAttribute('value');
+    return attribute === null ? undefined : attribute;
+  };
+  if (attr === 'exists') return { exists: Boolean(target) };
+  const text = target ? textOf(target) : normalized(document.body?.innerText || '');
+  if (attr === 'checked') {
+    const checked = target ? checkedOf(target) : undefined;
+    return { exists: Boolean(target), matched: checked !== undefined && checked === (expect === 'true') };
+  }
+  if (attr === 'value') {
+    const value = target ? valueOf(target) : undefined;
+    return { exists: Boolean(target), matched: value !== undefined && value === (expect ?? '') };
+  }
+  if (attr === 'text') return { exists: true, matched: text === normalized(expect ?? '') };
+  if (attr === 'textContains') return { exists: true, matched: text.includes(normalized(expect ?? '')) };
+  return { exists: Boolean(target) };
+};
+
+
+/**
+ * 与 bridge 的 pageAction 同源的稳定定位描述符：只回传 role+name(+nth)。
+ * act 草稿靠它把 ref 步骤改写成 find 重放，因此绝不回传 ref 或页面可控属性。
+ */
+const describeStableFind = (el: Element): FindTarget | undefined => {
+  const role = computeAccessibleRole(el);
+  const name = computeAccessibleName(el);
+  if (!name || name.length > 120) return undefined;
+  const peers = collectDeepElements(document, '*')
+    .filter((node) => computeAccessibleRole(node) === role && computeAccessibleName(node) === name);
+  const index = peers.indexOf(el);
+  return { role: role || undefined, name, ...(peers.length > 1 && index >= 0 ? { nth: index } : {}) };
+};
 const initElementHandleAction = () => {
   Channel.on('__page_grounding_action', (data: ElementHandleActionParams, _sender, sendResponse) => {
     try {
@@ -641,9 +1178,54 @@ const initElementHandleAction = () => {
         return true;
       }
 
-      const target = resolveActionTarget(data);
+      const resolved = resolveActionTarget(data);
+      if (resolved.error) {
+        sendResponse?.({
+          success: false,
+          error: resolved.error,
+          ...(resolved.candidates ? { candidates: resolved.candidates } : {}),
+          ...(resolved.available_roles ? { available_roles: resolved.available_roles } : {}),
+        });
+        return true;
+      }
+      const target = resolved.target;
+      // 条件探针：selector 未命中是合法观测（exists:false）而不是错误；ref/find 未命中仍走上面的 error 分支。
+      if (action === 'read' && data.attr) {
+        sendResponse?.({ success: true, data: readStateProbe(target, data.attr, data.expect) });
+        return true;
+      }
       if (!target) {
-        sendResponse?.({ success: false, error: '未找到 element_id 对应元素，请重新调用 page(action="snapshot") 获取最新句柄' });
+        sendResponse?.({ success: false, error: '未找到目标元素，请重新调用 page(action="snapshot") 或改用 find 定位' });
+        return true;
+      }
+
+      // 定向读取是纯读动作：绝不为它滚动页面或绘制虚拟光标，否则读一次就改变页面状态。
+      if (action === 'read') {
+        const limit = Math.max(1, Number(data.max_chars) || 20000);
+        sendResponse?.({
+          success: true,
+          data: {
+            text: ((target as HTMLElement).innerText || target.textContent || '').slice(0, limit),
+            html: target.outerHTML.slice(0, limit),
+            tag: target.tagName,
+            find: describeStableFind(target),
+          },
+        });
+        return true;
+      }
+
+      // A2：升级前后各观测一次目标的可观察状态。纯读动作，绝不滚动页面或绘制虚拟光标。
+      if (action === 'observe') {
+        sendResponse?.({
+          success: true,
+          data: {
+            state: captureObservableState(target),
+            center: getElementCenter(target) || undefined,
+            kind: classifySensitiveTarget(target, data.submit === true).kind,
+            tag: target.tagName.toLowerCase(),
+            find: describeStableFind(target),
+          },
+        });
         return true;
       }
 
@@ -652,7 +1234,37 @@ const initElementHandleAction = () => {
         htmlTarget.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' as ScrollBehavior });
       }
 
+      // Move the visible cursor synchronously before hit-testing for obstructions.
+      const cursorPoint = getElementCenter(target);
+      if (cursorPoint) {
+        withVirtualCursorBeforeObstruction(cursorPoint, () => detectObstruction(target, cursorPoint));
+      }
+
+      // 审批后目标可能被重绘/改文案：动作发生前用真实元素重算签名，避免点到别的按钮。
+      // submit 必须与即将执行的动作一致，否则检查的对象和执行的对象不是同一个。
+      const approvalError = (submit: boolean): string | null => {
+        const approved = data.approved_signature;
+        if (!approved) return null;
+        return classifySensitiveTarget(target, submit).signature === approved ? null : '确认后目标已变化，请重新确认';
+      };
+
       switch (action) {
+        case 'inspect': {
+          const classification = classifySensitiveTarget(target, data.submit === true);
+          sendResponse?.({
+            success: true,
+            data: {
+              ...classification,
+              center: getElementCenter(target) || undefined,
+              element_id: elementToHandleMap.get(target),
+              tag: target.tagName.toLowerCase(),
+              role: computeAccessibleRole(target) || undefined,
+              name: clipText(computeAccessibleName(target), 120) || undefined,
+            },
+          });
+          return true;
+        }
+
         case 'get_info': {
           sendResponse?.({ success: true, data: buildActionInfo(target) });
           return true;
@@ -677,59 +1289,76 @@ const initElementHandleAction = () => {
         }
 
         case 'click': {
-          if (isElementDisabled(target)) {
-            sendResponse?.({ success: false, error: '目标元素处于禁用状态，无法点击' });
+          const recheck = approvalError(false);
+          if (recheck) {
+            sendResponse?.({ success: false, error: recheck });
             return true;
           }
-          sendResponse?.({ success: true, data: { ...buildActionInfo(target), message: '已触发目标元素点击' } });
-          window.setTimeout(() => {
-            try {
-              htmlTarget.click?.();
-            } catch {
-              // ignore
-            }
-          }, 0);
+          const stableFind = describeStableFind(target);
+          const before = captureObservableState(target);
+          clickAndReport(target, () => undefined);
+          const effect = buildEffectEvidence('click', target, before, data.element_id);
+          sendResponse?.({ success: true, data: { effect, changed: effect.changed, ...buildActionInfo(target, data.snapshot_id), find: stableFind, kind: classifySensitiveTarget(target, false).kind, center: getElementCenter(target) || undefined, message: '已触发目标元素点击' } });
           return true;
         }
 
         case 'fill': {
           const value = String(data?.value ?? '');
+          const reportedValue = (target.getAttribute('type') || '').toLowerCase() === 'password'
+            ? '[已填写密码，值已隐藏]'
+            : value;
+          const recheck = data.submit === true ? approvalError(true) : null;
+          if (recheck) {
+            sendResponse?.({ success: false, error: recheck });
+            return true;
+          }
+          const stableFind = describeStableFind(target);
+          const before = captureObservableState(target);
           if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
             htmlTarget.focus?.();
             setNativeInputValue(target, value);
             target.dispatchEvent(new Event('input', { bubbles: true }));
             target.dispatchEvent(new Event('change', { bubbles: true }));
-            sendResponse?.({ success: true, data: { ...buildActionInfo(target), value, message: '已填写目标元素' } });
+            if (data.submit === true) {
+              target.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+              const form = (target as HTMLInputElement).form;
+              if (form && typeof form.requestSubmit === 'function') form.requestSubmit();
+            }
+            const effect = buildEffectEvidence('fill', target, before, data.element_id);
+            sendResponse?.({ success: true, data: { effect, changed: effect.changed, ...buildActionInfo(target, data.snapshot_id), find: stableFind, value: reportedValue, kind: classifySensitiveTarget(target, data.submit === true).kind, center: getElementCenter(target) || undefined, message: '已填写目标元素' } });
             return true;
           }
           if (htmlTarget.isContentEditable) {
             htmlTarget.focus?.();
             htmlTarget.textContent = value;
             htmlTarget.dispatchEvent(new Event('input', { bubbles: true }));
-            sendResponse?.({ success: true, data: { ...buildActionInfo(target), value, message: '已填写可编辑区域' } });
+            const effect = buildEffectEvidence('fill', target, before, data.element_id);
+            sendResponse?.({ success: true, data: { effect, changed: effect.changed, ...buildActionInfo(target, data.snapshot_id), find: stableFind, value: reportedValue, kind: classifySensitiveTarget(target, data.submit === true).kind, center: getElementCenter(target) || undefined, message: '已填写可编辑区域' } });
             return true;
           }
-          sendResponse?.({ success: false, error: '目标元素不支持 fill，请改用 click/focus/get_info' });
+          sendResponse?.({ success: false, error: 'fill 已尝试观察目标，但元素不支持输入；请改用 click/focus/get_info' });
           return true;
         }
 
         case 'select': {
           const value = String(data?.value ?? '');
           if (!(target instanceof HTMLSelectElement)) {
-            sendResponse?.({ success: false, error: '目标元素不是 select，无法执行 select 动作' });
+            sendResponse?.({ success: false, error: 'select 已尝试目标，但观察到元素不是 select；请改用 page(action="snapshot") 或 get_info' });
             return true;
           }
+          const before = captureObservableState(target);
           const options = Array.from(target.options);
           const matched = options.find((option) => option.value === value)
             || options.find((option) => normalizeText(option.textContent || '') === normalizeText(value))
             || options.find((option) => normalizeText(option.textContent || '').includes(normalizeText(value)));
           if (!matched) {
-            sendResponse?.({ success: false, error: `未找到匹配选项：${value}` });
+            sendResponse?.({ success: false, error: `select 已尝试目标，但观察到没有匹配选项：${value}；请先读取 get_info 或 snapshot` });
             return true;
           }
           target.value = matched.value;
           target.dispatchEvent(new Event('change', { bubbles: true }));
-          sendResponse?.({ success: true, data: { ...buildActionInfo(target), value: matched.value, message: '已选择目标选项' } });
+          const effect = buildEffectEvidence('select', target, before, data.element_id);
+          sendResponse?.({ success: true, data: { effect, ...buildActionInfo(target, data.snapshot_id), value: matched.value, message: '已选择目标选项' } });
           return true;
         }
 
@@ -832,7 +1461,6 @@ const annotateInteractiveElements = (): { success: boolean; annotations?: Annota
     const info = cache.get(el)!;
     const rect = info.rect;
     const elementId = getOrCreateElementHandle(el);
-    (el as HTMLElement).dataset.actspanHandle = elementId;
 
     // 半透明高亮边框
     const highlight = document.createElement('div');
@@ -877,6 +1505,8 @@ const removeAnnotations = (): void => {
 };
 
 export const initPageGrounding = () => {
+  // 注入脚本（interactOnPage）在同一个隔离世界里执行，只能通过这个私有入口拿到句柄对应的元素。
+  globalThis.__actspan_resolve_element_handle = resolveElementHandle;
   Channel.on('__page_grounding_snapshot', (data: PageSnapshotParams, _sender, sendResponse) => {
     try {
       sendResponse?.(collectSnapshotElements(data || {}));
@@ -896,21 +1526,14 @@ export const initPageGrounding = () => {
   });
 
   initElementHandleAction();
-
-  // CDP 输入工具的坐标查询：根据 element_id 返回元素视口坐标
-  Channel.on('__get_element_rect', (data: { element_id?: string }, _sender, sendResponse) => {
+  Channel.on('__get_element_rect', (data: { element_id?: string; snapshot_id?: string }, _sender, sendResponse) => {
     try {
-      const elementId = normalizeText(data?.element_id || '');
-      if (!elementId) {
-        sendResponse?.({ success: false, error: '缺少 element_id' });
+      const resolved = resolveElementHandle(String(data?.element_id || ''), data?.snapshot_id);
+      if (!resolved.target) {
+        sendResponse?.({ success: false, error: resolved.error });
         return true;
       }
-      const el = elementHandleMap.get(elementId);
-      if (!el || !el.isConnected) {
-        if (el) elementHandleMap.delete(elementId);
-        sendResponse?.({ success: false, error: '元素已失效，请重新调用 page(action="snapshot") 获取最新句柄' });
-        return true;
-      }
+      const el = resolved.target;
       const rect = (el as HTMLElement).getBoundingClientRect();
       sendResponse?.({
         success: true,

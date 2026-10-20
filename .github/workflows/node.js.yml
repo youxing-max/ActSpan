@@ -15,9 +15,10 @@ jobs:
     runs-on: ubuntu-latest
 
     strategy:
+      fail-fast: false
       matrix:
-        node-version: [18.x, 20.x, 22.x]
-        # See supported Node.js release schedule at https://nodejs.org/en/about/releases/
+        node-version: [20.x, 22.x]
+        # mcp-server/package.json declares engines >=20; 18.x is unsupported.
 
     steps:
     - uses: actions/checkout@v4
@@ -26,6 +27,13 @@ jobs:
       with:
         node-version: ${{ matrix.node-version }}
         cache: 'npm'
+        cache-dependency-path: |
+          package-lock.json
+          mcp-server/package-lock.json
     - run: npm ci
+    # 根目录测试会直接 import mcp-server/*，zod 等依赖装在 mcp-server 下。
+    - run: npm ci --prefix mcp-server
     - run: npm run build --if-present
     - run: npm test
+    - name: MCP server tests
+      run: npm test --prefix mcp-server

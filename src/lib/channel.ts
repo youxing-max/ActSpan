@@ -11,7 +11,7 @@
  *   Channel.getRegisteredTabs() // 获取所有已注册的tabId
  */
 
-export type ChannelHandler = (data: any, sender?: chrome.runtime.MessageSender, sendResponse?: (response: any) => void) => void | boolean;
+export type ChannelHandler = (data: any, sender?: chrome.runtime.MessageSender, sendResponse?: (response: any) => void) => void | boolean | Promise<void | boolean>;
 
 /** Port 连接名称标识，用于区分 extension page 的 port */
 const EXTENSION_PAGE_PORT_NAME = '__channel_extension_page';
@@ -54,16 +54,20 @@ class Channel {
         }
     }
 
-    /** 发送消息到指定tab */
-    static sendToTab(tabId: number, type: string, data?: any, callback?: (response: any) => void) {
+    /** 发送消息到指定tab；frameId 省略时按 Chrome 默认行为投递，指定时只投递到该 frame */
+    static sendToTab(tabId: number, type: string, data?: unknown, callback?: (response: unknown) => void, frameId?: number) {
         if (!chrome.tabs) {
             console.error('[Channel] chrome.tabs API 不可用');
             return;
         }
         const msg = { type, data };
+        const options = typeof frameId === 'number' ? { frameId } : undefined;
         try {
             if (callback) {
-                chrome.tabs.sendMessage(tabId, msg, callback);
+                if (options) chrome.tabs.sendMessage(tabId, msg, options, callback);
+                else chrome.tabs.sendMessage(tabId, msg, callback);
+            } else if (options) {
+                chrome.tabs.sendMessage(tabId, msg, options);
             } else {
                 chrome.tabs.sendMessage(tabId, msg);
             }

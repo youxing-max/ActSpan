@@ -4,10 +4,8 @@
  * 构建历史记录并写入 chrome.storage。
  */
 
-import { getTextContent } from '../ai/context-manager';
 import type {
     AgentStateTransition,
-    InputItem,
     Session,
     SessionEventLogItem,
     SessionHistoryRecord,
@@ -15,7 +13,6 @@ import type {
     SessionAgentTransitionItem,
 } from './session-types';
 import { MAX_SESSION_HISTORY, SESSION_HISTORY_STORAGE_KEY, LEGACY_SESSION_HISTORY_STORAGE_KEY } from '../session-history/constants';
-import { LEGACY_SESSION_CONTEXT_COMPRESSION_TAG, SESSION_CONTEXT_COMPRESSION_TAG } from './session-types';
 import { readMigratedStorage } from '../lib/legacy-storage';
 import { setLocalStorage } from './session-persistence';
 import { parseTurnLifecycleEventPayload, parseEventObject } from './session-event';
@@ -44,33 +41,6 @@ function extractTurnCompletedReply(eventLog: SessionEventLogItem[]): string | un
             ? payload.lastAgentMessage.trim()
             : '';
         if (text) return text;
-    }
-    return undefined;
-}
-
-/** 提取最新 run 的消息 */
-function extractLatestRunAgentMessage(eventLog: SessionEventLogItem[], startedAt: number): string | undefined {
-    for (let index = eventLog.length - 1; index >= 0; index--) {
-        const event = eventLog[index];
-        const timestamp = event.timestamp || 0;
-        if (timestamp < startedAt) break;
-        if (event.type === 'text') {
-            const text = String(event.content || '').trim();
-            if (text) return text;
-        }
-    }
-    return undefined;
-}
-
-/** 从 context 提取助手消息 */
-function extractLatestAssistantMessageFromContext(context: InputItem[] | undefined): string | undefined {
-    if (!Array.isArray(context) || context.length === 0) return undefined;
-    for (let index = context.length - 1; index >= 0; index--) {
-        const item = context[index];
-        if (!('role' in item) || item.role !== 'assistant') continue;
-        const text = getTextContent(item.content).trim();
-        if (!text || text.startsWith(SESSION_CONTEXT_COMPRESSION_TAG) || text.startsWith(LEGACY_SESSION_CONTEXT_COMPRESSION_TAG)) continue;
-        return text;
     }
     return undefined;
 }

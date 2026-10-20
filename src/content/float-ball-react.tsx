@@ -3,15 +3,14 @@
  * 创建 Shadow DOM + 注入样式 + ReactDOM.createRoot 挂载
  */
 
-import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { getStyles } from './float-ball/styles';
 import { ActspanRoot } from './float-ball/ActspanRoot';
-import { DISABLED_DOMAINS_KEY, LEGACY_DISABLED_DOMAINS_KEY, isMac } from './float-ball/constants';
+import { DISABLED_DOMAINS_KEY, LEGACY_DISABLED_DOMAINS_KEY } from './float-ball/constants';
 import { readMigratedStorage } from '../lib/legacy-storage';
 
 const storageArea = {
-  get: (keys: string | string[]) => new Promise<Record<string, unknown>>((resolve) => chrome.storage.local.get(keys, resolve)),
+  get: (keys: string | string[]) => new Promise<Record<string, unknown>>((resolve) => chrome.storage.local.get<Record<string, unknown>>(keys, resolve)),
   set: (items: Record<string, unknown>) => new Promise<void>((resolve) => chrome.storage.local.set(items, resolve)),
 };
 
@@ -103,17 +102,6 @@ export const initFloatBallReact = async () => {
   // ---- 宿主文档上的全局事件监听 ----
   // 通过 window 上的自定义事件桥接给 React（closed Shadow DOM 内组件无法访问外部 DOM）
 
-  // 全局快捷键：⌘M (Mac) / Ctrl+M (Win) — 打开 Side Panel
-  document.addEventListener('keydown', (e) => {
-    const modKey = isMac ? e.metaKey : e.ctrlKey;
-    if (modKey && e.key.toLowerCase() === 'm') {
-      e.preventDefault();
-      e.stopPropagation();
-      import('../lib/channel').then(({ default: Channel }) => {
-        Channel.send('__open_side_panel', {});
-      });
-    }
-  });
 
   // ESC 键（宿主文档）
   document.addEventListener('keydown', (e) => {
