@@ -283,6 +283,8 @@ test('accessible names stay stable and never expose editable values', () => {
   assert.equal(computeAccessibleName(input), 'email');
   assert.equal(computeAccessibleName(fakeEl('input', { attrs: { type: 'text', placeholder: 'Enter email' } })), '');
   assert.equal(computeAccessibleName(fakeEl('button', { text: 'Pay now' })), 'Pay now');
+  // 快照暴露的 role 必须与 find 的匹配语义同源，否则 agent 从快照学到的角色永远命不中搜索框。
+  assert.equal(computeAccessibleRole(fakeEl('input', { attrs: { type: 'search' } })), 'searchbox');
 });
 
 // 动作回执曾经把 element_id 当成 snapshotId 传给描述符构造函数，于是句柄表里记下的

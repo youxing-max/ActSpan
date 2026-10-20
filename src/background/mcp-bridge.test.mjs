@@ -266,7 +266,8 @@ function browserFixture({ label = 'Continue', nearby = label, approved = true, f
       }
       if (method !== 'Runtime.evaluate') throw Error(`Unexpected CDP: ${method}`);
       effects.evaluations++;
-      if (options.throwOnSideEffect && /\.click\(|dispatchEvent\(|fetch\(|requestSubmit\(/.test(options.expression)) {
+      // V8 的 throwOnSideEffect 对 DOM 取值同样保守：getter 可能带副作用，所以 .value 也会被拒。
+      if (options.throwOnSideEffect && /\.click\(|dispatchEvent\(|fetch\(|requestSubmit\(|\.value/.test(options.expression)) {
         return { exceptionDetails: { text: 'Evaluation prevented side effects' } };
       }
       if (options.expression.includes('.click(')) effects.clicks++;
@@ -332,6 +333,20 @@ test('arbitrary eval is read-only even after dangerous approval; DOM reads remai
     assert.equal(fixture.effects.clicks, 0);
     assert.equal(await executeBridgeRequest('page.eval', { tabId: fixture.context.tabId, expression: 'document.title.length' }, fixture.context), 7);
     assert.equal(fixture.effects.prompts.length, 3);
+  } finally { fixture.restore(); }
+});
+
+test('eval names the probe that can read DOM state after V8 refuses the expression', async () => {
+  const fixture = browserFixture({ field: true });
+  try {
+    await assert.rejects(
+      () => executeBridgeRequest('page.eval', { tabId: fixture.context.tabId, expression: "document.querySelector('#target').value" }, fixture.context),
+      (error) => {
+        assert.match(error.message, /page_read/);
+        assert.match(error.message, /attr/);
+        return true;
+      },
+    );
   } finally { fixture.restore(); }
 });
 
@@ -519,6 +534,27 @@ test('page content never escapes the single untrusted fence even when it forges 
   assert.equal(plain, '<page-content untrusted>\n普通正文\n</page-content>');
 });
 
+test('find resolves an input[type=search] through its ARIA searchbox role', async () => {
+  const fixture = browserFixture();
+  const querySelectorAll = globalThis.document.querySelectorAll;
+  const search = {
+    tagName: 'INPUT', innerText: '', textContent: '', value: '', labels: [], isContentEditable: false,
+    outerHTML: '<input type="search" aria-label="Search">',
+    getAttribute: (name) => ({ type: 'search', 'aria-label': 'Search' })[name] ?? null,
+    hasAttribute: (name) => name === 'type' || name === 'aria-label',
+    getBoundingClientRect: () => ({ left: 4, top: 8, width: 120, height: 24 }),
+  };
+  globalThis.document.querySelectorAll = (selector) => selector === '*' ? [search] : [];
+  try {
+    const result = await dispatch('page.read', { tabId: fixture.context.tabId, find: { role: 'searchbox', name: 'Search' } },
+      { ...fixture.context, owner: 'ide-agent' });
+    assert.equal(result.target.tag, 'INPUT');
+  } finally {
+    globalThis.document.querySelectorAll = querySelectorAll;
+    fixture.restore();
+  }
+});
+
 test('page.read hands detected challenges to the G14 user channel and stops', async () => {
   const fixture = browserFixture();
   const querySelectorAll = globalThis.document.querySelectorAll;
@@ -590,6 +626,15 @@ test('implicit owned-tab payment still requires a contextual prompt', async () =
     assert.equal(fixture.effects.clicks, 0);
     assert.equal(fixture.effects.prompts.length, 1);
   } finally { fixture.restore(); }
+});
+
+test('status broadcast before any task explains the tab lease prerequisite', async () => {
+  const context = { taskId: 'unstarted-task', sessionId: 'unstarted-session', clientId: 'agent', owner: 'ide-agent', requestId: 'status-request' };
+  // 与 initMcpBridge 一致：page.status_update 注册为 read 能力。
+  const stop = getTaskExecutor().registerCapabilityHandler('page.status_update', async () => ({ acknowledged: true }), 'read');
+  try {
+    await assert.rejects(() => getTaskExecutor().execute(context, 'page.status_update', { text: '准备开始' }), /tab_open/);
+  } finally { stop(); }
 });
 
 test('generic policy approval alone cannot bypass extension-owned payment inspection', async () => {

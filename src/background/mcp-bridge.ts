@@ -389,6 +389,7 @@ async function pageAction(action: 'inspect' | 'click' | 'type' | 'observe' | 're
                 if (type === 'checkbox') return 'checkbox';
                 if (type === 'radio') return 'radio';
                 if (type === 'file') return 'file';
+                if (type === 'search') return 'searchbox';
                 if (['submit', 'button', 'reset', 'image'].includes(type)) return 'button';
                 if (['range', 'number'].includes(type)) return 'spinbutton';
                 return 'textbox';
@@ -883,7 +884,13 @@ export async function dispatch(method: string, params: Record<string, unknown>, 
                     exceptionDetails?: { exception?: { description?: string }; text?: string };
                 };
                 if (r?.exceptionDetails) {
-                    throw new Error(r.exceptionDetails.exception?.description || r.exceptionDetails.text || 'JS 执行异常');
+                    const detail = r.exceptionDetails.exception?.description || r.exceptionDetails.text || 'JS 执行异常';
+                    // V8 的 throwOnSideEffect 对 DOM 取值也保守拒绝（getter 可能有副作用）。
+                    // 这条错误必须自带下一步，否则 agent 会换着表达式反复试错。
+                    if (/side.?effect|副作用/i.test(detail)) {
+                        throw new Error(`${detail}：该表达式无法被证明无副作用。读取页面状态请改用 page_read 的 attr: "value" | "text" | "checked" | "textContains"（可配 selector / find），或用 page_snapshot 取元素清单。`);
+                    }
+                    throw new Error(detail);
                 }
                 return r?.result?.value;
             }));

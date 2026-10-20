@@ -34,6 +34,16 @@ test('keeps one L2 attach across a command burst and detaches after idle', async
   assert.equal(calls.filter((call) => call === 'detach').length, 1);
 });
 
+test('holds the L2 attach while network capture is active, releases it after stop', async () => {
+  calls.length = 0;
+  assert.deepEqual(await CDPSessionManager.startNetworkListening(43), { success: true });
+  await new Promise((resolve) => setTimeout(resolve, L2_IDLE_MS + 250));
+  assert.equal(calls.filter((call) => call === 'detach').length, 0);
+  await CDPSessionManager.stopNetworkListening(43);
+  await new Promise((resolve) => setTimeout(resolve, L2_IDLE_MS + 250));
+  assert.equal(calls.filter((call) => call === 'detach').length, 1);
+});
+
 test('maps a DevTools collision to L2_BUSY', async () => {
   debuggerApi.attach = async () => { throw new Error('Another debugger is already attached'); };
   const result = await CDPSessionManager.attach(42);

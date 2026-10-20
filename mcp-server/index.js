@@ -182,7 +182,9 @@ async function main(config) {
     registerTool('actspan_tab_close', {
         title: 'Close tab', description: 'Close a tab owned by the current task.',
         inputSchema: { ...taskParams, tabId: z.number().int() },
-    }, run((args) => callBridge('tab.close', args, 10000, args)));
+    }, run((args) => callBridge('tab.close', args, 30000, args)));
+    // tab.close 是 sensitive 能力，必然走审批；审批窗口本身就有 25s。客户端只等 10s 会在用户
+    // 还在看确认卡片时就报 "Bridge request timed out"，把可完成的操作变成必然失败。
 
     registerTool('actspan_tab_navigate', {
         title: 'Navigate tab', description: 'Navigate a tab owned by the current task.',
@@ -273,7 +275,10 @@ async function main(config) {
     }));
 
     registerTool('actspan_page_eval', {
-        title: 'Evaluate page expression', description: 'Evaluate a page expression; policy approval remains enforced by the extension.',
+        title: 'Evaluate page expression',
+        // V8 的 throwOnSideEffect 会把 DOM 属性读（如 input.value）也判成潜在副作用，
+        // 所以「读取页面状态」不能靠 eval；在描述里点名替代工具，避免 agent 反复试错。
+        description: 'Evaluate a page expression. The expression must be provably side-effect free: mutating JS is rejected even after approval, and DOM property reads such as input.value may be rejected by the V8 side-effect check. Use page_read with attr "value"/"text"/"checked" or page_snapshot to observe page state.',
         inputSchema: { ...taskParams, tabId: tabIdParam, expression: z.string().min(1) },
     }, run((args) => callBridge('page.eval', args, 30000, args)));
 
@@ -298,9 +303,18 @@ async function main(config) {
         inputSchema: { name: z.string().min(1) },
     }, run((args) => catalog.detail(args.name, createRequestContext({ clientId, taskId: defaultTaskId, sessionId, host: host.slug }))));
 
+    // 任务→会话映射：本进程新建的任务可能自带合成 session；外部（如 tab.open）建的任务属于当前 session。
+    // 后续只带 taskId 的调用必须复用它，不能把 taskId 当成 sessionId。
+    const taskSessions = new Map();
+    const adoptTask = (taskId, taskSessionId) => {
+        taskSessions.set(taskId, taskSessionId);
+        return taskSessionId;
+    };
+
     const workflowRun = run(async (args) => {
         const taskId = args.taskId || randomUUID();
-        const taskSessionId = args.sessionId || taskId;
+        const taskSessionId = args.sessionId || taskSessions.get(taskId) || (args.taskId ? sessionId : taskId);
+        adoptTask(taskId, taskSessionId);
         const params = { ...args, taskId, sessionId: taskSessionId };
         const result = await callBridge('workflow.run', params, 60000, { taskId, sessionId: taskSessionId });
         return normalizeTaskHandle(result, { taskId, sessionId: taskSessionId });
@@ -317,7 +331,8 @@ async function main(config) {
 
     const agentSubmit = run(async (args) => {
         const taskId = args.taskId || randomUUID();
-        const taskSessionId = args.sessionId || taskId;
+        const taskSessionId = args.sessionId || taskSessions.get(taskId) || (args.taskId ? sessionId : taskId);
+        adoptTask(taskId, taskSessionId);
         const params = { ...args, ...args.input, taskId, sessionId: taskSessionId };
         const result = await callBridge('task.submit', params, 60000, { taskId, sessionId: taskSessionId });
         return normalizeTaskHandle(result, { taskId, sessionId: taskSessionId });
@@ -330,7 +345,7 @@ async function main(config) {
     const taskCall = (method) => run(async (args) => {
         const taskId = String(args.taskId || '').trim();
         if (!taskId) throw new Error('taskId is required');
-        const taskSessionId = args.sessionId || taskId;
+        const taskSessionId = args.sessionId || taskSessions.get(taskId) || sessionId;
         return await callBridge(method, { ...args, taskId, sessionId: taskSessionId }, 30000, {
             taskId,
             sessionId: taskSessionId,

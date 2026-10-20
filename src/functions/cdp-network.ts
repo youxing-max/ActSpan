@@ -24,10 +24,9 @@ type NetworkCaptureOptions = {
 export async function inspectNetworkCapture(tabId: number, options: NetworkCaptureOptions, signal?: AbortSignal) {
   if (signal?.aborted) throw new Error('Network inspection cancelled');
   const started = !CDPSessionManager.isNetworkListening(tabId);
-  if (started) {
-    const result = await CDPSessionManager.startNetworkListening(tabId, { maxEvents: 2000 });
-    if (!result.success) throw new Error(`Could not start CDP network capture: ${result.error || 'debugger unavailable'}. Check debugger access and try again.`);
-  }
+  // 每次读取都对当前 attach 会话重新确认 Network 域；已捕获事件跨 detach 保留。
+  const capture = await CDPSessionManager.ensureNetworkListening(tabId);
+  if (!capture.success) throw new Error(`Could not start CDP network capture: ${capture.error || 'debugger unavailable'}. Check debugger access and try again.`);
   const beforeReload = options.reload ? new Set(CDPSessionManager.getNetworkEvents(tabId, { limit: 2000 })) : undefined;
   if (options.reload && (typeof chrome.tabs?.reload !== 'function' || !chrome.tabs.onUpdated)) {
     throw new Error('Tab reload is unavailable in this browser context; capture is active. Navigate through the page UI, then list observed requests.');

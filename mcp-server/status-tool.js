@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-const DEFAULT_DESCRIPTION = 'One short sentence telling the user what you are about to do (not what you are doing). Call before a multi-step task and whenever the plan changes. Instant, never blocks. Use the user\'s language. ≤80 chars.';
+const DEFAULT_DESCRIPTION = 'One short sentence telling the user what you are about to do (not what you are doing). Call before a multi-step task and whenever the plan changes. Instant, never blocks. Use the user\'s language. ≤80 chars. Requires a tab leased to this task: call tab_open first, otherwise the update is rejected.';
 
 /** Register the user-facing explicit status operation without coupling to MCP SDK. */
 export function registerStatusTool({ registerTool, callBridge, run, tabIdParam, taskParams }) {

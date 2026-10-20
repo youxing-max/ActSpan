@@ -178,11 +178,11 @@ const notifyCommandIdle = (tabId: number): void => {
 
 const scheduleIdleDetach = (tabId: number): void => {
   clearIdleTimer(tabId);
-  if (!sessions.has(tabId)) return;
+  if (!sessions.has(tabId) || networkListening.get(tabId)?.active === true) return;
   idleTimers.set(tabId, setTimeout(() => {
     idleTimers.delete(tabId);
-    if ((inFlightCommands.get(tabId) || 0) === 0) void detach(tabId);
-    else scheduleIdleDetach(tabId);
+    if ((inFlightCommands.get(tabId) || 0) > 0) { scheduleIdleDetach(tabId); return; }
+    void detach(tabId);
   }, L2_IDLE_MS));
 };
 
@@ -256,7 +256,8 @@ const attach = async (tabId: number): Promise<AttachResult> => {
   }
 };
 
-/** 清理指定 tab 的所有关联状态 */
+/** 清理指定 tab 的调试器会话状态。网络捕获结果是浏览器侧的真实观察，不随 detach 丢弃：
+ *  空闲 5s 的 L2 detach 若顺手清空缓冲，会让「刚看过的请求」在下次读取时凭空消失。 */
 const cleanupTabState = (tabId: number): void => {
   clearIdleTimer(tabId);
   inFlightCommands.delete(tabId);
@@ -264,8 +265,6 @@ const cleanupTabState = (tabId: number): void => {
   pendingDialogs.delete(tabId);
   dialogPolicies.delete(tabId);
   frameContexts.delete(tabId);
-  networkEvents.delete(tabId);
-  networkListening.delete(tabId);
   networkPendingRequests.delete(tabId);
   consoleEntries.delete(tabId);
   exceptionEntries.delete(tabId);
@@ -464,6 +463,33 @@ const startNetworkListening = async (
   });
   networkEvents.set(tabId, []);
   networkPendingRequests.set(tabId, new Map());
+  scheduleIdleDetach(tabId);
+
+  return { success: true };
+};
+
+/** 让捕获状态与当前 attach 会话对齐：域被 detach 关掉后重新启用，但不重置已捕获事件。 */
+const ensureNetworkListening = async (tabId: number): Promise<{ success: boolean; error?: string }> => {
+  const attachResult = await attach(tabId);
+  if (!attachResult.success) {
+    return { success: false, error: attachResult.error };
+  }
+
+  const entry = sessions.get(tabId);
+  if (entry && !entry.domainsEnabled.has('Network')) {
+    const enableResult = await sendCommand(tabId, 'Network.enable', {});
+    if (!enableResult.success) {
+      return { success: false, error: `启用 Network 域失败: ${enableResult.error}` };
+    }
+    entry.domainsEnabled.add('Network');
+  }
+
+  if (!networkListening.has(tabId)) {
+    networkListening.set(tabId, { active: true, urlPatterns: [], maxEvents: 2000, startedAt: Date.now() });
+  }
+  if (!networkEvents.has(tabId)) networkEvents.set(tabId, []);
+  if (!networkPendingRequests.has(tabId)) networkPendingRequests.set(tabId, new Map());
+  scheduleIdleDetach(tabId);
 
   return { success: true };
 };
@@ -478,6 +504,7 @@ const stopNetworkListening = async (tabId: number): Promise<void> => {
     await sendCommand(tabId, 'Network.disable', {}).catch(() => { /* 忽略 */ });
     entry.domainsEnabled.delete('Network');
   }
+  if (sessions.has(tabId)) scheduleIdleDetach(tabId);
 };
 
 const isNetworkListening = (tabId: number): boolean => {
@@ -742,6 +769,15 @@ const clearFetchPausedRequests = async (tabId: number): Promise<void> => {
 };
 
 // ============ 事件监听 ============
+
+// 只有标签页真正消失时才丢弃它的网络观察结果。
+if (isSupported() && chrome.tabs?.onRemoved) {
+  chrome.tabs.onRemoved.addListener((tabId) => {
+    networkEvents.delete(tabId);
+    networkListening.delete(tabId);
+    networkPendingRequests.delete(tabId);
+  });
+}
 
 // 外部 detach 处理
 if (isSupported() && chrome.debugger.onDetach) {
@@ -1015,6 +1051,7 @@ export const CDPSessionManager = {
   clearFrameContexts,
   // 网络
   startNetworkListening,
+  ensureNetworkListening,
   stopNetworkListening,
   isNetworkListening,
   getNetworkEvents,

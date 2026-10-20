@@ -109,7 +109,12 @@ export class PolicyExecutor {
     if (!task && (capability === 'tab.open' || capability === 'page.read')) {
       task = this.tasks.create({ taskId: context.taskId, sessionId: context.sessionId, owner: context.owner, clientId: context.clientId });
     }
-    if (!task && !taskCreation && (!readOnly || !noTaskRead)) throw new PolicyError('未知任务不能执行浏览器能力', 'E_TASK_OWNERSHIP');
+    if (!task && !taskCreation && (!readOnly || !noTaskRead)) {
+      if (capability === 'page.status_update') {
+        throw new PolicyError('状态播报需要先有属于本任务的标签页：请先调用 tab_open 取得租约，再播报进度', 'E_TASK_OWNERSHIP');
+      }
+      throw new PolicyError('未知任务不能执行浏览器能力', 'E_TASK_OWNERSHIP');
+    }
     if (task && task.sessionId !== context.sessionId) throw new PolicyError('任务不属于当前 session', 'E_TASK_OWNERSHIP');
     if (task && task.clientId && task.clientId !== context.clientId) throw new PolicyError('任务不属于当前 client', 'E_TASK_OWNERSHIP');
     if (task) this.tasks.assertNotCancelled(context.taskId);

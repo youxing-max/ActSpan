@@ -203,7 +203,7 @@ test('scroll re-dispatches a synthetic wheel and explains a zero delta with all 
     assert.equal(moved.diagnostic, undefined);
     assert.equal(box.scrollTop, 300);
     // 只监听 wheel 的懒加载与自定义滚动容器：scrollBy 自身不产生 wheel，必须补发。
-    assert.deepEqual(events, ['wheel']);
+    assert.deepEqual(events, ['wheel', 'scroll']);
     // 已到边界：位置不变时把三种成因并列报出，并指向 focus。
     const stuck = await handleMcpInteraction('page.scroll', { selector: '#scroll-box', deltaY: 300 }, context, 7);
     assert.equal(stuck.changed, false);

@@ -63,7 +63,7 @@ export default function registerActTool({ registerTool, callBridge, run, tabIdPa
 
     registerTool('actspan_act', {
         title: 'ActSpan compound action',
-        description: 'Your DEFAULT way to act — batch every step you can predict. Every call you merge saves a full model turn. Steps run sequentially with an effect check per step, stop at the first failure, and one final snapshot returns at the end.',
+        description: 'Your DEFAULT way to act — batch every step you can predict. Every call you merge saves a full model turn. Steps run sequentially with an effect check per step, stop at the first failure, and one final snapshot returns at the end. Only steps located by find {role, name} are eligible for draft capture; selector-only steps still run but are never promoted into a reusable draft.',
         inputSchema,
     }, run(async (args = {}) => {
         const parsed = parseActScript({ steps: args.steps });

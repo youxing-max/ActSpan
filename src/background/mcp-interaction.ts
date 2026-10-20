@@ -192,6 +192,8 @@ export async function interactOnPage(method: string, params: Record<string, unkn
             // 懒加载与自定义滚动容器不会响应，所以滚动后向该元素补发一条语义与真实事件一致的合成 wheel。
             const scrolled = el || document.scrollingElement || document.documentElement;
             scrolled.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaX: x, deltaY: y, deltaMode: 0 }));
+            // 某些后台标签页/滚动容器的 scrollBy 不触发 scroll；仅在位置实际改变时补发非冒泡 scroll。
+            if (changed) scrolled.dispatchEvent(new Event('scroll'));
             const result: Record<string, unknown> = { requested: { deltaX: x, deltaY: y },
                 before: { x: beforeX, y: beforeY }, after: { x: afterX, y: afterY }, changed };
             if (!changed) {

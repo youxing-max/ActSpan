@@ -85,6 +85,7 @@ let revision = 1;
 let feishuRequest;
 let taskSubmitRequest;
 let pingRequest;
+let statusContext;
 socket.on('message', raw => {
     const message = JSON.parse(raw.toString());
     if (!message.id || !message.context) return;
@@ -102,7 +103,13 @@ socket.on('message', raw => {
         if (message.method === 'task.submit') taskSubmitRequest = message;
         result = { taskId: message.context.taskId, sessionId: message.context.sessionId, registryRevision: 1, state: 'queued' };
     }
-    if (message.method === 'task.status') result = { taskId: message.context.taskId, sessionId: message.context.sessionId, state: 'running' };
+    if (message.method === 'tab.open') {
+        result = { tabId: 4242, url: message.params.url, title: 'Example', taskId: message.context.taskId, sessionId: message.context.sessionId };
+    }
+    if (message.method === 'task.status') {
+        statusContext = message.context;
+        result = { taskId: message.context.taskId, sessionId: message.context.sessionId, state: 'running' };
+    }
     if (message.method === 'task.result') result = { taskId: message.context.taskId, sessionId: message.context.sessionId, state: 'succeeded', result: { done: true } };
     if (message.method === 'task.cancel') result = { taskId: message.context.taskId, sessionId: message.context.sessionId, state: 'cancelled' };
     socket.send(JSON.stringify({ id: message.id, ...message.context, ok: true, result }));
@@ -141,6 +148,11 @@ const agentHandle = JSON.parse((await call('actspan_agent_submit', {
 })).content[0].text);
 check('agent submit forwards nested query to task runner',
     agentHandle.state === 'queued' && taskSubmitRequest?.params?.query === '读取当前页面标题');
+const opened = JSON.parse((await call('actspan_tab_open', { url: 'https://example.test/docs' })).content[0].text);
+check('tab open reports the session-owned task handle', opened.sessionId !== opened.taskId);
+await call('actspan_agent_status', { taskId: opened.taskId });
+check('task lookup inherits the current session for a tab-owned task id',
+    statusContext?.taskId === opened.taskId && statusContext?.sessionId === opened.sessionId);
 
 const webPair = await handshake({ headers: { Origin: 'https://evil.example' }, send: [{ type: 'pair' }] }, frame => frame.type === 'pair_ok');
 check('web origin cannot pair', webPair.close === 4001);

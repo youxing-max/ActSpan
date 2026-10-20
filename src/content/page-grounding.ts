@@ -698,6 +698,7 @@ export const computeAccessibleRole = (el: Element): string => {
     if (type === 'checkbox') return 'checkbox';
     if (type === 'radio') return 'radio';
     if (type === 'file') return 'file';
+    if (type === 'search') return 'searchbox';
     if (['submit', 'button', 'reset', 'image'].includes(type)) return 'button';
     if (['range', 'number'].includes(type)) return 'spinbutton';
     return 'textbox';

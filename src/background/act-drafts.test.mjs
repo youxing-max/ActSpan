@@ -164,6 +164,32 @@ test('successful three-step act returns persisted draft identity to caller', asy
   assert.doesNotMatch(JSON.stringify(state), /actual-act-typed-secret/);
 });
 
+test('selector-only steps still execute but are never promoted into a draft', async () => {
+  const calls = [];
+  let handler;
+  registerActTool({
+    registerTool: (name, _definition, fn) => { if (name === 'actspan_act') handler = fn; },
+    run: fn => fn, tabIdParam: {}, taskParams: {},
+    callBridge: async (method, params) => {
+      calls.push({ method, params });
+      if (method === 'act.draft') return recordSuccessfulActDraft(params);
+      if (method === 'page.read') return { content: 'ok', url: 'https://shop.example.com/' };
+      return { changed: true };
+    },
+  });
+  const result = await handler({ tabId: 77, steps: [
+    { action: 'click', selector: '#signin' },
+    { action: 'type', selector: '#email', text: 'selector-secret' },
+    { action: 'read', selector: '#done' },
+  ] });
+  assert.equal(result.success, true);
+  assert.equal(calls.filter(call => call.method === 'page.click').length, 1);
+  assert.equal(calls.find(call => call.method === 'page.type').params.selector, '#email');
+  // 选择器脚本可以执行，但没有可重放的 find 描述符，所以永远不产出草案。
+  assert.equal(result.draft.draftId, null);
+  assert.equal(result.draft.reason, 'ineligible steps');
+});
+
 test('successful ref-only act uses observed names instead of persisting volatile refs', async () => {
   let handler;
   registerActTool({

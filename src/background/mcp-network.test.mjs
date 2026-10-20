@@ -5,12 +5,14 @@ import { registerNetworkTools } from '../../mcp-server/network-tool.js';
 
 const events = new Set();
 const updates = new Set();
+const detaches = new Set();
 const reloads = [];
 let responseBodies = new Map();
 globalThis.chrome = {
   debugger: {
     onEvent: { addListener: (listener) => events.add(listener) },
-    onDetach: { addListener: () => {} },
+    onDetach: { addListener: (listener) => detaches.add(listener) },
+    detach: async () => {},
     attach: async () => {},
     sendCommand: async (_target, method, params) => method === 'Network.getResponseBody'
       ? { body: responseBodies.get(params.requestId) || '', base64Encoded: false } : {},
@@ -31,13 +33,17 @@ const bundle = await build({
 const { handleMcpNetwork } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].contents).toString('base64')}`);
 const context = { clientId: 'client', requestId: 'request', taskId: 'task', sessionId: 'session', owner: 'ide-agent' };
 const tabId = 332;
-function emit(requestId, url, body) {
+function emit(requestId, url, body, targetTabId = tabId) {
   responseBodies.set(requestId, body);
-  const source = { tabId };
+  const source = { tabId: targetTabId };
   const event = (method, params) => { for (const listener of events) listener(source, method, params); };
   event('Network.requestWillBeSent', { requestId, type: 'XHR', request: { url, method: 'GET', headers: {} } });
   event('Network.responseReceived', { requestId, response: { status: 200, statusText: 'OK', mimeType: 'application/json', headers: { 'content-length': String(body.length) } } });
   event('Network.loadingFinished', { requestId });
+}
+
+function simulateDetach(targetTabId = tabId) {
+  for (const listener of detaches) listener({ tabId: targetTabId }, 'canceled_by_user');
 }
 
 test('query index selects latest matching request backwards, not most recent unrelated request', async () => {
@@ -69,6 +75,18 @@ test('unknown filter and debugger errors diagnose observations instead of invent
   try {
     await assert.rejects(handleMcpNetwork('network.detail', { requestId: 'batch-1', includeBody: true }, context, tabId), /body evicted/);
   } finally { chrome.debugger.sendCommand = old; }
+});
+
+test('captured requests survive a debugger detach and capture resumes without a manual restart', async () => {
+  const tab = 340;
+  assert.equal((await handleMcpNetwork('network.list', {}, context, tab)).total, 0);
+  emit('keep-1', 'https://example.test/api/keep', 'kept', tab);
+  assert.equal((await handleMcpNetwork('network.query', { urlFilter: '/api/keep' }, context, tab)).body, 'kept');
+  // 空闲 5s 或浏览器主动断开都会走同一条 detach 清理路径。
+  simulateDetach(tab);
+  assert.equal((await handleMcpNetwork('network.query', { urlFilter: '/api/keep' }, context, tab)).body, 'kept');
+  emit('keep-2', 'https://example.test/api/keep?second', 'fresh', tab);
+  assert.equal((await handleMcpNetwork('network.query', { urlFilter: '/api/keep?second' }, context, tab)).body, 'fresh');
 });
 
 test('registered network tools forward caller-scoped tab and distinguish list/detail/query', async () => {
