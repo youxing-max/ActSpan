@@ -16,7 +16,7 @@ import { buildToolIntentText, buildUserFacingActionSummary } from '../text-utils
 import { reconcileSessionSyncTask } from '../session-sync';
 import { FUNCTION_ICONS, FUNCTION_LABELS } from '../icons';
 
-export const useAIStream = (resultRef: React.RefObject<HTMLDivElement | null>) => {
+export const useAIStream = (_resultRef: React.RefObject<HTMLDivElement | null>) => {
   const { state, dispatch } = useActspan();
   const stateRef = useRef(state);
   stateRef.current = state;
@@ -267,6 +267,29 @@ export const useAIStream = (resultRef: React.RefObject<HTMLDivElement | null>) =
       Channel.off('__session_sync', handleSessionSync);
     };
   }, [dispatch]);
+  // 侧栏作为 extension page 没有 sender.tab，恢复会话时需要自行消费回放事件。
+  useEffect(() => {
+    const handleSessionReplay = (data: any) => {
+      if (!data || typeof data !== 'object' || typeof data.sessionId !== 'string' || !Array.isArray(data.events)) return;
+      const currentTask = stateRef.current.currentTask;
+      if (!currentTask || currentTask.id !== data.sessionId) return;
+
+      for (const event of data.events) {
+        if (!event || typeof event.type !== 'string') continue;
+        handleStream({
+          ...event,
+          taskId: data.sessionId,
+          sessionId: data.sessionId,
+        });
+      }
+    };
+
+    Channel.on('__session_replay', handleSessionReplay);
+    return () => {
+      Channel.off('__session_replay', handleSessionReplay);
+    };
+  }, [handleStream]);
+
 
   // 监听审批请求/取消
   useEffect(() => {

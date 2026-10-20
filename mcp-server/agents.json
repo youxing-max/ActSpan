@@ -1,0 +1,80 @@
+{
+  "_comment": "Single source for host identity (K1) and MCP client config discovery. `name`/`slug`/`aliases` drive normalizeHostIdentity; `paths` drive install discovery and may be omitted for identity-only hosts.",
+  "agents": [
+    {
+      "name": "Claude Desktop",
+      "slug": "claude-desktop",
+      "aliases": ["Claude Desktop"],
+      "format": "json",
+      "paths": {
+        "win32": ["%APPDATA%/Claude/claude_desktop_config.json"],
+        "darwin": ["~/Library/Application Support/Claude/claude_desktop_config.json"],
+        "linux": ["~/.config/Claude/claude_desktop_config.json"]
+      }
+    },
+    {
+      "name": "Cursor",
+      "slug": "cursor",
+      "aliases": ["Cursor MCP client"],
+      "format": "json",
+      "paths": {
+        "win32": ["%APPDATA%/Cursor/User/mcp.json", "%APPDATA%/Cursor/User/settings.json"],
+        "darwin": ["~/Library/Application Support/Cursor/User/mcp.json", "~/Library/Application Support/Cursor/User/settings.json"],
+        "linux": ["~/.config/Cursor/User/mcp.json", "~/.config/Cursor/User/settings.json"]
+      }
+    },
+    {
+      "name": "Windsurf",
+      "slug": "windsurf",
+      "aliases": ["Windsurf MCP client"],
+      "format": "json",
+      "paths": {
+        "win32": ["%USERPROFILE%/.codeium/windsurf/mcp_config.json"],
+        "darwin": ["~/.codeium/windsurf/mcp_config.json"],
+        "linux": ["~/.codeium/windsurf/mcp_config.json"]
+      }
+    },
+    {
+      "name": "Cline",
+      "slug": "cline",
+      "aliases": ["Cline MCP client"],
+      "format": "json",
+      "paths": {
+        "win32": ["%APPDATA%/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json"],
+        "darwin": ["~/Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json"],
+        "linux": ["~/.config/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json"]
+      }
+    },
+    {
+      "name": "Codex",
+      "slug": "codex",
+      "aliases": ["OpenAI Codex", "Codex MCP client"],
+      "format": "toml",
+      "paths": {
+        "win32": ["%USERPROFILE%/.codex/config.toml"],
+        "darwin": ["~/.codex/config.toml"],
+        "linux": ["~/.codex/config.toml"]
+      }
+    },
+    {
+      "name": "Claude Code",
+      "slug": "claude-code",
+      "aliases": ["Claude Code", "Claude MCP client"]
+    },
+    {
+      "name": "Qoder",
+      "slug": "qoder",
+      "aliases": ["Qoder MCP client"]
+    },
+    {
+      "name": "Trae",
+      "slug": "trae",
+      "aliases": ["Trae MCP client"]
+    },
+    {
+      "name": "VS Code",
+      "slug": "vscode",
+      "aliases": ["Visual Studio Code"]
+    }
+  ]
+}

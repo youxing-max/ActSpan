@@ -4,7 +4,9 @@
  * 从 orchestrator.ts 提取的纯配置模块，不包含运行时逻辑
  */
 
-import type { InputItem, ToolSchema, TodoSnapshot } from './types';
+import type { InputItem, ToolSchema } from './types';
+import type { TodoSnapshot } from './todo-manager';
+import type { ToolExecutionContext } from '../functions/types';
 import { buildSubtaskPrompt, buildExplorePrompt, buildReviewPrompt, buildPlanPrompt } from './system-prompt';
 
 // ============ 类型定义 ============
@@ -15,7 +17,9 @@ export interface LoopBudget {
   maxToolCalls: number;
   maxSameSignature: number;
   maxContextItems: number;
-  maxSubtaskDepth: number;
+  /** Maximum nested subagent depth; 0 forbids spawning subagents. */
+  maxSubtaskDepth?: number;
+  taskDeadlineMs?: number;
 }
 
 /** 检查点（供 background.ts 持久化会话状态） */
@@ -65,6 +69,8 @@ export interface HandleChatOptions {
   suppressNextStepHint?: boolean;
   /** 从断点恢复的 todo 快照 */
   resumeTodoSnapshot?: TodoSnapshot;
+  /** Identity bound to tool effects for this Loop task. */
+  toolContext?: Omit<ToolExecutionContext, 'tabId' | 'signal' | 'isolatedDebug' | 'debugTabIds'>;
 }
 
 /** 阶段控制信号（phaseOrchestrator ↔ agenticLoop 通信） */
@@ -115,13 +121,14 @@ export interface SubagentLoopConfig {
 
 // ============ 默认配置 ============
 
-export const DEFAULT_BUDGET: LoopBudget = {
+export const DEFAULT_BUDGET = {
   maxRounds: 120,
   maxToolCalls: 300,
   maxSameSignature: 5,
   maxContextItems: 300,
   maxSubtaskDepth: 2,
-};
+  taskDeadlineMs: 10 * 60 * 1000,
+} satisfies LoopBudget;
 
 export const MAX_EMPTY_RETRIES = 2;
 

@@ -28,7 +28,7 @@ const resolveElementRect = async (
   signal?: AbortSignal,
 ): Promise<{ x: number; y: number; width: number; height: number } | null> => {
   try {
-    const resp = await sendToTabWithRetry(tabId, '__get_element_rect', { element_id: elementId }, signal);
+    const resp = await sendToTabWithRetry(tabId, '__get_element_rect', { element_id: elementId }, { signal });
     if (resp?.success && resp.rect) {
       return resp.rect;
     }

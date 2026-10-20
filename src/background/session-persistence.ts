@@ -7,7 +7,7 @@ import type { Session, SessionFailureCode } from './session-types';
 import { SESSION_RUNTIME_STORAGE_KEY, LEGACY_SESSION_RUNTIME_STORAGE_KEY, MAX_RUNTIME_EVENT_LOG, MAX_RUNTIME_CONTEXT } from './session-types';
 import { readMigratedStorage } from '../lib/legacy-storage';
 import { sessions, sessionTaskKinds, getActiveSessionId, setActiveSessionId } from './session-state';
-import { reconcileSessionStateFromEventLog, extractLatestStartedRunId, buildErrorContent, buildTurnLifecycleEventPayload } from './session-event';
+import { reconcileSessionStateFromEventLog, extractLatestStartedRunId, buildTurnLifecycleEventPayload } from './session-event';
 
 // ============ chrome.storage 工具 ============
 

@@ -21,12 +21,13 @@ import { getToolsByCategory } from '../functions/tool-tiers';
 import { TodoManager } from './todo-manager';
 import { TabTracker } from './tab-tracker';
 import { createTodoFunction } from '../functions/todo';
+import { createDeadlineSignal, type DeadlineSignal } from './deadline';
 
 import type {
   LoopBudget, HandleChatOptions, PhaseControl,
 } from './loop-config';
 import {
-  MAX_EMPTY_RETRIES, MAX_IMAGE_INJECTIONS,
+  DEFAULT_BUDGET, MAX_EMPTY_RETRIES, MAX_IMAGE_INJECTIONS,
   AUTO_COMPACT_TOKEN_THRESHOLD, AUTO_COMPACT_KEEP_TAIL_RATIO,
   AUTO_COMPACT_SUMMARY_INSTRUCTION,
   SUBAGENT_LOOP_CONFIGS,
@@ -34,6 +35,20 @@ import {
 
 // re-export 给其他模块使用
 export { resetSensitiveAccessTrust, getSubagentSchemas };
+
+/** 构建子 Agent 工具集合：读取全量目录，但不暴露编排控制工具或 Agent 自身。 */
+export const buildAgentToolSet = (
+  visibleTools: ToolSchema[],
+  allTools?: ToolSchema[],
+  toolFilter?: (toolName: string) => boolean,
+): ToolSchema[] => {
+  const source = allTools && allTools.length > 0 ? allTools : visibleTools;
+  return source.filter((tool) =>
+    tool.name !== 'todo'
+    && tool.name !== 'compact'
+    && !isAgentTool(tool.name)
+    && (!toolFilter || toolFilter(tool.name)));
+};
 
 // ============ 辅助函数 ============
 
@@ -69,6 +84,7 @@ export const collectStreamResponse = async (
   let fullText = '';
   const outputItems: OutputItem[] = [];
   const functionCalls: OutputFunctionCallItem[] = [];
+  let unrecognizedEventCount = 0;
 
   for await (const chunk of chatStream(input, tools.length > 0 ? tools : undefined, systemPrompt, signal)) {
     if (signal?.aborted) throw new Error('ABORTED');
@@ -83,7 +99,16 @@ export const collectStreamResponse = async (
         functionCalls.push(chunk.outputItem);
       }
     }
+    const diagnostics = chunk as typeof chunk & { unrecognizedEventCount?: number };
+    if (diagnostics.unrecognizedEventCount) unrecognizedEventCount = diagnostics.unrecognizedEventCount;
     if (chunk.done) break;
+  }
+
+  if (unrecognizedEventCount > 0) {
+    emit({
+      type: 'warning',
+      content: JSON.stringify({ code: 'E_SSE_UNRECOGNIZED', count: unrecognizedEventCount }),
+    });
   }
 
   // 备用提取：如果流式 delta 没有文本但 outputItems 有 message
@@ -387,20 +412,39 @@ export const agenticLoop = async (
   registry?: AgentRegistry,
   allTools?: ToolSchema[],
   loadedOnDemandTools?: Set<string>,
+  parentTaskDeadline?: DeadlineSignal,
 ): Promise<InputItem[]> => {
+  const ownsTaskDeadline = !parentTaskDeadline;
+  const taskDeadline = parentTaskDeadline || createDeadlineSignal(
+    signal,
+    budget.taskDeadlineMs ?? DEFAULT_BUDGET.taskDeadlineMs,
+    '任务级墙钟预算已到期',
+  );
+  const loopSignal = taskDeadline.signal;
   let round = 0;
   let totalToolCalls = 0;
   let emptyRetries = 0;
-  let imageInjectionCount = 0;
   const signatureCount = new Map<string, number>();
   let roundsSinceTodoOp = 0;
-
-  emit({ type: 'thinking', content: 'AI 正在思考...' });
-  emitCheckpoint(options, 'act', 0, '开始处理', context);
+  let timeoutReported = false;
+  let imageInjectionCount = 0;
+  const requestFinalResponse = async (instruction: string): Promise<void> => {
+    context.push({ role: 'user' as const, content: instruction });
+    try {
+      const finalResponse = await collectStreamResponse(context, [], systemPrompt, loopSignal, emit);
+      for (const item of finalResponse.outputItems) context.push(item as InputItem);
+    } catch { /* 忽略，已经有足够上下文 */ }
+  };
 
   while (round < budget.maxRounds) {
-    if (signal?.aborted) {
-      emit({ type: 'error', content: JSON.stringify({ code: 'E_CANCELLED', message: '任务已取消' }) });
+    if (loopSignal.aborted) {
+      if (taskDeadline.didTimeout()) {
+        timeoutReported = true;
+        emit({ type: 'error', content: JSON.stringify({ code: 'E_TIMEOUT', message: '任务级墙钟预算已到期，已停止当前任务。' }) });
+      } else {
+        emit({ type: 'error', content: JSON.stringify({ code: 'E_CANCELLED', message: '任务已取消' }) });
+      }
+      if (ownsTaskDeadline) taskDeadline.cleanup();
       return context;
     }
 
@@ -426,7 +470,7 @@ export const agenticLoop = async (
     // Layer 2: auto_compact — token 阈值触发 LLM 智能摘要
     if (estimatedTokens > AUTO_COMPACT_TOKEN_THRESHOLD) {
       const todoText = todoManager?.active ? todoManager.toStatusText() : undefined;
-      const autoResult = await performAutoCompact(context, emit, signal, todoText);
+      const autoResult = await performAutoCompact(context, emit, loopSignal, todoText);
       if (!autoResult) {
         compactContext(context, budget.maxContextItems, emit, todoText);
       }
@@ -447,17 +491,26 @@ export const agenticLoop = async (
     let outputItems: OutputItem[];
 
     try {
-      const response = await collectStreamResponse(context, tools, systemPrompt, signal, emit);
+      const response = await collectStreamResponse(context, tools, systemPrompt, loopSignal, emit);
       fullText = response.fullText;
       functionCalls = response.functionCalls;
       outputItems = response.outputItems;
     } catch (err: unknown) {
-      const isAborted = signal?.aborted || (err instanceof Error && (err.name === 'AbortError' || err.message === 'ABORTED'));
+      const isTimedOut = taskDeadline.didTimeout();
+      const isAborted = !isTimedOut && (loopSignal.aborted || (err instanceof Error && (err.name === 'AbortError' || err.message === 'ABORTED')));
+      if (isTimedOut) {
+        timeoutReported = true;
+        emit({ type: 'error', content: JSON.stringify({ code: 'E_TIMEOUT', message: '任务级墙钟预算已到期，已停止当前任务。' }) });
+        if (ownsTaskDeadline) taskDeadline.cleanup();
+        return context;
+      }
       if (isAborted) {
         emit({ type: 'error', content: JSON.stringify({ code: 'E_CANCELLED', message: '任务已取消' }) });
+        if (ownsTaskDeadline) taskDeadline.cleanup();
         return context;
       }
       emit({ type: 'error', content: JSON.stringify({ code: 'E_LLM_API', message: err instanceof Error ? err.message : 'LLM 调用失败' }) });
+      if (ownsTaskDeadline) taskDeadline.cleanup();
       return context;
     }
 
@@ -471,34 +524,44 @@ export const agenticLoop = async (
       emptyRetries = 0;
 
       // ── 边界：死循环检测 ──
+      // 达到上限的调用只能保留上下文中的调用/结果记录，不能再次执行。
+      const executableCalls: OutputFunctionCallItem[] = [];
       for (const fc of functionCalls) {
         const sig = buildSignature(fc);
         const count = (signatureCount.get(sig) || 0) + 1;
         signatureCount.set(sig, count);
-        if (count >= budget.maxSameSignature) {
-          context.push({
-            role: 'user' as const,
-            content: `你已经用完全相同的参数调用 ${fc.name} ${count} 次了，结果不会改变。请换一种方法，或者基于已有结果给出回答。`,
-          });
+        if (count <= budget.maxSameSignature) {
+          executableCalls.push(fc);
+          continue;
         }
+
+        context.push({
+          type: 'function_call_output' as const,
+          call_id: fc.call_id,
+          output: JSON.stringify({
+            success: false,
+            error: `相同工具调用已达到上限（${budget.maxSameSignature} 次），本次调用已跳过。`,
+          }),
+        });
       }
 
       // ── 边界：总调用数检查 ──
       totalToolCalls += functionCalls.length;
       if (totalToolCalls >= budget.maxToolCalls) {
-        const results = await executeToolCalls(functionCalls, tabId, signal, emit);
+        const results = executableCalls.length > 0
+          ? await executeToolCalls(executableCalls, tabId, loopSignal, emit, undefined, options?.toolContext)
+          : [];
         for (const r of results) context.push(r);
-        if (tabTracker) scanTabNavigateResults(functionCalls, results, tabTracker);
-        imageInjectionCount = await injectScreenshotImages(functionCalls, results, context, imageInjectionCount);
+        if (tabTracker) scanTabNavigateResults(executableCalls, results, tabTracker);
+        imageInjectionCount = await injectScreenshotImages(executableCalls, results, context, imageInjectionCount);
 
-        context.push({
-          role: 'user' as const,
-          content: '本次处理已经进行了很多步骤。请基于当前已有的信息，总结你已经完成的内容和当前进展，直接给出最终回答。不要提及"轮数""工具限制"等内部概念。',
-        });
-        try {
-          const finalResponse = await collectStreamResponse(context, [], systemPrompt, signal, emit);
-          for (const item of finalResponse.outputItems) context.push(item as InputItem);
-        } catch { /* 忽略，已经有足够上下文 */ }
+        await requestFinalResponse('本次处理已经进行了很多步骤。请基于当前已有的信息，总结你已经完成的内容和当前进展，直接给出最终回答。不要提及"轮数""工具限制"等内部概念。');
+        break;
+      }
+
+      // 并行组全部被熔断时，不再把同一组调用交回模型，直接请求无工具最终回答。
+      if (executableCalls.length === 0) {
+        await requestFinalResponse('你已经用完全相同的参数重复调用工具，结果不会改变。请基于已有结果给出最终回答，不要再调用工具。');
         break;
       }
 
@@ -517,7 +580,7 @@ export const agenticLoop = async (
         const configDepth = config.budget.maxSubtaskDepth;
         if (configDepth === undefined || configDepth > 0) {
           const effectiveDepth = configDepth ?? budget.maxSubtaskDepth;
-          if (depth >= effectiveDepth) {
+          if (effectiveDepth !== undefined && depth >= effectiveDepth) {
             return { success: false, summary: '已达最大嵌套深度', agentId: '' };
           }
         }
@@ -540,22 +603,22 @@ export const agenticLoop = async (
 
         try {
           const subContext: InputItem[] = [{ role: 'user' as const, content: goal }];
-          const subTools = config.toolFilter
-            ? tools.filter(t => config.toolFilter!(t.name))
-            : tools.filter(t => !isAgentTool(t.name));
+          const subTools = buildAgentToolSet(tools, allTools, config.toolFilter);
 
           const mergedBudget: Partial<LoopBudget> = {};
           for (const [key, value] of Object.entries(config.budget)) {
             const budgetKey = key as keyof LoopBudget;
-            mergedBudget[budgetKey] = Math.min(budget[budgetKey], value as number);
+            if (typeof value !== 'number') continue;
+            const parentValue = budget[budgetKey];
+            mergedBudget[budgetKey] = parentValue === undefined ? value : Math.min(parentValue, value);
           }
           const subBudget: LoopBudget = { ...budget, ...mergedBudget };
 
           const resultContext = await agenticLoop(
             subContext, subTools, config.buildPrompt(), subBudget,
-            effectiveTabId, runnerSignal || signal, emit, undefined, depth + 1,
+            effectiveTabId, runnerSignal || loopSignal, emit, undefined, depth + 1,
             undefined, undefined, undefined, tabTracker,
-            effectiveRegistry,
+            effectiveRegistry, undefined, undefined, taskDeadline,
           );
 
           const summary = extractLastAssistantReply(resultContext) || 'Agent 已完成但无明确输出';
@@ -571,7 +634,7 @@ export const agenticLoop = async (
       // ── 机制：拦截 todo / compact 调用，本地执行 ──
       const regularCalls: OutputFunctionCallItem[] = [];
       if (todoManager && todoFn) {
-        for (const fc of functionCalls) {
+        for (const fc of executableCalls) {
           if (fc.name === 'todo') {
             let todoOutput: string;
             try {
@@ -615,7 +678,7 @@ export const agenticLoop = async (
 
             const beforeSize = context.length;
             const compactTodoText = todoManager?.active ? todoManager.toStatusText() : undefined;
-            const compactResult = await performAutoCompact(context, emit, signal, compactTodoText);
+            const compactResult = await performAutoCompact(context, emit, loopSignal, compactTodoText);
 
             let compactOutput: string;
             if (compactResult) {
@@ -647,13 +710,13 @@ export const agenticLoop = async (
         }
       } else {
         // 无 todoManager 时仍需拦截 compact
-        for (const fc of functionCalls) {
+        for (const fc of executableCalls) {
           if (fc.name === 'compact') {
             emit({ type: 'function_call', content: JSON.stringify({ name: 'compact', callId: fc.call_id, arguments: fc.arguments }) });
 
             const beforeSize = context.length;
             const compactTodoText = todoManager?.active ? todoManager.toStatusText() : undefined;
-            const compactResult = await performAutoCompact(context, emit, signal, compactTodoText);
+            const compactResult = await performAutoCompact(context, emit, loopSignal, compactTodoText);
 
             let compactOutput: string;
             if (compactResult) {
@@ -687,7 +750,7 @@ export const agenticLoop = async (
 
       // 执行剩余常规工具
       if (regularCalls.length > 0) {
-        const results = await executeToolCalls(regularCalls, tabId, signal, emit, agentRunner);
+        const results = await executeToolCalls(regularCalls, tabId, loopSignal, emit, agentRunner, options?.toolContext);
         for (const r of results) context.push(r);
         if (tabTracker) scanTabNavigateResults(regularCalls, results, tabTracker);
         imageInjectionCount = await injectScreenshotImages(regularCalls, results, context, imageInjectionCount);
@@ -789,12 +852,16 @@ export const agenticLoop = async (
         content: '本次处理已经进行了很多步骤。请基于当前已有的信息，总结你已经完成的内容和当前进展，直接给出最终回答。不要提及"轮数""工具限制"等内部概念。',
       });
       try {
-        const finalResponse = await collectStreamResponse(context, [], systemPrompt, signal, emit);
+        const finalResponse = await collectStreamResponse(context, [], systemPrompt, loopSignal, emit);
         for (const item of finalResponse.outputItems) context.push(item as InputItem);
       } catch { /* 忽略 */ }
     }
     emitCheckpoint(options, 'finalize', round, '达到轮数上限', context, todoManager?.active ? todoManager.toSnapshot() : undefined);
   }
 
+  if (taskDeadline.didTimeout() && !timeoutReported) {
+    emit({ type: 'error', content: JSON.stringify({ code: 'E_TIMEOUT', message: '任务级墙钟预算已到期，已停止当前任务。' }) });
+  }
+  if (ownsTaskDeadline) taskDeadline.cleanup();
   return context;
 };

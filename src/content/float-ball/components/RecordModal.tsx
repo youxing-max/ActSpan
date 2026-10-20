@@ -15,7 +15,7 @@ interface RecordModalProps {
 const HINTS = [
   { icon: '\uD83D\uDCCD', text: '录制范围：当前标签页的可见区域操作' },
   { icon: '\uD83D\uDD12', text: '隐私提示：每步操作会截取屏幕快照供 AI 分析，请注意敏感信息' },
-  { icon: '\u26A0\uFE0F', text: '限制：仅支持单标签页，最多录制 10 步操作' },
+  { icon: '\u26A0\uFE0F', text: '限制：仅支持单标签页，录制步数不限' },
 ];
 
 export const RecordModal: React.FC<RecordModalProps> = ({ visible, onConfirm, onCancel }) => {

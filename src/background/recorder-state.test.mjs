@@ -39,6 +39,14 @@ test('returns state for the exact tab even after recording stops', () => {
   assert.equal(isRecorderStateForTab({ active: false, tabId: 7 }, 8), false);
 });
 
+test('rejects unknown or malformed recorder state without throwing', () => {
+  assert.equal(isRecorderStateForTab(undefined, 7), false);
+  assert.equal(isRecorderStateForTab('recorder', 7), false);
+  assert.equal(isRecorderStateForTab({ tabId: '7' }, 7), false);
+  assert.equal(shouldTransferRecorderToTab(42, 7, 8), false);
+  assert.equal(shouldTransferRecorderToTab({ tabId: 7, active: 'true' }, 7, 8), false);
+});
+
 test('transfers only an active recording from its source tab to a new tab', () => {
   assert.equal(shouldTransferRecorderToTab(activeState, 7, 8), true);
   assert.equal(shouldTransferRecorderToTab(activeState, 8, 9), false);

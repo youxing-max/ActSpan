@@ -120,6 +120,9 @@ export const tabNavigateFunction: FunctionDefinition = {
         }
         try {
           const tab = await chrome.tabs.update(targetId, { url });
+          if (!tab) {
+            return { success: false, error: '当前标签页导航失败: 标签页不存在' };
+          }
           return {
             success: true,
             data: {
@@ -220,6 +223,9 @@ export const tabNavigateFunction: FunctionDefinition = {
         if (!targetId) return { success: false, error: '复制标签页需要提供 tab_id' };
         try {
           const tab = await chrome.tabs.duplicate(targetId);
+          if (!tab) {
+            return { success: false, error: '复制标签页失败: 标签页不存在' };
+          }
           return {
             success: true,
             data: {
@@ -239,6 +245,9 @@ export const tabNavigateFunction: FunctionDefinition = {
         if (!targetId) return { success: false, error: '固定标签页需要提供 tab_id' };
         try {
           const tab = await chrome.tabs.update(targetId, { pinned });
+          if (!tab) {
+            return { success: false, error: '更新标签页固定状态失败: 标签页不存在' };
+          }
           return {
             success: true,
             data: {
@@ -257,6 +266,9 @@ export const tabNavigateFunction: FunctionDefinition = {
         if (!targetId) return { success: false, error: '静音标签页需要提供 tab_id' };
         try {
           const tab = await chrome.tabs.update(targetId, { muted });
+          if (!tab) {
+            return { success: false, error: '更新标签页静音状态失败: 标签页不存在' };
+          }
           return {
             success: true,
             data: {

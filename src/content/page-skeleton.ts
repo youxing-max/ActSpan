@@ -8,7 +8,6 @@ import Channel from '../lib/channel';
 import {
   getOrCreateElementHandle,
   isElementVisible,
-  isElementClickable,
   isElementEditable,
   clipText,
   normalizeText,
@@ -65,11 +64,6 @@ const SEMANTIC_TAGS = new Set([
   'SUMMARY', 'TABLE', 'THEAD', 'TBODY', 'TFOOT',
   'UL', 'OL', 'DL', 'FIELDSET', 'FIGURE', 'FIGCAPTION',
   'H1', 'H2', 'H3', 'H4', 'H5', 'H6',
-]);
-
-/** 内联交互元素标签（在骨架树中用 [...] 表示） */
-const INLINE_INTERACTIVE_TAGS = new Set([
-  'A', 'BUTTON', 'INPUT', 'TEXTAREA', 'SELECT', 'LABEL', 'SUMMARY',
 ]);
 
 /** DOM 遍历安全上限 */
@@ -186,7 +180,6 @@ const buildSkeletonTree = (
   // 交互元素：分配 element_id
   if (kind === 'interactive') {
     node.elementId = getOrCreateElementHandle(root);
-    (root as HTMLElement).dataset.actspanHandle = node.elementId;
     annotateInteractiveAttrs(node, root);
   }
 

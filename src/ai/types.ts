@@ -18,9 +18,13 @@ export interface InputImageContent {
 /** 多模态内容联合类型 */
 export type ContentPart = InputTextContent | InputImageContent;
 
-/** 用户/助手消息输入项（content 支持纯文本或多模态数组） */
+/**
+ * 消息输入项（content 支持纯文本或多模态数组）
+ * role 与 OpenAI Responses API 的输入角色一致：system/developer 用于注入指令，
+ * user/assistant 用于对话轮次。
+ */
 export interface MessageInputItem {
-  role: 'user' | 'assistant';
+  role: 'user' | 'assistant' | 'system' | 'developer';
   content: string | ContentPart[];
 }
 

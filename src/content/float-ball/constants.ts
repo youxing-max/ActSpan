@@ -29,9 +29,6 @@ export interface RecentCompletedTaskItem {
   updatedAt: number;
 }
 
-// 平台检测
-export const isMac = /Mac|iPod|iPhone|iPad/.test(navigator.platform);
-export const SHORTCUT_TEXT = isMac ? '⌘ M' : 'Ctrl M';
 
 export type Side = 'left' | 'right';
 

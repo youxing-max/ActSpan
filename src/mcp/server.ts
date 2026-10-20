@@ -5,14 +5,25 @@
  */
 
 import type { FunctionDefinition } from '../functions/types';
+import { buildToolDiagnostic, withToolDiagnostic } from '../functions/diagnostics';
+
 import { validateSchema } from './validator';
 import type {
   MCPTool,
   MCPToolCallRequest,
   MCPToolCallResult,
   MCPListToolsResponse,
+  MCPErrorResponse,
   MCPMethod,
+  MCPToolManifest,
 } from './types';
+
+type MCPRequestResult = MCPListToolsResponse | MCPToolCallResult | MCPErrorResponse;
+
+const protocolError = (code: number, message: string, data?: Record<string, unknown>): MCPErrorResponse => ({
+  error: { code, message, ...(data ? { data } : {}) },
+});
+
 
 export class MCPServer {
   /** 已注册的工具函数映射（name → FunctionDefinition） */
@@ -24,6 +35,17 @@ export class MCPServer {
    */
   registerTool(tool: FunctionDefinition): void {
     this.tools.set(tool.name, tool);
+  }
+  /** 批量注册工具；同名工具按 manifest 顺序覆盖。 */
+  registerTools(tools: FunctionDefinition[]): void {
+    for (const tool of tools) this.registerTool(tool);
+  }
+
+  /** 用一个 manifest 替换当前工具集合。 */
+  replaceManifest(manifest: MCPToolManifest | FunctionDefinition[]): void {
+    const tools = Array.isArray(manifest) ? manifest : manifest.tools;
+    this.tools.clear();
+    this.registerTools(tools);
   }
 
   /**
@@ -48,14 +70,14 @@ export class MCPServer {
    * @param params 请求参数
    * @returns 响应结果
    */
-  async handleRequest(method: MCPMethod, params?: any, signal?: AbortSignal): Promise<any> {
+  async handleRequest(method: MCPMethod | string, params?: unknown, signal?: AbortSignal): Promise<MCPRequestResult> {
     switch (method) {
       case 'tools/list':
         return this.handleListTools();
       case 'tools/call':
-        return this.handleCallTool(params as MCPToolCallRequest, signal);
+        return this.handleCallTool(params, signal);
       default:
-        throw new Error(`不支持的 MCP 方法: ${method}`);
+        return protocolError(-32601, `不支持的 MCP 方法: ${method}`, { method });
     }
   }
 
@@ -65,7 +87,6 @@ export class MCPServer {
    */
   private handleListTools(): MCPListToolsResponse {
     const tools: MCPTool[] = [];
-
     for (const [, funcDef] of this.tools) {
       tools.push({
         name: funcDef.name,
@@ -74,86 +95,83 @@ export class MCPServer {
         supportsParallel: funcDef.supportsParallel === true,
       });
     }
-
     return { tools };
   }
 
-  /**
-   * 处理 tools/call 请求
-   * 查找并执行指定工具，将结果转为 MCP 格式
-   */
-  private async handleCallTool(request: MCPToolCallRequest, inheritedSignal?: AbortSignal): Promise<MCPToolCallResult> {
-    const { name, arguments: rawArgs, _meta } = request;
-    const args = rawArgs && typeof rawArgs === 'object' ? rawArgs : {};
-    const signal = request.signal || inheritedSignal;
-
-    const funcDef = this.tools.get(name);
-    if (!funcDef) {
+  /** 处理 tools/call 请求并校验 JSON-RPC 参数形状。 */
+  private async handleCallTool(rawRequest: unknown, inheritedSignal?: AbortSignal): Promise<MCPToolCallResult> {
+    if (!rawRequest || typeof rawRequest !== 'object' || Array.isArray(rawRequest)) {
       return {
-        content: [{ type: 'text', text: `工具 ${name} 不存在` }],
+        content: [{ type: 'text', text: JSON.stringify(protocolError(-32602, 'tools/call 参数必须是对象')) }],
         isError: true,
       };
     }
+    const request = rawRequest as MCPToolCallRequest;
+    const { name, arguments: rawArgs, _meta } = request;
+    if (typeof name !== 'string' || !name.trim()) {
+      return {
+        content: [{ type: 'text', text: JSON.stringify(protocolError(-32602, 'tools/call 缺少工具名')) }],
+        isError: true,
+      };
+    }
+    if (rawArgs !== undefined && (!rawArgs || typeof rawArgs !== 'object' || Array.isArray(rawArgs))) {
+      return {
+        content: [{ type: 'text', text: JSON.stringify(protocolError(-32602, 'tools/call arguments 必须是对象')) }],
+        isError: true,
+      };
+    }
+    const args = rawArgs && typeof rawArgs === 'object' ? rawArgs : {};
+    const signal = request.signal || inheritedSignal;
+    const failure = (error: string, extra: Record<string, unknown> = {}): MCPToolCallResult => ({
+      content: [{
+        type: 'text',
+        text: JSON.stringify({
+          success: false,
+          error,
+          ...extra,
+          diagnostic: buildToolDiagnostic(name, args, error),
+        }),
+      }],
+      isError: true,
+    });
 
-    // 从 _meta 中提取浏览器上下文
+    const funcDef = this.tools.get(name);
+    if (!funcDef) return failure(`工具 ${name} 不存在`);
+
+    // Preserve task ownership metadata for tools that must bind effects to one exact session.
     const context = {
+      ...(typeof _meta?.clientId === 'string' ? { clientId: _meta.clientId } : {}),
+      ...(typeof _meta?.requestId === 'string' ? { requestId: _meta.requestId } : {}),
+      ...(typeof _meta?.taskId === 'string' ? { taskId: _meta.taskId } : {}),
+      ...(typeof _meta?.sessionId === 'string' ? { sessionId: _meta.sessionId } : {}),
+      ...(_meta?.owner === 'ide-agent' || _meta?.owner === 'extension-agent' || _meta?.owner === 'user' ? { owner: _meta.owner } : {}),
       ...(typeof _meta?.tabId === 'number' ? { tabId: _meta.tabId } : {}),
       ...(_meta?.isolatedDebug === true ? { isolatedDebug: true } : {}),
       ...(_meta?.debugTabIds instanceof Set ? { debugTabIds: _meta.debugTabIds as Set<number> } : {}),
       signal,
     };
     if (signal?.aborted) {
-      return {
-        content: [{
-          type: 'text',
-          text: JSON.stringify({
-            success: false,
-            error: 'aborted by user',
-            code: 'E_CANCELLED',
-            retryable: true,
-          }),
-        }],
-        isError: true,
-      };
+      return failure('aborted by user', { code: 'E_CANCELLED', retryable: true });
     }
 
     const schemaValidation = validateSchema(funcDef.parameters, args, 'arguments');
     if (!schemaValidation.valid) {
-      return {
-        content: [{
-          type: 'text',
-          text: JSON.stringify({
-            success: false,
-            error: `参数校验失败: ${schemaValidation.errors.slice(0, 3).join('; ')}`,
-            code: 'E_TOOL_PARAM_INVALID',
-            retryable: false,
-          }),
-        }],
-        isError: true,
-      };
+      return failure(
+        `参数校验失败: ${schemaValidation.errors.slice(0, 3).join('; ')}`,
+        { code: 'E_TOOL_PARAM_INVALID', retryable: false },
+      );
     }
 
     if (typeof funcDef.validate === 'function') {
       const customError = funcDef.validate(args);
       if (customError) {
-        return {
-          content: [{
-            type: 'text',
-            text: JSON.stringify({
-              success: false,
-              error: `参数校验失败: ${customError}`,
-              code: 'E_TOOL_PARAM_INVALID',
-              retryable: false,
-            }),
-          }],
-          isError: true,
-        };
+        return failure(`参数校验失败: ${customError}`, { code: 'E_TOOL_PARAM_INVALID', retryable: false });
       }
     }
 
     try {
-      const executePromise = funcDef.execute(args, context);
       let result;
+      const executePromise = funcDef.execute(args, context);
       if (signal) {
         result = await new Promise<Awaited<typeof executePromise>>((resolve, reject) => {
           const onAbort = () => {
@@ -169,29 +187,17 @@ export class MCPServer {
       } else {
         result = await executePromise;
       }
+      const diagnosedResult = withToolDiagnostic(name, args, result);
       return {
-        content: [{ type: 'text', text: JSON.stringify(result) }],
-        isError: !result.success,
+        content: [{ type: 'text', text: JSON.stringify(diagnosedResult) }],
+        isError: !diagnosedResult.success,
       };
     } catch (err: any) {
       if (err?.name === 'AbortError' || signal?.aborted) {
-        return {
-          content: [{
-            type: 'text',
-            text: JSON.stringify({
-              success: false,
-              error: 'aborted by user',
-              code: 'E_CANCELLED',
-              retryable: true,
-            }),
-          }],
-          isError: true,
-        };
+        return failure('aborted by user', { code: 'E_CANCELLED', retryable: true });
       }
-      return {
-        content: [{ type: 'text', text: JSON.stringify({ success: false, error: err.message || '工具执行出错' }) }],
-        isError: true,
-      };
+      return failure(err?.message || '工具执行出错');
     }
   }
 }
+

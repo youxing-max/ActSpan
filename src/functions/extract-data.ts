@@ -37,6 +37,13 @@ const injectedExtractDispatcher = (
       return (el.textContent || '').trim().replace(/\s+/g, ' ');
     };
 
+    /** Prefer lazy-loading data attributes over transparent placeholder src. */
+    const imageSource = (img: HTMLImageElement): string => {
+      const lazy = img.getAttribute('data-src') || img.getAttribute('data-original') || img.getAttribute('data-lazy-src');
+      const value = lazy || img.getAttribute('src') || img.src || '';
+      try { return value ? new URL(value, document.baseURI).href : ''; } catch { return value; }
+    };
+
     /** 从元素提取字段值 */
     const extractFieldValue = (el: Element, attribute?: string, type?: string): any => {
       let value: any;
@@ -47,7 +54,7 @@ const injectedExtractDispatcher = (
       } else if (attribute === 'href') {
         value = (el as HTMLAnchorElement).href || el.getAttribute('href') || '';
       } else if (attribute === 'src') {
-        value = (el as HTMLImageElement).src || el.getAttribute('src') || '';
+        value = el.tagName.toLowerCase() === 'img' ? imageSource(el as HTMLImageElement) : el.getAttribute('src') || '';
       } else if (attribute === 'value') {
         value = (el as HTMLInputElement).value || '';
       } else {
@@ -162,9 +169,7 @@ const injectedExtractDispatcher = (
           }
           if (hasImages) {
             const img = li.querySelector('img');
-            if (img) {
-              item.image = (img as HTMLImageElement).src || '';
-            }
+            if (img) item.image = imageSource(img as HTMLImageElement);
           }
           items.push(item);
         }
@@ -247,7 +252,7 @@ const injectedExtractDispatcher = (
           name: 'image',
           extractor: el => {
             const img = el.querySelector('img');
-            return img ? (img as HTMLImageElement).src : '';
+            return img ? imageSource(img as HTMLImageElement) : '';
           },
         });
       }
@@ -506,7 +511,9 @@ export const extractDataFunction: FunctionDefinition = {
     context?: ToolExecutionContext,
   ): Promise<FunctionResult> => {
     const { mode, scope, schema, buffer_id, tab_id } = params;
-    const maxItems = Math.min(Math.max(params.max_items || 100, 1), 500);
+    const requestedItems = params.max_items;
+    const maxItems = requestedItems === undefined || Number.isNaN(requestedItems)
+      ? 100 : Math.min(Math.max(Math.floor(requestedItems), 1), 500);
 
     // 确定目标 tabId（优先级：params.tab_id > context.tabId > 当前活动标签页）
     let tabId: number;
@@ -551,7 +558,7 @@ export const extractDataFunction: FunctionDefinition = {
             appended_count: appendResult.appended,
             total_count: appendResult.total,
             fields: result.data.fields,
-            sample: result.data.items.slice(0, 3),
+            sample: result.data.items.slice(0, Math.min(3, appendResult.appended)),
           },
         };
       }

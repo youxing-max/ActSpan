@@ -78,6 +78,7 @@ export const pageViewerFunction: FunctionDefinition = {
         signal: context?.signal,
         deadlineMs: 12000,
         timeoutMessage: 'Timed out waiting for page content parsing',
+        frameId: 0,
       });
 
       if (!response || !response.success) {

@@ -11,7 +11,7 @@
 
 import type { FunctionDefinition, FunctionResult, ToolExecutionContext } from './types';
 import Channel from '../lib/channel';
-
+import { DEFAULT_USER_WAIT_TIMEOUT_MS, createDeadlineSignal, isTimeoutError } from '../ai/deadline';
 let requestCounter = 0;
 
 export const requestConfirmationFunction: FunctionDefinition = {
@@ -48,50 +48,57 @@ export const requestConfirmationFunction: FunctionDefinition = {
     // 阻塞等待用户响应
     return new Promise<FunctionResult>((resolve) => {
       let settled = false;
+      const deadline = createDeadlineSignal(signal, DEFAULT_USER_WAIT_TIMEOUT_MS, 'request_confirmation waiting for a response');
 
       const cleanup = () => {
+        if (settled) return;
         settled = true;
         Channel.off('__approval_response', handler);
-        signal?.removeEventListener('abort', onAbort);
+        deadline.signal.removeEventListener('abort', onAbort);
+        deadline.cleanup();
       };
 
       // 监听用户响应（匹配 requestId）
-      const handler = (data: any) => {
-        if (settled || data?.requestId !== requestId) return;
+      const handler = (data: unknown) => {
+        if (!data || typeof data !== 'object') return;
+        const response = data as { requestId?: unknown; approved?: unknown; userMessage?: unknown; trustAll?: unknown };
+        if (settled || response.requestId !== requestId) return;
         cleanup();
-        // 广播给所有标签页，同步更新卡片状态
         Channel.broadcast('__approval_settled', {
           requestId,
-          approved: !!data.approved,
-          userMessage: data.userMessage || '',
-          trustAll: !!data.trustAll,
+          approved: !!response.approved,
+          userMessage: response.userMessage || '',
+          trustAll: !!response.trustAll,
         });
         resolve({
           success: true,
           data: {
-            approved: !!data.approved,
-            userMessage: data.userMessage || undefined,
-            trustAll: !!data.trustAll,
+            approved: !!response.approved,
+            userMessage: response.userMessage || undefined,
+            trustAll: !!response.trustAll,
           },
         });
       };
 
-      // abort 时清理并通知悬浮球取消
+      // 主动取消或 deadline 到期时清理并通知悬浮球。
+      // 调用方用 DeadlineTimeoutError 中止（例如 bridge 的审批等待上限）同样是超时，不能退化成“已取消”。
       const onAbort = () => {
         if (settled) return;
+        const reason = deadline.signal.reason;
+        const timedOut = deadline.didTimeout() || isTimeoutError(reason);
         cleanup();
         Channel.broadcast('__approval_cancel', { requestId });
-        resolve({ success: false, error: 'Task cancelled' });
+        resolve({ success: false, error: timedOut
+          ? (isTimeoutError(reason) ? reason.message : deadline.timeoutError.message)
+          : 'Task cancelled' });
       };
 
       Channel.on('__approval_response', handler);
 
-      if (signal) {
-        if (signal.aborted) {
-          onAbort();
-          return;
-        }
-        signal.addEventListener('abort', onAbort, { once: true });
+      if (deadline.signal.aborted) {
+        onAbort();
+      } else {
+        deadline.signal.addEventListener('abort', onAbort, { once: true });
       }
     });
   },

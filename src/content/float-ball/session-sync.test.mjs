@@ -13,9 +13,7 @@ const bundle = await build({
   format: 'esm',
   platform: 'node',
 });
-const { reconcileSessionSyncTask } = await import(
-  `data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].contents).toString('base64')}`,
-);
+const { reconcileSessionSyncTask } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].contents).toString('base64')}`);
 
 const task = (overrides = {}) => ({
   id: 'session-1',

@@ -36,7 +36,7 @@ export async function runResidentAIResponse(
             prompt,
             (event) => {
                 if (event.type === 'text') reply = event.content;
-                if (event.type === 'done' || event.type === 'turn_completed') {
+                if (event.type === 'turn_completed') {
                     safeResolve({ success: true, data: { reply, prompt } });
                 }
                 if (event.type === 'error' || event.type === 'turn_aborted') {

@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh">
+<head><meta charset="utf-8"><title>ActSpan 验收靶场</title></head>
+<body>
+<!-- 6: page.click 必须回 changed，且回执印出实际命中的元素 -->
+<button id="plain" onclick="this.textContent='clicked'">plain-button</button>
+
+<!-- 7: SVG 图标按钮：无 click() 方法，必须派发合成 click -->
+<a id="svg-link" href="#done"><svg width="12" height="12"><circle cx="6" cy="6" r="5"/></svg></a>
+<div id="svg-out"></div>
+
+<!-- 8: 只监听 mousedown 的自定义下拉 -->
+<div id="dropdown" style="cursor:pointer">dropdown-trigger</div>
+<div id="dropdown-list" hidden>dropdown-items</div>
+
+<!-- 5: 凭据页：读回不得出现明文 -->
+<input type="password" id="secret" value="hunter2secret">
+
+<!-- 4: 敏感表单：eval 不得触发提交 -->
+<form id="sensitive-form" onsubmit="window.__submitted=1;return false">
+  <input name="password" id="pw">
+  <button type="submit">submit-account</button>
+</form>
+
+<!-- 9: 跨源 iframe —— 与 playground 同法：换主机名而不换端口即可制造跨源 -->
+<iframe id="cross" src="frame-inner.html"></iframe>
+
+<script>
+  document.getElementById('svg-link').addEventListener('click', () => {
+    document.getElementById('svg-out').textContent = 'svg-hit';
+  });
+  document.getElementById('dropdown').addEventListener('mousedown', () => {
+    document.getElementById('dropdown-list').hidden = false;
+  });
+  const cross = document.getElementById('cross');
+  const frameUrl = new URL('frame-inner.html', location.href);
+  frameUrl.hostname = location.hostname === 'localhost' ? '127.0.0.1' : 'localhost';
+  cross.src = frameUrl.href;
+</script>
+</body>
+</html>

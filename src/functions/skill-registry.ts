@@ -25,7 +25,7 @@ const hasChromeStorage = (): boolean =>
 const storageGet = async (key: string): Promise<unknown> => {
   if (!hasChromeStorage()) return undefined;
   const result = await new Promise<Record<string, unknown>>(resolve => {
-    chrome.storage.local.get(key, resolve);
+    chrome.storage.local.get<Record<string, unknown>>(key, resolve);
   });
   return result[key];
 };

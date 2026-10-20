@@ -1,32 +1,33 @@
-/**
- * 工具分层配置
- *
- * always-on 工具：每次对话始终注入 LLM
- * on-demand 工具：通过 load_tools 元工具按需加载
- */
+const TOOL_LAYERS = {
+  dom_actions: {
+    label: 'DOM actions',
+    description: 'To interact with a page, use skill/page/cdp_input; do not scrape large data by repeated clicks.',
+    tools: ['skill', 'page', 'cdp_input', 'cdp_dom', 'cdp_frame', 'cdp_dialog', 'tab_navigate'],
+  },
+  network_data: {
+    label: 'Network data',
+    description: 'For data rather than an action, prefer cdp_network/fetch_url and extract_data; use data_pipeline for exports, not screenshots.',
+    tools: ['cdp_network', 'fetch_url', 'extract_data', 'data_pipeline', 'download_file'],
+  },
+  pixel_fallback: {
+    label: 'Pixel fallback',
+    description: 'When DOM and network cannot expose the target, use screenshot; do not start with pixels for structured data.',
+    tools: ['screenshot', 'cdp_emulation', 'cdp_debug'],
+  },
+  sessions_meta: {
+    label: 'Sessions and meta',
+    description: 'For independent work, ask the user, notifications, storage or Webhook push to Feishu/Lark/Bark/Slack/Discord/WeCom; do not use page reading to configure a push.',
+    tools: ['agent', 'ask_user', 'request_confirmation', 'webhook', 'notification', 'clipboard_ops', 'bookmark_ops', 'history_search', 'storage_kv', 'timer', 'resident_runtime', 'selection_context', 'save_workflow', 'load_tools', 'todo', 'compact', 'status', 'adopt', 'site_experience'],
+  },
+};
 
-/** always-on 工具名集合（始终注入） */
-export const ALWAYS_ON_TOOLS: ReadonlySet<string> = new Set([
-  'page',                  // 页面读取（合并后的统一工具）
-  'cdp_input',             // 页面交互
-  'tab_navigate',          // 标签页控制
-  'screenshot',            // 截图
-  'extract_data',          // 数据提取
-  'data_pipeline',         // 数据管道
-  'skill',                 // Skill 工作流
-  'ask_user',              // 向用户提问
-  'request_confirmation',  // 用户确认
-  'save_workflow',         // 保存工作流
-  'fetch_url',             // 远程获取网页
-  'selection_context',     // 选中文本
-]);
-
-/** on-demand 工具分类映射 */
+/** Semantic tool layers; legacy load_tools category names remain valid for older callers. */
 export const ON_DEMAND_CATEGORIES: Record<string, {
   label: string;
   description: string;
   tools: string[];
 }> = {
+  ...TOOL_LAYERS,
   cdp_advanced: {
     label: 'CDP Advanced Tools',
     description: 'DOM manipulation, JS execution, network monitoring, device emulation, dialog handling, debugging tools',
@@ -34,7 +35,7 @@ export const ON_DEMAND_CATEGORIES: Record<string, {
   },
   browser_utils: {
     label: 'Browser Utilities',
-    description: 'Clipboard, notifications, bookmark management, history search, file download',
+    description: 'Clipboard, notifications, Webhook push to Feishu/Lark/Bark/Slack/Discord/WeCom, bookmarks, history, downloads',
     tools: ['clipboard_ops', 'notification', 'webhook', 'bookmark_ops', 'history_search', 'download_file'],
   },
   data_storage: {
@@ -49,21 +50,20 @@ export const ON_DEMAND_CATEGORIES: Record<string, {
   },
 };
 
-/** 根据分类名获取工具名列表（去重） */
+/** Resolve a tool category. Tools are already resident in new conversations. */
 export const getToolsByCategory = (category: string): string[] => {
   return ON_DEMAND_CATEGORIES[category]?.tools || [];
 };
 
-/** 构建按需工具目录文本（用于系统提示词） */
-export const buildOnDemandCatalog = (): string => {
-  const lines: string[] = [
-    '\n## On-Demand Tools',
-    'The following tools are not in the default toolset. Load the corresponding category via load_tools when needed:\n',
-    '| Category | Description | How to Load |',
-    '|----------|-------------|-------------|',
-  ];
-  for (const [key, cat] of Object.entries(ON_DEMAND_CATEGORIES)) {
-    lines.push(`| ${cat.label} | ${cat.description} | load_tools(category="${key}") |`);
-  }
-  return lines.join('\n');
+/** Compact orientation only; full schemas remain the source of tool arguments. */
+export const buildToolCatalog = (availableNames?: readonly string[]): string => {
+  const available = availableNames ? new Set(availableNames) : null;
+  const rows = Object.values(TOOL_LAYERS).map(({ label, description, tools }) => {
+    const listed = tools.filter(name => !available || available.has(name));
+    return `| ${label} | ${listed.join(', ')} | ${description} |`;
+  });
+  return ['\n## Resident Tool Catalog', 'Tool schemas are already available; load_tools is a legacy compatibility command, not a prerequisite.',
+    '| Layer | Tools | When to use / avoid |', '|-------|-------|---------------------|', ...rows,
+    ...(available?.has('agent') || !available ? ['The unified agent tool handles subtask; spawn_subtask is its legacy alias, not a separate schema.'] : []),
+  ].join('\n');
 };

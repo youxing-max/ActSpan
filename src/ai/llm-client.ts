@@ -7,6 +7,7 @@
 import { AI_CONFIG } from '../config';
 import { readMigratedStorage } from '../lib/legacy-storage';
 import type { InputItem, OutputItem, ToolSchema, StreamChunk, AISettings, ToolChoice } from './types';
+import { DEFAULT_LLM_IDLE_TIMEOUT_MS, DEFAULT_LLM_TOTAL_TIMEOUT_MS, createDeadlineSignal } from './deadline';
 
 export const STORAGE_KEY_AI_SETTINGS = 'actspan_ai_settings';
 export const LEGACY_STORAGE_KEY_AI_SETTINGS = 'mole_ai_settings';
@@ -116,36 +117,40 @@ export const chatComplete = async (
     }
   }
 
-  const res = await fetch(settings.endpoint, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${settings.apiKey}`,
-      'User-Agent': 'claude-code/1.0.0',
-    },
-    body: JSON.stringify(body),
-    signal,
-  });
+  const deadline = createDeadlineSignal(signal, DEFAULT_LLM_TOTAL_TIMEOUT_MS, 'LLM request exceeded its total deadline');
+  try {
+    const res = await fetch(settings.endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${settings.apiKey}`,
+        'User-Agent': 'claude-code/1.0.0',
+      },
+      body: JSON.stringify(body),
+      signal: deadline.signal,
+    });
 
-  if (!res.ok) {
-    // 401/403 视为 API Key 无效
-    if (res.status === 401 || res.status === 403) {
-      throw new Error('API Key 无效或已过期，请检查配置。');
+    if (!res.ok) {
+      if (res.status === 401 || res.status === 403) {
+        throw new Error('API Key 无效或已过期，请检查配置。');
+      }
+      const text = await res.text();
+      throw new Error(`LLM API 错误 (${res.status}): ${text}`);
     }
-    const text = await res.text();
-    throw new Error(`LLM API 错误 (${res.status}): ${text}`);
+
+    const json = await res.json();
+    if (!json.output) throw new Error('LLM 返回格式异常：无 output');
+
+    return {
+      output: json.output as OutputItem[],
+      status: json.status || 'completed',
+    };
+  } catch (error) {
+    if (deadline.didTimeout()) throw deadline.timeoutError;
+    throw error;
+  } finally {
+    deadline.cleanup();
   }
-
-  const json = await res.json();
-
-  if (!json.output) {
-    throw new Error('LLM 返回格式异常：无 output');
-  }
-
-  return {
-    output: json.output as OutputItem[],
-    status: json.status || 'completed',
-  };
 };
 
 /**
@@ -191,78 +196,107 @@ export async function* chatStream(
     }
   }
 
-  const res = await fetch(settings.endpoint, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${settings.apiKey}`,
-      'User-Agent': 'claude-code/1.0.0',
-    },
-    body: JSON.stringify(body),
-    signal,
-  });
-
-  if (!res.ok) {
-    // 401/403 视为 API Key 无效
-    if (res.status === 401 || res.status === 403) {
-      throw new Error('API Key 无效或已过期，请检查配置。');
-    }
-    const text = await res.text();
-    throw new Error(`LLM API 错误 (${res.status}): ${text}`);
-  }
-
-  const reader = res.body?.getReader();
-  if (!reader) {
-    throw new Error('无法读取流式响应');
-  }
-
-  const decoder = new TextDecoder();
-  let buffer = '';
-
+  const deadline = createDeadlineSignal(signal, DEFAULT_LLM_TOTAL_TIMEOUT_MS, 'LLM stream exceeded its total deadline');
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
   try {
+    const res = await fetch(settings.endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${settings.apiKey}`,
+        'User-Agent': 'claude-code/1.0.0',
+      },
+      body: JSON.stringify(body),
+      signal: deadline.signal,
+    });
+
+    if (!res.ok) {
+      if (res.status === 401 || res.status === 403) {
+        throw new Error('API Key 无效或已过期，请检查配置。');
+      }
+      const text = await res.text();
+      throw new Error(`LLM API 错误 (${res.status}): ${text}`);
+    }
+
+    reader = res.body?.getReader();
+    if (!reader) throw new Error('无法读取流式响应');
+
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let unrecognizedEventCount = 0;
+    const terminalChunk = (done = true) => ({
+      done,
+      unrecognizedEventCount,
+    } as StreamChunk & { unrecognizedEventCount: number });
     while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+      const idle = createDeadlineSignal(deadline.signal, DEFAULT_LLM_IDLE_TIMEOUT_MS, 'LLM stream received no data before its idle deadline');
+      let onAbort: (() => void) | undefined;
+      try {
+        const readPromise = reader.read();
+        const abortPromise = new Promise<never>((_, reject) => {
+          onAbort = () => {
+            const reason = idle.didTimeout() ? idle.timeoutError : idle.signal.reason;
+            reject(reason);
+            void reader?.cancel(reason);
+          };
+          if (idle.signal.aborted) onAbort();
+          else idle.signal.addEventListener('abort', onAbort, { once: true });
+        });
+        const { done, value } = await Promise.race([readPromise, abortPromise]);
+        if (done) break;
 
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      // 保留最后一个可能不完整的行
-      buffer = lines.pop() || '';
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
 
-      for (const line of lines) {
-        const trimmed = line.trim();
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed || trimmed.startsWith('event:')) continue;
+          if (!trimmed.startsWith('data: ')) continue;
 
-        // 跳过空行和 event: 行（SSE 格式中 event: 行只是标记，数据在 data: 行）
-        if (!trimmed || trimmed.startsWith('event:')) continue;
-        if (!trimmed.startsWith('data: ')) continue;
-
-        const data = trimmed.slice(6);
-        if (data === '[DONE]') return;
-
-        try {
-          const json = JSON.parse(data);
-
-          // 处理文本增量事件
-          if (json.type === 'response.output_text.delta' && json.delta) {
-            yield { delta: json.delta };
-          }
-
-          // 处理输出项完成事件（包含完整的 message 或 function_call 项）
-          if (json.type === 'response.output_item.done' && json.item) {
-            yield { outputItem: json.item as OutputItem };
-          }
-
-          // 处理完成事件
-          if (json.type === 'response.completed' || json.type === 'response.done') {
-            yield { done: true };
+          const data = trimmed.slice(6);
+          if (data === '[DONE]') {
+            yield terminalChunk();
             return;
           }
-        } catch {
-          // 忽略解析错误的行
+
+          try {
+            const json = JSON.parse(data);
+            let recognized = false;
+            if (json.type === 'response.output_text.delta' && typeof json.delta === 'string') {
+              recognized = true;
+              yield { delta: json.delta };
+            }
+            if (json.type === 'response.output_item.done' && json.item) {
+              recognized = true;
+              yield { outputItem: json.item as OutputItem };
+            }
+            if (json.type === 'response.completed' || json.type === 'response.done') {
+              recognized = true;
+              yield { ...terminalChunk(), done: true };
+              return;
+            }
+            const content = json.choices?.[0]?.delta?.content;
+            if (typeof content === 'string') {
+              recognized = true;
+              yield { delta: content };
+            }
+            if (!recognized) unrecognizedEventCount++;
+          } catch {
+            unrecognizedEventCount++;
+          }
         }
+      } finally {
+        if (onAbort) idle.signal.removeEventListener('abort', onAbort);
+        idle.cleanup();
       }
     }
+    if (unrecognizedEventCount > 0) yield terminalChunk();
+  } catch (error) {
+    if (deadline.didTimeout()) throw deadline.timeoutError;
+    throw error;
   } finally {
-    reader.releaseLock();
+    reader?.releaseLock();
+    deadline.cleanup();
   }
 }

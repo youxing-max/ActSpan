@@ -6,6 +6,7 @@
 import { TimerStore } from '../lib/timer-store';
 import { TimerScheduler } from '../lib/timer-scheduler';
 import { TIMER_ALARM_PREFIX } from '../functions/timer';
+import { isPlainObject } from '../lib/guards';
 import type { RuntimeResourceKind, RuntimeResourceEntry } from './session-types';
 import { getActiveTurnRuntime } from './session-state';
 
@@ -114,7 +115,7 @@ export const RuntimeResourceManager = {
 
     parseEvent(payload: Record<string, unknown>): RuntimeResourceEventPayload | null {
         const resource = payload?.resource;
-        if (!resource || typeof resource !== 'object') return null;
+        if (!isPlainObject(resource)) return null;
         if (resource.kind !== 'timer') return null;
         const action = resource.action === 'closed' ? 'closed' : resource.action === 'opened' ? 'opened' : null;
         if (!action) return null;

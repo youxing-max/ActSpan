@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <!-- Nonced fixture code runs; inline handlers, injected scripts and eval are refused. No external resources. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-fixture-only'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+  <title>CSP Fixture</title>
+</head>
+<body>
+  <h1>CSP-restricted fixture</h1>
+  <button id="data-csp-probe" data-csp-probe type="button">Run permitted handler</button>
+  <button id="csp-inline-blocked" type="button" onclick="document.getElementById('csp-inline-result').textContent = 'Inline handler ran'">Try blocked inline handler</button>
+  <p id="csp-result" role="status">Handler idle</p>
+  <p id="csp-inline-result" role="status">Inline handler blocked</p>
+  <pre id="csp-event-log" aria-live="polite"></pre>
+  <script nonce="fixture-only">
+    // #csp-result and #csp-event-log prove real event delivery even though arbitrary inline JS is blocked.
+    document.getElementById('data-csp-probe').addEventListener('click', () => {
+      document.getElementById('csp-result').textContent = 'Permitted handler completed';
+      document.getElementById('csp-event-log').textContent += 'data-csp-probe:click\n';
+    });
+  </script>
+</body>
+</html>

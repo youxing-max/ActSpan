@@ -4,7 +4,6 @@
  * 对齐 Claude Code 的 AgentDefinition + AgentTool 设计
  */
 
-import type { InputItem } from './types';
 import type { LoopBudget } from './orchestrator';
 
 // ============ 类型定义 ============

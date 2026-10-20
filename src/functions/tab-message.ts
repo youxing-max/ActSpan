@@ -10,6 +10,8 @@ interface SendToTabOptions {
   deadlineMs?: number;
   injectContentScript?: boolean;
   timeoutMessage?: string;
+  /** 指定时只投递到该 frame；省略时按 Chrome 默认行为投递 */
+  frameId?: number;
 }
 
 const isRetryableConnectionError = (message: string): boolean => {
@@ -26,8 +28,9 @@ const injectContentScriptIfPossible = async (tabId: number): Promise<boolean> =>
     if (!/^https?:\/\//i.test(targetUrl)) {
       return false;
     }
+    // G5：跨源 iframe 也要有 content script，否则子框架 ref 无法解析
     await chrome.scripting.executeScript({
-      target: { tabId },
+      target: { tabId, allFrames: true },
       files: ['content.js'],
     });
     return true;
@@ -46,6 +49,7 @@ export const sendToTabWithRetry = async <T = any>(
   const timeoutMessage = options?.timeoutMessage || '目标页面连接超时：content script 未就绪';
   const injectContentScript = options?.injectContentScript !== false;
   const signal = options?.signal;
+  const frameId = options?.frameId;
 
   return new Promise<T>((resolve, reject) => {
     if (signal?.aborted) {
@@ -70,13 +74,13 @@ export const sendToTabWithRetry = async <T = any>(
 
     const sendOnce = (): Promise<T> => {
       return new Promise((resolveSend, rejectSend) => {
-        Channel.sendToTab(tabId, type, data, (response: any) => {
+        Channel.sendToTab(tabId, type, data, (response: unknown) => {
           if (chrome.runtime.lastError) {
             rejectSend(new Error(chrome.runtime.lastError.message || '发送消息失败'));
             return;
           }
           resolveSend(response as T);
-        });
+        }, frameId);
       });
     };
 

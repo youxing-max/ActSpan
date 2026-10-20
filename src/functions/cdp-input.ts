@@ -62,6 +62,7 @@ const resolveElementRect = async (
   tabId: number,
   elementId: string,
   signal?: AbortSignal,
+  snapshotId?: string,
 ): Promise<{ success: true; cx: number; cy: number } | { success: false; error: string }> => {
   try {
     const response = await sendToTabWithRetry<{
@@ -71,7 +72,7 @@ const resolveElementRect = async (
     }>(
       tabId,
       '__get_element_rect',
-      { element_id: elementId },
+      { element_id: elementId, snapshot_id: snapshotId },
       { signal, deadlineMs: 5000, timeoutMessage: '查询元素坐标超时' },
     );
     if (!response?.success || !response.rect) {
@@ -91,11 +92,11 @@ const resolveElementRect = async (
 /** 解析目标坐标（element_id 优先，否则用直接坐标） */
 const resolveTargetCoords = async (
   tabId: number,
-  params: { element_id?: string; x?: number; y?: number },
+  params: { element_id?: string; snapshot_id?: string; x?: number; y?: number },
   signal?: AbortSignal,
 ): Promise<{ success: true; x: number; y: number } | { success: false; error: string }> => {
   if (params.element_id) {
-    const result = await resolveElementRect(tabId, params.element_id, signal);
+    const result = await resolveElementRect(tabId, params.element_id, signal, params.snapshot_id);
     if (!result.success) return result;
     return { success: true, x: result.cx, y: result.cy };
   }
@@ -112,7 +113,7 @@ const resolveTargetCoords = async (
  */
 const evaluateOnElement = async (
   tabId: number,
-  params: { element_id?: string; selector?: string },
+  params: { element_id?: string; snapshot_id?: string; selector?: string },
   jsTemplate: string,
   signal?: AbortSignal,
 ): Promise<FunctionResult> => {
@@ -130,7 +131,7 @@ const evaluateOnElement = async (
     })()`;
   } else if (params.element_id) {
     // element_id 模式：先获取坐标，再用 elementFromPoint
-    const rect = await resolveElementRect(tabId, params.element_id, signal);
+    const rect = await resolveElementRect(tabId, params.element_id, signal, params.snapshot_id);
     if (!rect.success) return { success: false, error: rect.error };
     expression = `(function() {
       const __el__ = document.elementFromPoint(${rect.cx}, ${rect.cy});
@@ -320,6 +321,44 @@ const performType = async (
   };
 };
 
+// ============ A1/A2：MCP 桥的真实事件升级通道 ============
+
+/**
+ * 合成事件没有产生可观察效果时，桥用真实事件在命中元素中心重放一次。
+ * 坐标由内容脚本解析（ref/find/selector 都在页面里解析），这里只负责派发，
+ * 因此升级路径与 cdp_input 工具共用同一套 CDP 事件序列。
+ */
+export const realClickAt = async (
+  tabId: number,
+  x: number,
+  y: number,
+  signal?: AbortSignal,
+): Promise<{ success: boolean; error?: string }> => {
+  const result = await performClick(tabId, x, y, 'left', 1, signal);
+  return result.success ? { success: true } : { success: false, error: result.error };
+};
+
+/** 真实按键输入：先 Ctrl+A 全选，再逐字符输入，避免向已有内容追加。 */
+export const realTypeInto = async (
+  tabId: number,
+  text: string,
+  signal?: AbortSignal,
+): Promise<{ success: boolean; error?: string }> => {
+  const selected = await performKeyPress(tabId, 'a', 2);
+  if (!selected.success) return { success: false, error: selected.error };
+  const typed = await performType(tabId, text, 0, signal);
+  return typed.success ? { success: true } : { success: false, error: typed.error };
+};
+
+/** 真实按键：提交语义下在真实输入之后补一次 Enter。 */
+export const realPressKey = async (
+  tabId: number,
+  key: string,
+): Promise<{ success: boolean; error?: string }> => {
+  const pressed = await performKeyPress(tabId, key, 0);
+  return pressed.success ? { success: true } : { success: false, error: pressed.error };
+};
+
 /** 按键（功能键 / 组合键） */
 const performKeyPress = async (
   tabId: number,
@@ -415,7 +454,7 @@ const performScrollJS = async (
 /** 填写表单元素值（setNativeInputValue 方式，兼容 React 受控组件） */
 const performFill = async (
   tabId: number,
-  params: { element_id?: string; selector?: string; value: string },
+  params: { element_id?: string; snapshot_id?: string; selector?: string; value: string },
   signal?: AbortSignal,
 ): Promise<FunctionResult> => {
   const value = params.value;
@@ -456,7 +495,7 @@ const performFill = async (
 /** 清空表单元素值 */
 const performClear = async (
   tabId: number,
-  params: { element_id?: string; selector?: string },
+  params: { element_id?: string; snapshot_id?: string; selector?: string },
   signal?: AbortSignal,
 ): Promise<FunctionResult> => {
   const jsTemplate = `
@@ -499,7 +538,7 @@ const performClear = async (
 /** 选择下拉选项 */
 const performSelect = async (
   tabId: number,
-  params: { element_id?: string; selector?: string; value: string },
+  params: { element_id?: string; snapshot_id?: string; selector?: string; value: string },
   signal?: AbortSignal,
 ): Promise<FunctionResult> => {
   const valueJson = JSON.stringify(params.value);
@@ -619,7 +658,7 @@ const performClickText = async (
 /** 滚动元素到可视区域 */
 const performScrollIntoView = async (
   tabId: number,
-  params: { element_id?: string; selector?: string },
+  params: { element_id?: string; snapshot_id?: string; selector?: string },
   signal?: AbortSignal,
 ): Promise<FunctionResult> => {
   const jsTemplate = `
@@ -636,7 +675,7 @@ const performScrollIntoView = async (
 /** 聚焦元素 */
 const performFocus = async (
   tabId: number,
-  params: { element_id?: string; selector?: string },
+  params: { element_id?: string; snapshot_id?: string; selector?: string },
   signal?: AbortSignal,
 ): Promise<FunctionResult> => {
   const jsTemplate = `
@@ -920,7 +959,7 @@ const waitForTabNavigationStable = async (
 /** 获取元素信息 */
 const performGetInfo = async (
   tabId: number,
-  params: { element_id?: string; selector?: string },
+  params: { element_id?: string; snapshot_id?: string; selector?: string },
   signal?: AbortSignal,
 ): Promise<FunctionResult> => {
   const jsTemplate = `
@@ -994,6 +1033,10 @@ export const cdpInputFunction: FunctionDefinition = {
       element_id: {
         type: 'string',
         description: 'Element handle returned by page_snapshot. Used to locate the target element, takes priority over selector and x/y coordinates',
+      },
+      snapshot_id: {
+        type: 'string',
+        description: 'Snapshot id returned by page_snapshot; required with element_id to reject stale handles.',
       },
       selector: {
         type: 'string',
@@ -1097,6 +1140,7 @@ export const cdpInputFunction: FunctionDefinition = {
   validate: (params: {
     action?: string;
     element_id?: string;
+    snapshot_id?: string;
     selector?: string;
     x?: number;
     y?: number;
@@ -1108,6 +1152,12 @@ export const cdpInputFunction: FunctionDefinition = {
     direction?: string;
     scroll_to?: string;
   }) => {
+    if (params.element_id && params.selector) {
+      return 'element_id and selector are mutually exclusive; provide only one locator';
+    }
+    if (params.element_id && (typeof params.x === 'number' || typeof params.y === 'number')) {
+      return 'element_id and coordinates are mutually exclusive; provide only one target mode';
+    }
     if (!params?.action) return 'Missing action parameter';
 
     // 需要坐标的原始鼠标操作（不包含 scroll，scroll 有多种模式）
@@ -1175,6 +1225,7 @@ export const cdpInputFunction: FunctionDefinition = {
     params: {
       action: string;
       element_id?: string;
+      snapshot_id?: string;
       selector?: string;
       x?: number;
       y?: number;
@@ -1217,11 +1268,17 @@ export const cdpInputFunction: FunctionDefinition = {
     }
 
     // wait_navigation 不需要 CDP debugger（使用 chrome.tabs.onUpdated）
-    // 其他操作需要检查 CDP 可用性
-    if (params.action !== 'wait_navigation') {
-      if (!CDPSessionManager.isSupported()) {
-        return { success: false, error: 'chrome.debugger API 不可用' };
-      }
+    // 其他操作需要 L2；不要在此静默重试或伪造可信事件
+    if (params.action !== 'wait_navigation' && !CDPSessionManager.isSupported()) {
+      return {
+        success: false,
+        error: 'NEEDS_L2：需要启用高保真调试器权限，请点开扩展图标启用高保真模式',
+        diagnostic: {
+          action: params.action,
+          observed: 'chrome.debugger API 不可用',
+          next: '请点开扩展图标启用高保真模式；若操作可由普通页面工具完成，请降级到 L1。',
+        },
+      };
     }
 
     const signal = context?.signal;
@@ -1275,15 +1332,15 @@ export const cdpInputFunction: FunctionDefinition = {
       }
 
       case 'fill': {
-        return performFill(tabId, { element_id: params.element_id, selector: params.selector, value: params.value! }, signal);
+        return performFill(tabId, { element_id: params.element_id, snapshot_id: params.snapshot_id, selector: params.selector, value: params.value! }, signal);
       }
 
       case 'clear': {
-        return performClear(tabId, { element_id: params.element_id, selector: params.selector }, signal);
+        return performClear(tabId, { element_id: params.element_id, snapshot_id: params.snapshot_id, selector: params.selector }, signal);
       }
 
       case 'select': {
-        return performSelect(tabId, { element_id: params.element_id, selector: params.selector, value: params.value! }, signal);
+        return performSelect(tabId, { element_id: params.element_id, snapshot_id: params.snapshot_id, selector: params.selector, value: params.value! }, signal);
       }
 
       case 'click_text': {
@@ -1291,11 +1348,11 @@ export const cdpInputFunction: FunctionDefinition = {
       }
 
       case 'scroll_into_view': {
-        return performScrollIntoView(tabId, { element_id: params.element_id, selector: params.selector }, signal);
+        return performScrollIntoView(tabId, { element_id: params.element_id, snapshot_id: params.snapshot_id, selector: params.selector }, signal);
       }
 
       case 'focus': {
-        return performFocus(tabId, { element_id: params.element_id, selector: params.selector }, signal);
+        return performFocus(tabId, { element_id: params.element_id, snapshot_id: params.snapshot_id, selector: params.selector }, signal);
       }
 
       case 'wait_for_element': {
@@ -1326,7 +1383,7 @@ export const cdpInputFunction: FunctionDefinition = {
       }
 
       case 'get_info': {
-        return performGetInfo(tabId, { element_id: params.element_id, selector: params.selector }, signal);
+        return performGetInfo(tabId, { element_id: params.element_id, snapshot_id: params.snapshot_id, selector: params.selector }, signal);
       }
 
       default:

@@ -5,11 +5,13 @@ import { fileURLToPath } from 'node:url';
 import WebSocket from 'ws';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { TOOL_NAMES } from '../catalog.js';
+import { extensionIdFromKey } from '../install.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const home = mkdtempSync(path.join(os.tmpdir(), 'actspan-e2e-'));
 const port = Number(process.env.ACTSPAN_E2E_PORT || 31921);
-const extensionId = 'afadkcbnpkhbofmbmlhjcppegjhkckdi';
+const extensionId = extensionIdFromKey();
 const url = `ws://127.0.0.1:${port}`;
 let failures = 0;
 const check = (name, condition, extra = '') => {
@@ -39,7 +41,7 @@ function handshake(frames, match) {
 
 const transport = new StdioClientTransport({
     command: process.execPath,
-    args: [path.join(here, '..', 'index.js')],
+    args: [path.join(here, '..', 'index.js'), '--client', 'claude-desktop'],
     cwd: path.join(here, '..'),
     env: {
         ...getDefaultEnvironment(),
@@ -55,12 +57,18 @@ await client.connect(transport);
 await wait(100);
 
 const tools = await client.listTools();
-check('MCP tools/list has only stable Actspan names', tools.tools.length === 18 && tools.tools.every(tool => tool.name.startsWith('actspan_')));
+check('MCP tools/list matches the fixed Actspan catalog',
+    tools.tools.length === TOOL_NAMES.length && TOOL_NAMES.every(name => tools.tools.some(tool => tool.name === name)));
 const call = (name, args = {}) => client.callTool({ name, arguments: args });
 const statusText = async () => (await call('actspan_status')).content[0].text;
 const before = JSON.parse(await statusText());
 check('unpaired status reports connected=false', before.connected === false);
+check('unpaired status reports loop_mode=disabled with pairing satisfied', before.loop_mode === 'disabled' && before.pairing_required === false);
 check('Bridge is listening', before.hub_listening === true, `port=${before.port}`);
+check('MCP host identity uses initialize clientInfo.name', before.host?.slug === 'actspan-e2e' && before.host?.source === 'self');
+check('status exposes the K3 quota attribution slice for this host',
+    before.usage?.host === 'actspan-e2e' && Number.isSafeInteger(before.usage?.calls) && before.usage.calls >= 0
+    && typeof before.usage?.tools === 'object');
 
 const paired = await handshake({
     headers: { Origin: `chrome-extension://${extensionId}` },
@@ -76,11 +84,12 @@ check('paired extension authenticates', paired.frames.some(frame => frame.type =
 let revision = 1;
 let feishuRequest;
 let taskSubmitRequest;
+let pingRequest;
 socket.on('message', raw => {
     const message = JSON.parse(raw.toString());
     if (!message.id || !message.context) return;
     let result = { ok: true };
-    if (message.method === 'ping') result = { pong: true, version: 'e2e' };
+    if (message.method === 'ping') { pingRequest = message; result = { pong: true, version: 'e2e' }; }
     if (message.method === 'feishu.push') {
         feishuRequest = message;
         result = message.params.title === '失败'
@@ -99,7 +108,11 @@ socket.on('message', raw => {
     socket.send(JSON.stringify({ id: message.id, ...message.context, ok: true, result }));
 });
 await wait(100);
-check('status round trip succeeds', (await statusText()).includes('pong'));
+const pairedStatus = JSON.parse(await statusText());
+check('paired status reports loop_mode=enabled', pairedStatus.loop_mode === 'enabled' && pairedStatus.connected === true && pairedStatus.pairing_required === false);
+check('bridge label carries the self-reported host, not the wrong --client fallback',
+    pingRequest?.context?.onlineSessions?.some(session => session.label === 'actspan-e2e') === true
+    && pingRequest.context.onlineSessions.every(session => session.label !== 'claude-desktop'));
 const push = JSON.parse((await call('actspan_feishu_push', {
     title: '任务完成', message: '处理结果已生成', webhookName: '研发群',
 })).content[0].text);

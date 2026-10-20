@@ -54,11 +54,6 @@ const _createLogEntry = (type: LogType, txt: string, data?: any) => {
     // 使用新的 Storage 方法 异步，可能会出现顺序不正常情况，以时间为准
     Storage.addLog(logItem);
 
-    // 错误日志额外存储到独立的错误日志存储中，便于问题排查
-    if (type === 'ERROR') {
-        Storage.addErrorLog(logItem);
-    }
-
     // 上报到 background（汇总日志）
     reportToBackground(logItem);
 

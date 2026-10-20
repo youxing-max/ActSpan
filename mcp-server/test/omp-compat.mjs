@@ -20,7 +20,8 @@ assert.match(settingsPage, /AI_CONFIG\.DEFAULT_MODEL/);
 assert.doesNotMatch(settingsPage, /gpt-5\.4|gpt-5\.3-codex/);
 
 const bridge = read('mcp-server/bridge.js');
-assert.match(bridge, /import \{ randomUUID \} from 'node:crypto';/);
+// bridge.js 后来与 createHash 合并成一条 import，断言只关心 randomUUID 来自 node:crypto。
+assert.match(bridge, /import \{[^}]*\brandomUUID\b[^}]*\} from 'node:crypto';/);
 assert.match(bridge, /randomUUID\(\)/);
 
 console.log('PASS: OMP-compatible Actspan defaults and Node bridge startup contract');

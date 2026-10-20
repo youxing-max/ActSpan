@@ -4,7 +4,7 @@
  */
 
 import type { InputItem, OutputFunctionCallItem, AIStreamEvent, ToolSchema, MessageInputItem } from './types';
-import type { PermissionLevel } from '../functions/types';
+import type { PermissionLevel, ToolExecutionContext } from '../functions/types';
 import { mcpClient, getBuiltinFunction } from '../functions/registry';
 import { truncateToolResult, getTextContent } from './context-manager';
 import { requestConfirmationFunction } from '../functions/request-confirmation';
@@ -143,6 +143,7 @@ export const executeToolCalls = async (
   signal: AbortSignal | undefined,
   emit: (event: AIStreamEvent) => void,
   agentRunner?: AgentRunner,
+  executionContext?: Omit<ToolExecutionContext, 'tabId' | 'signal'>,
 ): Promise<InputItem[]> => {
   const results: InputItem[] = [];
 
@@ -268,7 +269,7 @@ export const executeToolCalls = async (
         const result = await mcpClient.callTool(
           call.name,
           params,
-          { tabId },
+          { ...executionContext, tabId },
           { signal },
         );
         const text = result.content?.[0]?.text || '{}';

@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Actspan Playground</title>
+  <style>
+    body { font: 16px system-ui, sans-serif; margin: 2rem; }
+    section { border: 1px solid #ccd; border-radius: 8px; margin: 1rem 0; padding: 1rem; }
+    section > * { margin: .5rem; }
+    svg { width: 24px; height: 24px; }
+    #event-log { white-space: pre-wrap; min-height: 2rem; }
+    #scroll-box { height: 80px; overflow: auto; border: 1px solid #777; }
+    #scroll-content { height: 400px; }
+    #drop-zone { padding: 1rem; border: 2px dashed #777; }
+    #drop-zone.dragging { border-color: blue; }
+  </style>
+</head>
+<body>
+  <h1>Grounding playground</h1>
+  <!-- All outputs are text/DOM-only. #event-log is append-only "id:event" lines; #clear-log resets it. No requests leave this page. -->
+  <section id="form-section" aria-label="Registration">
+    <label>Email <input id="email" data-testid="email" name="email" type="email" placeholder="you@example.test"></label>
+    <label>Secret <input id="password" name="password" type="password" autocomplete="off"></label>
+    <button id="submit" type="button">Validate email after delay</button>
+    <button id="disabled" type="button" disabled>Disabled action</button>
+    <p id="form-result" role="status">Not submitted</p>
+    <p id="disabled-result" role="status">Disabled action untouched</p>
+  </section>
+  <!-- Only mousedown opens #menu-panel: a click-only implementation will not work. -->
+  <section aria-label="mousedown menu">
+    <button id="mousedown-menu" type="button" aria-expanded="false" aria-controls="menu-panel">Open menu</button>
+    <div id="menu-panel" hidden><button id="menu-choice" type="button">Menu choice</button></div>
+    <p id="menu-result" role="status">Menu closed</p>
+  </section>
+  <!-- preventDefault on mousedown must preserve focus on #focus-input. -->
+  <section aria-label="managed focus">
+    <label>Managed focus <input id="focus-input" type="text"></label>
+    <button id="focus-preserving" type="button">Keep input focused</button>
+    <p id="focus-result" role="status">Focus untouched</p>
+    <p id="focus-value" role="status">Input empty</p>
+  </section>
+  <section aria-label="SVG and hidden expansion">
+    <button id="svg-button" type="button"><svg id="svg-icon" viewBox="0 0 20 20" aria-hidden="true"><path id="svg-path" d="M2 2h16v16H2z"></path></svg><span>SVG action</span></button>
+    <a id="svg-link" href="#svg-link-result"><svg id="svg-link-icon" viewBox="0 0 20 20" aria-hidden="true"><path id="svg-link-path" d="M2 2h16v16H2z"></path></svg>SVG anchor</a>
+    <p id="svg-link-result" role="status">SVG anchor idle</p>
+    <p id="svg-result" role="status">SVG idle</p>
+    <button id="expand" type="button" aria-expanded="false" aria-controls="hidden-content">Expand details</button>
+    <div id="hidden-content" hidden>Expanded content is visible</div>
+    <button id="no-effect" type="button">No-effect control</button>
+  </section>
+  <section aria-label="shadow control"><div id="shadow-host"></div><p id="shadow-result" role="status">Shadow idle</p></section>
+  <section aria-label="uploads">
+    <label>Upload fixture <input id="upload" type="file"></label>
+    <p id="upload-result" role="status">No file selected</p>
+    <div id="drop-zone" role="region" aria-label="Drop a fixture file" tabindex="0">Drop a file here</div>
+    <p id="drop-result" role="status">No file dropped</p>
+  </section>
+  <!-- page.select 的正向靶场：没有原生 select 时这条能力无法被验证。 -->
+  <section aria-label="native select">
+    <label for="plan-select">Plan</label>
+    <select id="plan-select">
+      <option value="free">Free</option>
+      <option value="pro">Pro</option>
+    </select>
+    <p id="select-result" role="status">No plan selected</p>
+  </section>
+  <!-- This is a simulated purchase; #pay-result changes without charging or posting anything. -->
+  <section aria-label="simulated payment">
+    <p id="amount">Total: $12.34</p>
+    <button id="confirm-payment" type="button">Confirm and pay</button>
+    <p id="pay-result" role="status">No payment action</p>
+    <button id="confirm-generic" type="button">Confirm</button>
+    <p id="confirm-result" role="status">Not confirmed</p>
+  </section>
+  <section aria-label="scroll behavior">
+    <div id="scroll-box"><div id="scroll-content">Scroll this container to the bottom</div></div>
+    <p id="scroll-result" role="status">scroll:0 wheel:0</p>
+  </section>
+  <!-- On http://localhost this iframe uses http://127.0.0.1 at the same port to exercise a cross-origin frame. file: falls back to relative URL. Serve on localhost and 127.0.0.1 for cross-origin assertions. -->
+  <section aria-label="frame">
+    <iframe id="fixture-frame" title="Frame fixture" src="frame-inner.html"></iframe>
+  </section>
+  <section aria-label="events"><h2>Event log</h2><button id="clear-log" type="button">Clear event log</button><pre id="event-log" aria-live="polite"></pre></section>
+  <script>
+    const byId = (id) => document.getElementById(id);
+    const record = (id, event) => { byId('event-log').textContent += `${id}:${event}\n`; };
+    byId('clear-log').addEventListener('click', () => { byId('event-log').textContent = ''; });
+    const events = ['pointerover', 'mouseover', 'mousemove', 'pointerdown', 'mousedown', 'focus', 'pointerup', 'mouseup', 'click'];
+    for (const id of ['mousedown-menu', 'focus-preserving', 'svg-button', 'svg-link', 'expand', 'submit', 'disabled', 'upload', 'drop-zone', 'confirm-payment', 'confirm-generic', 'no-effect']) {
+      for (const name of events) byId(id).addEventListener(name, () => record(id, name));
+    }
+    byId('mousedown-menu').addEventListener('mousedown', () => {
+      byId('menu-panel').hidden = false;
+      byId('mousedown-menu').setAttribute('aria-expanded', 'true');
+      byId('menu-result').textContent = 'Menu opened by mousedown';
+    });
+    byId('menu-choice').addEventListener('click', () => { byId('menu-result').textContent = 'Menu choice selected'; record('menu-choice', 'click'); });
+    byId('focus-input').addEventListener('input', () => {
+      byId('focus-value').textContent = `Input value: ${byId('focus-input').value}`;
+      record('focus-input', 'input');
+    });
+    byId('plan-select').addEventListener('change', () => {
+      byId('select-result').textContent = `Plan selected: ${byId('plan-select').value}`;
+      record('plan-select', 'change');
+    });
+    byId('focus-preserving').addEventListener('mousedown', (event) => {
+      event.preventDefault();
+      byId('focus-result').textContent = 'Mousedown prevented; focus: ' + (document.activeElement?.id || 'none');
+    });
+    byId('focus-preserving').addEventListener('click', () => {
+      byId('focus-result').textContent = 'Click completed; focus: ' + (document.activeElement?.id || 'none');
+    });
+    byId('svg-button').addEventListener('click', (event) => {
+      byId('svg-result').textContent = 'SVG action completed'; record('svg-button', `target:${event.target.id || event.target.tagName}`);
+    });
+    byId('svg-link').addEventListener('click', (event) => {
+      byId('svg-link-result').textContent = 'SVG anchor followed'; record('svg-link', `target:${event.target.id || event.target.tagName}`);
+    });
+    byId('expand').addEventListener('click', () => {
+      const hidden = byId('hidden-content').hidden;
+      byId('hidden-content').hidden = !hidden;
+      byId('expand').setAttribute('aria-expanded', String(hidden));
+    });
+    let validationVersion = 0;
+    byId('submit').addEventListener('click', () => {
+      const email = byId('email').value;
+      const current = ++validationVersion;
+      byId('form-result').textContent = 'Checking email…';
+      window.setTimeout(() => {
+        if (current !== validationVersion) return;
+        byId('form-result').textContent = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) ? 'Submitted successfully' : 'Email validation failed';
+        record('submit', 'validation-complete');
+      }, 80);
+    });
+    byId('disabled').addEventListener('click', () => { byId('disabled-result').textContent = 'Disabled action wrongly fired'; });
+    const shadow = byId('shadow-host').attachShadow({ mode: 'open' });
+    shadow.innerHTML = '<button id="shadow-action" type="button">Shadow action</button>';
+    shadow.getElementById('shadow-action').addEventListener('click', () => {
+      byId('shadow-result').textContent = 'Shadow action completed'; record('shadow-action', 'click');
+    });
+    byId('upload').addEventListener('change', () => {
+      const file = byId('upload').files[0];
+      byId('upload-result').textContent = file ? `Selected: ${file.name} (${file.size} bytes)` : 'No file selected';
+      record('upload', 'change');
+    });
+    const zone = byId('drop-zone');
+    zone.addEventListener('dragover', (event) => { event.preventDefault(); zone.classList.add('dragging'); record('drop-zone', 'dragover'); });
+    zone.addEventListener('dragleave', () => zone.classList.remove('dragging'));
+    zone.addEventListener('drop', (event) => {
+      event.preventDefault(); zone.classList.remove('dragging');
+      const file = event.dataTransfer?.files[0];
+      byId('drop-result').textContent = file ? `Dropped: ${file.name} (${file.size} bytes)` : 'Drop had no file';
+      record('drop-zone', 'drop');
+    });
+    byId('confirm-payment').addEventListener('click', () => { byId('pay-result').textContent = 'Simulated payment confirmed for $12.34 (no transaction)'; });
+    byId('confirm-generic').addEventListener('click', () => { byId('confirm-result').textContent = 'Ordinary confirmation completed'; });
+    let scrolls = 0;
+    let wheels = 0;
+    const updateScroll = () => { byId('scroll-result').textContent = `scroll:${scrolls} wheel:${wheels}`; };
+    byId('scroll-box').addEventListener('scroll', () => { scrolls++; updateScroll(); record('scroll-box', 'scroll'); });
+    byId('scroll-box').addEventListener('wheel', () => { wheels++; updateScroll(); record('scroll-box', 'wheel'); });
+    if (location.protocol === 'http:' && (location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
+      const frameUrl = new URL('frame-inner.html', location.href);
+      frameUrl.hostname = location.hostname === 'localhost' ? '127.0.0.1' : 'localhost';
+      byId('fixture-frame').src = frameUrl.href;
+    }
+  </script>
+</body>
+</html>

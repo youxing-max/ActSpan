@@ -10,7 +10,8 @@ const dir = mkdtempSync(path.join(os.tmpdir(), 'actspan-bridge-security-'));
 process.env.ACTSPAN_MCP_LOG = path.join(dir, 'bridge.log');
 const { ExtensionHub, log } = await import('../bridge.js');
 const { Policy } = await import('../policy.js');
-const origin = 'chrome-extension://afadkcbnpkhbofmbmlhjcppegjhkckdi';
+const { extensionIdFromKey } = await import('../install.js');
+const origin = `chrome-extension://${extensionIdFromKey()}`;
 const otherOrigin = 'chrome-extension://bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
 
 async function open(url, from = origin) {
@@ -121,6 +122,33 @@ test('policy rejects unknown capabilities and self-approval cannot bypass extens
     assert.throws(() => Policy.check('page.eval', { ...context, taskId: '' }), /taskId/);
     assert.equal(Policy.check('page.eval', context).requiresApproval, true);
     assert.equal(Policy.check('page.click', context).requiresApproval, true);
+});
+
+// tabId 是调用方可选参数，省略它不能成为免确认的理由：扩展侧 resolveTab 在 mutate 模式下
+// 会回退到任务的活动标签页，动作照样落地。
+test('policy requires approval for page writes and tab.navigate even without a tabId', () => {
+    const context = { clientId: 'A', requestId: 'R', taskId: 'T', sessionId: 'S' };
+    for (const capability of ['page.click', 'page.type', 'page.select', 'page.scroll', 'tab.navigate']) {
+        assert.equal(Policy.check(capability, context).requiresApproval, true, capability);
+    }
+    // tab.open 只是新建标签页，没有既有标签页可改，不在此列。
+    assert.equal(Policy.check('tab.open', context).requiresApproval, false);
+});
+
+test('policy admits every stable bridge capability with its minimum permission', () => {
+    const context = { clientId: 'A', requestId: 'R', taskId: 'T', sessionId: 'S' };
+    const capabilities = {
+        'tabs.select': 'read', 'tab.open': 'interact', 'page.snapshot': 'read',
+        'page.select': 'interact', 'page.upload': 'interact', 'page.key': 'interact',
+        'page.wait': 'read', 'page.scroll': 'interact',
+        'network.list': 'read', 'network.detail': 'read', 'network.query': 'read',
+        'data.fetch': 'read', 'data.fetch_chunk': 'read', 'data.fetch_release': 'read',
+        'data.paginate': 'read', 'data.paginate_page': 'read', 'data.download': 'interact',
+        'act.draft': 'read', 'act.adopt': 'sensitive', 'page.status_update': 'read',
+    };
+    for (const [capability, permission] of Object.entries(capabilities)) {
+        assert.equal(Policy.check(capability, context).permission, permission, capability);
+    }
 });
 
 test('dedicated logs redact API keys and do not write to MCP stdout', () => {

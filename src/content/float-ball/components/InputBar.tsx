@@ -32,7 +32,7 @@ const createNewTask = (query: string, id?: string): TaskItem => ({
   taskKind: 'regular',
 });
 
-export const InputBar: React.FC<InputBarProps> = ({ resultRef }) => {
+export const InputBar: React.FC<InputBarProps> = ({ resultRef: _resultRef }) => {
   const { state, dispatch } = useActspan();
   const inputRef = useRef<HTMLInputElement>(null);
   const task = state.currentTask;

@@ -92,28 +92,38 @@ const SidePanelInner: React.FC = () => {
 
     // 恢复活跃会话
     useEffect(() => {
-        Channel.send('__session_get_active', {}, (response: { sessionId?: string; status?: string; summary?: string; startedAt?: number }) => {
-            if (response?.sessionId && response?.status === 'running') {
-                dispatch({
-                    type: 'SET_TASK',
-                    payload: {
-                        id: response.sessionId,
-                        query: response.summary || '',
-                        title: response.summary || '',
-                        status: 'running',
-                        resultHtml: '',
-                        callStack: [],
-                        errorMsg: '',
-                        lastAIText: '',
-                        agentPhase: 'plan',
-                        agentRound: 0,
-                        failureCode: '',
-                        startedAt: response.startedAt || Date.now(),
-                        endedAt: null,
-                        durationMs: null,
-                    },
+        Channel.send('__session_get_active', {}, (response: { sessionId?: string; status?: string; summary?: string; startedAt?: number; endedAt?: number; durationMs?: number; lastError?: string; failureCode?: string; agentState?: { phase?: string; round?: number }; taskKind?: string }) => {
+            if (!response?.sessionId || (response.status !== 'running' && response.status !== 'done' && response.status !== 'error')) return;
+            const status = response.status === 'error' ? 'error' : response.status === 'done' ? 'done' : 'running';
+            dispatch({
+                type: 'SET_TASK',
+                payload: {
+                    id: response.sessionId,
+                    query: response.summary || '',
+                    title: response.summary || '',
+                    status,
+                    resultHtml: '',
+                    callStack: [],
+                    errorMsg: response.lastError || '',
+                    lastAIText: '',
+                    agentPhase: response.agentState?.phase || 'plan',
+                    agentRound: response.agentState?.round || 0,
+                    failureCode: response.failureCode || '',
+                    liveStatusText: '',
+                    startedAt: response.startedAt || Date.now(),
+                    endedAt: response.endedAt || (status === 'running' ? null : Date.now()),
+                    durationMs: response.durationMs ?? null,
+                    taskKind: response.taskKind,
+                },
+            });
+
+            // extension page 没有 sender.tab，background 不会自动回放；等任务状态落地后主动请求。
+            window.setTimeout(() => {
+                Channel.send('__session_replay_request', {
+                    sessionId: response.sessionId,
+                    scope: 'latest_turn',
                 });
-            }
+            }, 0);
         });
     }, [dispatch]);
 

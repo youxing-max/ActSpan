@@ -1382,7 +1382,7 @@ const executeStorageAction = async (
   tabId: number,
   action: string,
   params: any,
-  signal?: AbortSignal,
+  _signal?: AbortSignal,
 ): Promise<FunctionResult> => {
   const isLocalStorage = params.storage_type !== 'session';
 

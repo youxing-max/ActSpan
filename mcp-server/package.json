@@ -1,18 +1,33 @@
 {
   "name": "@actspan/mcp-server",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "module",
   "description": "Actspan local MCP server for the browser extension Bridge",
+  "license": "AGPL-3.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/youxing-max/ActSpan"
+  },
+  "actspan": {
+    "extensionVersion": "1.1.0",
+    "extensionKey": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAktAyufAUexbFFANX4kaBpsTY4BtytJq8WYSOk5ng28LsHgAHB0dK6XuIQ4QtY7AV5JezZGmjpmjSb0g4cF9ptqNxuipDFp8ceX5iLou3y/Eiah8jX0hguLN7kkf2nmeCyBTufEo+L786WvCdwxxjHb4dRi4YriDnPo7CJ4tlGcBNbAnqTDOYgKZCyyC7DILlYm8AXzs3WveNa5b5OZBYnNLSIGdo9CI+HyIgBHVmXbu1eyrpc+4nnDtP73TqnEzcmnb2XnSoiBZYnn/1B7S5iVIGQfHygxaLUpO8E7OcaSWJCoVX20JPkIUPwT8gbFPK6iNUrDsGW9nfHztAlJ7SfwIDAQAB"
+  },
   "bin": {
-    "actspan-mcp": "./index.js"
+    "actspan-mcp": "./index.js",
+    "actspan-install": "./install.js",
+    "actspan-doctor": "./doctor.js",
+    "actspan-bridge": "./bridge-cli.js"
   },
   "engines": {
     "node": ">=20.0.0"
   },
   "scripts": {
     "start": "node index.js",
-    "test": "node --test test/catalog.mjs",
-    "test:e2e": "node test/e2e.mjs"
+    "test": "node --test test/catalog.mjs test/protocol-version.mjs test/bridge-lock.mjs test/identity.mjs test/usage.mjs test/security.mjs test/lifecycle.mjs test/status-tool.mjs test/omp-compat.mjs test/act-script.mjs test/act-tool.mjs test/tool-schema.mjs",
+    "test:e2e": "node test/e2e.mjs",
+    "test:install": "node --test test/install.mjs test/doctor.mjs",
+    "test:acceptance": "node test/acceptance.mjs",
+    "test:simuser": "node test/simulated-user.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.11.0",

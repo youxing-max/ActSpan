@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Credential Fixture</title></head>
+<body data-credential-page="true">
+  <h1>Recovery codes and account credentials</h1>
+  <!-- All values here are synthetic. #credential-result and #credential-log never reveal entered values. -->
+  <form id="credential-form">
+    <label>Username <input id="username" name="username" autocomplete="username"></label>
+    <label>Password <input id="password" name="password" type="password" autocomplete="current-password"></label>
+    <button id="credential-submit" type="submit">Simulate sign-in</button>
+  </form>
+  <p id="credential-result" role="status">No attempt</p>
+  <pre id="credential-log" aria-live="polite"></pre>
+  <section id="recovery-codes" aria-label="Recovery codes">
+    <h2>Recovery codes</h2>
+    <pre id="code-group-a">TEST-AX8K-29LM-75QH
+TEST-BN4R-63CF-82VW
+TEST-CY7J-19PD-46ZG</pre>
+    <p>A paragraph between groups must remain readable after redaction.</p>
+    <pre id="code-group-b">TEST-DP3Z-48TX-91KH
+
+TEST-EF6M-52JL-37RA
+
+TEST-GV9Q-14CW-68NS</pre>
+  </section>
+  <p id="ordinary-reference">Ordinary reference: 82f5346312556448316385739524cab45e85a6a1</p>
+  <p id="ordinary-url">Ordinary URL: https://example.test/docs/guide?section=recovery-codes</p>
+  <p id="ordinary-selector">Ordinary selector: #credential-form > input[name="password"]</p>
+  <p id="ordinary-phone">Fake phone for redaction: 13800138000; numeric record ID: 20261019000123456789.</p>
+  <p id="credential-warning">Do not repeat credential values in an answer.</p>
+  <!-- On HTTP, switch the visible URL without loading a missing route; assertions can compare credential-path and ordinary-path policy on this same DOM. Reload the original creds.html URL to reset. -->
+  <button id="url-credential" type="button">Show credential URL</button>
+  <button id="url-ordinary" type="button">Show ordinary URL</button>
+  <p id="url-result" role="status">URL unchanged</p>
+  <script>
+    const log = document.getElementById('credential-log');
+    document.getElementById('credential-form').addEventListener('submit', (event) => {
+      event.preventDefault();
+      document.getElementById('credential-result').textContent = 'Simulated sign-in attempt recorded (no network)';
+      log.textContent += 'credential-form:submit\n';
+    });
+    for (const [id, suffix] of [['url-credential', 'account/recovery-codes'], ['url-ordinary', 'articles/tokenization']]) {
+      document.getElementById(id).addEventListener('click', () => {
+        if (location.protocol === 'http:' || location.protocol === 'https:') {
+          history.replaceState(null, '', new URL(suffix, location.href.replace(/(?:account\/recovery-codes|articles\/tokenization|creds\.html)$/, '')));
+          document.getElementById('url-result').textContent = `Current URL path: ${location.pathname}`;
+          log.textContent += `${id}:click\n`;
+        } else {
+          document.getElementById('url-result').textContent = 'Serve over HTTP to change the URL path';
+        }
+      });
+    }
+  </script>
+</body>
+</html>

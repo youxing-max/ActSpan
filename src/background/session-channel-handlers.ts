@@ -4,14 +4,13 @@
  */
 import Channel from '../lib/channel';
 import { mcpClient } from '../functions/registry';
-import type { AIStreamEvent, SessionReplayPayload, SessionFailureCode } from '../ai/types';
+import type { AIStreamEvent, SessionReplayPayload } from '../ai/types';
 import {
     sessions,
     getActiveSessionId,
     setActiveSessionId,
     activeControllers,
     sessionTaskKinds,
-    activeCoalescedTasks,
     parseRollbackCommand,
     respondSessionOp,
     resolveSessionTaskRequest,
@@ -45,9 +44,6 @@ import type {
     SessionGetActiveOp,
     SessionReplayRequestOp,
     SessionResumeOp,
-    SessionChannelResponder,
-    ExecuteSessionOptions,
-    SessionTaskKindRequest,
 } from './session-manager';
 
 // ============ 会话管理消息处理 ============
@@ -152,7 +148,7 @@ async function handleSessionContinueOp(op: SessionContinueOp) {
             return;
         }
 
-        const activeSession = sessions.get(runningSessionId);
+        const activeSession = runningSessionId ? sessions.get(runningSessionId) : undefined;
         if (!activeSession) {
             respond({
                 accepted: false,
@@ -723,7 +719,7 @@ Channel.on('__test_chain', (data, sender) => {
 
     if (!keyword || !tabId) return;
 
-    const pushEvent = (event: { type: string; content: string }) => {
+    const pushEvent = (event: AIStreamEvent) => {
         Channel.sendToTab(tabId, '__ai_stream', { ...event, taskId });
     };
 

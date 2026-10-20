@@ -26,6 +26,7 @@ import {
 } from './session-types';
 import { chatComplete } from '../ai/llm-client';
 import { getTextContent } from '../ai/context-manager';
+import { isPlainObject } from '../lib/guards';
 import { persistRuntimeSessions } from './session-manager';
 
 // ============ 内部辅助：任务生命周期事件 ============
@@ -63,7 +64,7 @@ function resolveTaskLifecycleEventType(
 
 /** 发射任务生命周期事件 */
 function emitTaskLifecycleEvent(
-    pushEvent: (event: { type: string; content: string }) => void,
+    pushEvent: (event: AIStreamEvent) => void,
     taskKind: SessionTaskKind,
     phase: 'entered' | 'exited',
     message: string,
@@ -135,7 +136,7 @@ function parseReviewOutputPayload(text: string): ReviewOutputPayload {
         const findings = Array.isArray(parsed?.findings)
             ? parsed.findings
                 .map((item: unknown): ReviewFindingItem | null => {
-                    if (!item || typeof item !== 'object') return null;
+                    if (!isPlainObject(item)) return null;
                     const issue = String(item.issue || item.problem || item.title || '').trim();
                     const impact = String(item.impact || item.risk || '').trim();
                     const suggestion = String(item.suggestion || item.fix || item.recommendation || '').trim();
@@ -321,8 +322,9 @@ function collectCompactToolFacts(context: InputItem[], maxCount: number = 18): A
         } catch {
             parsed = {};
         }
+        const data = isPlainObject(parsed.data) ? parsed.data : {};
         const detail = clipCompactText(
-            parsed?.data?.message || parsed?.error || parsed?.data?.summary || parsed?.data?.title || '',
+            data.message || parsed.error || data.summary || data.title || '',
             42,
         );
         facts.push({

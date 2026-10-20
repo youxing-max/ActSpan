@@ -4,8 +4,11 @@
  * 未来可替换为 Native Messaging 等其他传输方式
  */
 
-import type { MCPMethod } from './types';
+import type { MCPErrorResponse, MCPListToolsResponse, MCPMethod, MCPToolCallResult } from './types';
 import type { MCPServer } from './server';
+
+type MCPTransportResponse = MCPListToolsResponse | MCPToolCallResult | MCPErrorResponse;
+
 
 interface MCPTransportRequestOptions {
   signal?: AbortSignal;
@@ -26,7 +29,9 @@ export class InMemoryTransport {
    * @param params 请求参数
    * @returns 响应结果
    */
-  async request(method: MCPMethod, params?: any, options?: MCPTransportRequestOptions): Promise<any> {
+  async request(method: 'tools/list', params?: unknown, options?: MCPTransportRequestOptions): Promise<MCPListToolsResponse>;
+  async request(method: 'tools/call', params?: unknown, options?: MCPTransportRequestOptions): Promise<MCPToolCallResult>;
+  async request(method: MCPMethod | string, params?: unknown, options?: MCPTransportRequestOptions): Promise<MCPTransportResponse> {
     return this.server.handleRequest(method, params, options?.signal);
   }
 }

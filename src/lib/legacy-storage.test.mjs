@@ -12,9 +12,7 @@ const bundle = await build({
   format: 'esm',
   platform: 'node',
 });
-const { readMigratedStorage } = await import(
-  `data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].contents).toString('base64')}`,
-);
+const { readMigratedStorage } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].contents).toString('base64')}`);
 
 const storage = (initial = {}) => {
   const values = { ...initial };

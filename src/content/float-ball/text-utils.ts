@@ -6,7 +6,6 @@
 
 import type { RuntimeTextMode } from './constants';
 import { INTERNAL_STATUS_HINT, INTERNAL_STATUS_LINE_HINT, INTERNAL_STATUS_SEGMENT_HINT } from './constants';
-import { FUNCTION_LABELS } from './icons';
 
 /** 将内部工具术语替换为用户可读文本 */
 export const replaceInternalToolTerms = (raw: string): string => {
@@ -256,6 +255,45 @@ export const clipRuntimeText = (raw: unknown, max: number = 56): string => {
   const normalized = String(raw ?? '').replace(/\s+/g, ' ').trim();
   if (!normalized) return '';
   return normalized.length > max ? `${normalized.slice(0, max)}...` : normalized;
+};
+
+/** N1 status contract: explicit, user-facing, immediate, and at most 80 characters. */
+export const STATUS_MAX_LENGTH = 80;
+
+export interface StatusUpdatePayload {
+  text: string;
+  language?: string;
+}
+
+const clipStatusText = (text: string): string => {
+  if (text.length <= STATUS_MAX_LENGTH) return text;
+  const suffix = '...';
+  return `${text.slice(0, STATUS_MAX_LENGTH - suffix.length).trimEnd()}${suffix}`;
+};
+
+/** Normalize an explicit status without inferring one from a tool name. */
+export const normalizeStatusText = (raw: unknown, language?: string): string => {
+  const text = String(raw ?? '').replace(/\s+/g, ' ').trim();
+  if (!text) return language?.toLowerCase().startsWith('zh') ? '我正在继续处理，请稍候。' : 'I am continuing to work.';
+  const hasInternalDetails = /(post_tool_|page_snapshot|page_viewer|fetch_url|cdp_input|ec-[a-z0-9-]+|tool_choice|function_call)/i.test(text);
+  if (!hasInternalDetails) return clipStatusText(text);
+  const english = language?.toLowerCase().startsWith('en');
+  const sanitized = /(?:verify|assert|确认结果|核验)/i.test(text)
+    ? (english ? 'I am verifying the action.' : '我正在确认刚才的操作是否成功')
+    : english ? 'I am continuing the task.' : sanitizeUserFacingRuntimeText(text, 'current');
+  return clipStatusText((sanitized || text).replace(/\s+/g, ' ').trim());
+};
+
+/** Parse the status channel payload; malformed/empty updates are ignored. */
+export const parseStatusUpdate = (raw: unknown): StatusUpdatePayload | null => {
+  if (!raw || typeof raw !== 'object') return null;
+  const data = raw as Record<string, unknown>;
+  const text = typeof data.text === 'string' ? data.text.trim() : '';
+  if (!text) return null;
+  const language = typeof data.language === 'string' && data.language.trim()
+    ? data.language.trim().slice(0, 16)
+    : undefined;
+  return { text: normalizeStatusText(text, language), ...(language ? { language } : {}) };
 };
 
 /** 构建任务标题，超长截断 */

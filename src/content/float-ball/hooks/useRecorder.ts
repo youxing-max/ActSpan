@@ -8,14 +8,13 @@ import { useCallback, useEffect, useRef } from 'react';
 import Channel from '../../../lib/channel';
 import { useActspan } from '../context/useActspan';
 import { buildTaskTitle } from '../text-utils';
+import { getRecorderRecovery } from '../../recorder-recovery';
 import {
   showRecorderOverlay,
   updateRecorderStepCount,
   hideRecorderOverlay,
 } from '../../recorder-overlay';
 
-/** 最大录制步数 */
-const MAX_RECORDER_STEPS = 10;
 
 // ============ 选择器工具函数 ============
 
@@ -73,20 +72,6 @@ export const useRecorder = () => {
   const lastInputTargetRef = useRef<Element | null>(null);
   const lastInputValueRef = useRef('');
 
-  /** 检查是否达到步数上限 */
-  const checkStepLimit = useCallback(() => {
-    if (stepCountRef.current >= MAX_RECORDER_STEPS) {
-      // 异步停止，避免在事件处理中直接触发
-      setTimeout(() => {
-        if (stateRef.current.isRecording) {
-          // 触发停止流程
-          stopRecordingRef.current?.();
-        }
-      }, 0);
-      return true;
-    }
-    return false;
-  }, []);
 
   /** 提交未完成的输入步骤 */
   const flushInputStep = useCallback(() => {
@@ -111,8 +96,7 @@ export const useRecorder = () => {
     lastInputValueRef.current = '';
     dispatch({ type: 'SET_RECORDING', payload: { isRecording: true, stepCount: stepCountRef.current } });
     updateRecorderStepCount(stepCountRef.current);
-    checkStepLimit();
-  }, [dispatch, checkStepLimit]);
+  }, [dispatch]);
 
   // 事件处理器 refs（需要在 addEventListener 中保持稳定引用）
   const handlersRef = useRef<{
@@ -126,7 +110,6 @@ export const useRecorder = () => {
     handlersRef.current = {
       click: (e: MouseEvent) => {
         if (!stateRef.current.isRecording) return;
-        if (stepCountRef.current >= MAX_RECORDER_STEPS) return;
         const target = e.target as Element;
         if (!target || target.closest('#actspan-root') || target.closest('#actspan-recorder-overlay')) return;
 
@@ -146,12 +129,10 @@ export const useRecorder = () => {
         });
         dispatch({ type: 'SET_RECORDING', payload: { isRecording: true, stepCount: stepCountRef.current } });
         updateRecorderStepCount(stepCountRef.current);
-        checkStepLimit();
       },
 
       input: (e: Event) => {
         if (!stateRef.current.isRecording) return;
-        if (stepCountRef.current >= MAX_RECORDER_STEPS) return;
         const target = e.target as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
         if (!target || target.closest('#actspan-root') || target.closest('#actspan-recorder-overlay')) return;
 
@@ -170,7 +151,6 @@ export const useRecorder = () => {
 
       submit: (e: Event) => {
         if (!stateRef.current.isRecording) return;
-        if (stepCountRef.current >= MAX_RECORDER_STEPS) return;
         const form = e.target as HTMLFormElement;
         if (!form || form.closest('#actspan-root')) return;
 
@@ -189,7 +169,6 @@ export const useRecorder = () => {
         });
         dispatch({ type: 'SET_RECORDING', payload: { isRecording: true, stepCount: stepCountRef.current } });
         updateRecorderStepCount(stepCountRef.current);
-        checkStepLimit();
       },
     };
   }
@@ -280,26 +259,51 @@ export const useRecorder = () => {
     });
   }, [dispatch, startCapture]);
 
-  // 用 ref 保存回调供 overlay 和 checkStepLimit 使用
+  // 用 ref 保存录制完成和取消回调
   const stopRecordingRef = useRef(stopRecording);
   stopRecordingRef.current = stopRecording;
   const cancelRecordingRef = useRef(cancelRecording);
   cancelRecordingRef.current = cancelRecording;
 
-  // 监听 background 发来的自动停止消息（10 步兜底）
+  // 页面导航后 content script 会重载，从 background 恢复录制状态
+  useEffect(() => {
+    let mounted = true;
+    Channel.send('__recorder_state', {}, (rawState: unknown) => {
+      if (!mounted || stateRef.current.isRecording) return;
+
+      const recovery = getRecorderRecovery(rawState);
+      if (!recovery) return;
+
+      stepCountRef.current = recovery.stepCount;
+      dispatch({ type: 'SET_RECORDING', payload: { isRecording: true, stepCount: recovery.stepCount } });
+      startCapture();
+      showRecorderOverlay(
+        () => stopRecordingRef.current?.(),
+        () => cancelRecordingRef.current?.(),
+        recovery.startedAt,
+      );
+      updateRecorderStepCount(recovery.stepCount);
+    });
+
+    return () => {
+      mounted = false;
+    };
+  }, [dispatch, startCapture]);
+
+  // 录制所有权转移到由当前页面打开的新 Tab 后，旧页面只清理本地 UI。
+  // background 中的步骤和计时继续保留，不重新发送 __recorder_start。
   useEffect(() => {
     const handler = () => {
-      if (!stateRef.current.isRecording) return;
       stopCapture();
       hideRecorderOverlay();
       dispatch({ type: 'SET_RECORDING', payload: { isRecording: false, stepCount: 0 } });
-      submitRecording();
     };
-    Channel.on('__recorder_auto_stop', handler);
+    Channel.on('__recorder_transfer', handler);
     return () => {
-      Channel.off('__recorder_auto_stop', handler);
+      Channel.off('__recorder_transfer', handler);
     };
-  }, [dispatch, stopCapture, submitRecording]);
+  }, [dispatch, stopCapture]);
+
 
   // 监听审计完成事件
   useEffect(() => {
@@ -316,8 +320,8 @@ export const useRecorder = () => {
         type: 'SET_TASK',
         payload: {
           id: data.sessionId,
-          query: '确认录制的工作流',
-          title: buildTaskTitle('确认录制的工作流'),
+          query: '录制并保存的工作流',
+          title: buildTaskTitle('录制并保存的工作流'),
           status: 'running',
           resultHtml: '',
           callStack: [],
@@ -336,6 +340,8 @@ export const useRecorder = () => {
 
       // 打开面板展示审计结果
       dispatch({ type: 'TOGGLE_OPEN', payload: true });
+      // 主界面位于 Side Panel；审计结束后主动打开，避免完成事件只更新不可见的 content 状态。
+      Channel.send('__open_side_panel', {});
     };
 
     Channel.on('__recorder_audit_done', handler);
