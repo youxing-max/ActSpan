@@ -1,0 +1,13 @@
+title = "ActSpan gitleaks config"
+
+# 默认规则集 + 针对本仓库已知非 secret 的豁免。
+# 测试夹具里的凭据是合成数据（creds.html 等），历史计划文档可能含示例密钥，
+# 二者都不是真实泄漏，误报只会淹没真实告警。
+
+[allowlist]
+description = "Ignore synthetic credentials in test fixtures and historical plan docs"
+paths = [
+  '''test/fixtures/''',
+  '''docs/superpowers/''',
+  '''docs/spec/''',
+]
