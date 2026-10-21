@@ -1,6 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { bookmarkOpsFunction } from './bookmark-ops.ts';
+import { build } from 'esbuild';
+
+// Node 20 不支持直接加载 .ts；和仓库其他测试一样先用 esbuild 打包，
+// 否则同一份测试在 Node 22 通过、在 CI 的 Node 20 直接 ERR_UNKNOWN_FILE_EXTENSION。
+const bundle = await build({
+  stdin: { contents: `export { bookmarkOpsFunction } from './src/functions/bookmark-ops.ts';`, resolveDir: process.cwd(), loader: 'ts' },
+  bundle: true, write: false, format: 'esm', platform: 'node',
+});
+const { bookmarkOpsFunction } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].contents).toString('base64')}`);
 
 const createCalls = [];
 
