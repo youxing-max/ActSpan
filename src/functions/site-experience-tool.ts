@@ -5,6 +5,7 @@ import {
   readSiteExperience,
   resolveSiteExperienceDomain,
   saveSiteExperience,
+  siteExperienceKey,
   type SiteExperienceMemory,
 } from './site-experience';
 
@@ -20,7 +21,8 @@ export const siteExperienceFunction: FunctionDefinition = {
   description: 'Read or update layered local site experience. Experience is advisory, not a rule: re-read the live page before acting. Use get to inspect built-in/local/merged layers (factoryHosts names the read-only built-in section), choose to select a supported recipe, and save only sanitized observations without credentials, user values, or full URLs. Passing a previous get result straight back to save is safe: the built-in section and its guidance are stripped, so only local content is stored.',
   supportsParallel: false,
   permissionLevel: 'read',
-  actionPermissions: { save: 'interact' },
+  actionPermissions: { save: 'sensitive' },
+  approvalMessageTemplate: { save: 'AI 正在请求写入当前站点的本地经验（可能影响后续点击选择器）' },
   parameters: {
     type: 'object',
     properties: {
@@ -43,8 +45,18 @@ export const siteExperienceFunction: FunctionDefinition = {
   ) => {
     try {
       if (params.action === 'save') {
+        if (!params.experience) return { success: false, error: 'save requires experience' };
+        // 只允许写入当前标签页所属域，避免页面注入把经验塑形到其他站点（如银行域）。
+        const allowedHost = await resolveSiteExperienceDomain(context).catch(() => null);
+        let experience: SiteExperienceMemory = params.experience;
+        if (allowedHost) {
+          const domains = Object.fromEntries(
+            Object.entries(experience.domains || {}).filter(([host]) => siteExperienceKey(host) === allowedHost),
+          );
+          experience = { ...experience, domains };
+        }
         // F6：出厂段要一起传进去，否则回贴的全文会把出厂条目当成本机内容存下来。
-        return { success: true, data: await saveSiteExperience(params.experience, builtinSiteExperience()) };
+        return { success: true, data: await saveSiteExperience(experience, builtinSiteExperience()) };
       }
       const target = await resolveTarget(params, context);
       const layers = await readSiteExperience(builtinSiteExperience(), target);

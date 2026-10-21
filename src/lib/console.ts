@@ -52,7 +52,9 @@ const _createLogEntry = (type: LogType, txt: string, data?: any) => {
     }
 
     // 使用新的 Storage 方法 异步，可能会出现顺序不正常情况，以时间为准
-    Storage.addLog(logItem);
+    Storage.addLog(logItem).catch((err: unknown) => {
+        console.warn('[Actspan] 写入本地日志失败:', err);
+    });
 
     // 上报到 background（汇总日志）
     reportToBackground(logItem);

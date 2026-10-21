@@ -27,6 +27,8 @@ import {
   saveWebhookConfig,
   sendToWebhook,
   getEntryDisplayUrl,
+  isFeishuAutoPushEnabled,
+  setFeishuAutoPushEnabled,
 } from '../../functions/webhook';
 
 const { Text } = Typography;
@@ -80,6 +82,7 @@ export function WebhookPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [testingId, setTestingId] = useState<string | null>(null);
+  const [autoPush, setAutoPush] = useState(true);
   const [form] = Form.useForm();
   const webhookType = Form.useWatch('type', form) as WebhookType | undefined;
 
@@ -98,6 +101,7 @@ export function WebhookPage() {
 
   useEffect(() => {
     void loadData();
+    void isFeishuAutoPushEnabled().then(setAutoPush);
   }, [loadData]);
 
   /* 保存并刷新 */
@@ -356,6 +360,26 @@ export function WebhookPage() {
           },
         ]}
       >
+        <div style={{ marginBottom: 16 }}>
+        <OptionsSectionCard
+          title="自动推送"
+          description="每轮任务完成后，扩展会自动把完整助手回答推送到已启用的飞书 Webhook。关闭后仅保留手动/工具触发的推送。"
+        >
+          <Space>
+            <Switch
+              checked={autoPush}
+              onChange={(checked) => {
+                setAutoPush(checked);
+                void setFeishuAutoPushEnabled(checked).then(
+                  () => message.success(checked ? '已开启完成自动推送' : '已关闭完成自动推送'),
+                  () => message.error('保存自动推送设置失败'),
+                );
+              }}
+            />
+            <Text>任务完成后自动推送助手回答</Text>
+          </Space>
+        </OptionsSectionCard>
+        </div>
         <OptionsSectionCard
           title="Webhook 列表"
           description="AI 使用 webhook 工具时，会向所有已启用的地址发送通知。支持 Bark（iOS）和通用 Webhook 两种类型。"

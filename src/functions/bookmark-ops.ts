@@ -131,6 +131,24 @@ const paginateItems = <T>(items: T[], limit: number, offset: number) => {
   };
 };
 
+const normalizeBookmarkUrl = (value?: string): string | null => {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  try {
+    const parsed = new URL(raw);
+    // 只允许普通网页，避免 javascript:/data:/file: 或内网 URL 被写进收藏。
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') return raw;
+  } catch {
+    // 非绝对 URL 直接拒绝
+  }
+  return null;
+};
+
+const normalizeBookmarkTitle = (value: string | undefined, fallback: string): string => {
+  const title = String(value || '').replace(/\p{Cc}/gu, ' ').trim();
+  return (title || fallback).slice(0, 500);
+};
+
 const getTabFallback = async (context?: { tabId?: number }) => {
   if (context?.tabId) {
     try {
@@ -161,8 +179,30 @@ export const bookmarkOpsFunction: FunctionDefinition = {
   ].join('\n'),
   supportsParallel: false,
   permissionLevel: 'read',
-  actionPermissions: { delete: 'sensitive' },
-  approvalMessageTemplate: { delete: 'AI 正在请求删除收藏 "{title}"' },
+  actionPermissions: {
+    add: 'sensitive',
+    update: 'sensitive',
+    move: 'sensitive',
+    create_folder: 'sensitive',
+    delete: 'sensitive',
+    getAll: 'sensitive',
+    get_all: 'sensitive',
+    search: 'sensitive',
+    recent: 'sensitive',
+    list: 'sensitive',
+  },
+  approvalMessageTemplate: {
+    add: 'AI 正在请求添加收藏 "{title}"',
+    update: 'AI 正在请求修改收藏 "{title}"',
+    move: 'AI 正在请求移动收藏 "{title}"',
+    create_folder: 'AI 正在请求创建收藏文件夹 "{title}"',
+    delete: 'AI 正在请求删除收藏 "{title}"',
+    getAll: 'AI 正在请求导出全部收藏',
+    get_all: 'AI 正在请求导出全部收藏',
+    search: 'AI 正在请求搜索收藏 "{query}"',
+    recent: 'AI 正在请求读取最近收藏',
+    list: 'AI 正在请求读取收藏目录',
+  },
   parameters: {
     type: 'object',
     properties: {
@@ -243,13 +283,17 @@ export const bookmarkOpsFunction: FunctionDefinition = {
         if (!bookmarkUrl) {
           return { success: false, error: 'add 需要提供 url，或在有活动标签页上下文下调用' };
         }
+        const safeUrl = normalizeBookmarkUrl(bookmarkUrl);
+        if (!safeUrl) {
+          return { success: false, error: 'add 只允许 http/https 收藏地址' };
+        }
 
         try {
           const bookmark = await chrome.bookmarks.create({
             parentId: folder_id,
             index: typeof index === 'number' ? Math.max(0, Math.floor(index)) : undefined,
-            url: bookmarkUrl,
-            title: bookmarkTitle || bookmarkUrl,
+            url: safeUrl,
+            title: normalizeBookmarkTitle(bookmarkTitle, safeUrl),
           });
           return {
             success: true,
@@ -270,7 +314,7 @@ export const bookmarkOpsFunction: FunctionDefinition = {
         try {
           const folder = await chrome.bookmarks.create({
             parentId: targetParentId,
-            title: title || '新建文件夹',
+            title: normalizeBookmarkTitle(title, '新建文件夹'),
             index: typeof index === 'number' ? Math.max(0, Math.floor(index)) : undefined,
           });
           return {
@@ -316,11 +360,15 @@ export const bookmarkOpsFunction: FunctionDefinition = {
       case 'update': {
         if (!bookmark_id) return { success: false, error: 'update 需要提供 bookmark_id' };
         if (!title && !url) return { success: false, error: 'update 至少需要 title 或 url 之一' };
+        const safeUrl = url ? normalizeBookmarkUrl(url) : undefined;
+        if (url && !safeUrl) {
+          return { success: false, error: 'update 只允许 http/https 收藏地址' };
+        }
         try {
-          const updated = await chrome.bookmarks.update(bookmark_id, {
-            title: title || undefined,
-            url: url || undefined,
-          });
+          const updated = (await chrome.bookmarks.update(bookmark_id, {
+            title: title ? normalizeBookmarkTitle(title, '') || undefined : undefined,
+            url: safeUrl || undefined,
+          })) as chrome.bookmarks.BookmarkTreeNode;
           return {
             success: true,
             data: {

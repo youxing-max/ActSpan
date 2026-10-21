@@ -37,7 +37,9 @@ function wsRequest({ port, origin, frame, timeoutMs = 3000 }) {
 }
 export async function probeBridge({ port = 30121, timeoutMs = 3000 } = {}) {
     try {
-        const owner = await wsRequest({ port, origin: 'actspan-mcp://owner-probe', frame: { type: 'owner.info' }, timeoutMs });
+        // owner 信息受 0600 元数据里的 nonce 保护；doctor 与 bridge 同用户，可读取同一文件。
+        const nonce = readMetadata({ port }).value?.nonce;
+        const owner = await wsRequest({ port, origin: 'actspan-mcp://owner-probe', frame: { type: 'owner.info', nonce }, timeoutMs });
         if (owner.type !== 'owner_info') return { state: 'error', message: '桥返回了异常的 owner_info 响应' };
         if (owner.connected === true) return { state: 'online', message: '握手正常 · 扩展在线' };
         return { state: 'hub_listening', message: owner.connected === false
@@ -66,16 +68,20 @@ export function startBridge({ port = 30121, extensionId, logPath = path.join(os.
     return { pid: child.pid, logPath };
 }
 
+const validPort = (value) => Number.isInteger(value) && value > 0 && value <= 65535;
 export async function runDoctor({ port = 30121, metadataPath, start = false, yes = false, extensionId, output = console.log } = {}) {
+    if (!validPort(port)) throw new Error(`Invalid port: ${port}（需要 1–65535 的整数）`);
     const version = versionReport();
+    let started = null;
     const metadata = readMetadata({ port, metadataPath: metadataPath || defaultMetadata(port) });
     let status = ownerStatus(metadata);
     if (status.state !== 'running' && start) {
         if (!yes) throw new Error('不会启动桥进程：请使用 --start --yes 明确确认');
         const identity = identityCheck({ extensionId });
         if (!identity.match) throw new Error(identity.message);
-        const started = startBridge({ port, extensionId: identity.canonicalId });
-        output(`已请求启动桥（pid ${started.pid}）；日志写入 ${started.logPath}`);
+        const startedInfo = startBridge({ port, extensionId: identity.canonicalId });
+        started = startedInfo;
+        output(`已请求启动桥（pid ${startedInfo.pid}）；日志写入 ${startedInfo.logPath}`);
         await new Promise((resolve) => setTimeout(resolve, 300));
         status = ownerStatus(readMetadata({ port, metadataPath: metadata.path }));
     }
@@ -88,8 +94,44 @@ export async function runDoctor({ port = 30121, metadataPath, start = false, yes
         status = { ...status, probe: await probeBridge({ port: status.port || port, origin }) };
         output(status.probe.message);
     }
-    return { version, identity, status };
+    return { version, identity, status, ...(started ? { started } : {}) };
 }
 
-function parseArgs(argv) { const options = {}; for (let i = 0; i < argv.length; i += 1) { const arg = argv[i]; if (arg === '--start') options.start = true; else if (arg === '--yes') options.yes = true; else if (arg === '--port') options.port = Number(argv[++i]); else if (arg === '--extension-id') options.extensionId = argv[++i]; else if (arg === '--json') options.json = true; else if (arg === '--help') options.help = true; } return options; }
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) { const options = parseArgs(process.argv.slice(2)); if (options.help) console.log('Usage: actspan-doctor [--start --yes] [--port PORT] [--extension-id ID] [--json]'); else runDoctor(options).then((result) => { if (options.json) process.stdout.write(`${JSON.stringify(result)}\n`); }).catch((error) => { process.stderr.write(`actspan doctor: ${error.message}\n`); process.exitCode = 1; }); }
+function parseArgs(argv) {
+    const options = {};
+    for (let i = 0; i < argv.length; i += 1) {
+        const arg = argv[i];
+        if (arg === '--start') options.start = true;
+        else if (arg === '--yes') options.yes = true;
+        else if (arg === '--port') {
+            const raw = argv[++i];
+            const value = Number(raw);
+            if (!Number.isInteger(value) || value <= 0 || value > 65535) {
+                options.error = `Invalid port: ${raw ?? '(missing)'}（需要 1–65535 的整数）`;
+                return options;
+            }
+            options.port = value;
+        } else if (arg === '--extension-id') options.extensionId = argv[++i];
+        else if (arg === '--json') options.json = true;
+        else if (arg === '--help' || arg === '-h') options.help = true;
+    }
+    return options;
+}
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+    const options = parseArgs(process.argv.slice(2));
+    if (options.error) {
+        process.stderr.write(`actspan doctor: ${options.error}\n`);
+        process.exitCode = 1;
+    } else if (options.help) {
+        console.log('Usage: actspan-doctor [--start --yes] [--port PORT] [--extension-id ID] [--json]');
+    } else {
+        // --json 的 stdout 必须只有 JSON；人类提示走 stderr，不能污染机器可读输出。
+        const human = options.json ? (line) => process.stderr.write(`${line}\n`) : console.log;
+        runDoctor({ ...options, output: human }).then((result) => {
+            if (options.json) process.stdout.write(`${JSON.stringify(result)}\n`);
+        }).catch((error) => {
+            process.stderr.write(`actspan doctor: ${error.message}\n`);
+            process.exitCode = 1;
+        });
+    }
+}

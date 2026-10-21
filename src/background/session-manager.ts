@@ -8,7 +8,7 @@ import { CDPSessionManager } from '../lib/cdp-session';
 import { handleChat } from '../ai/orchestrator';
 import { getTextContent } from '../ai/context-manager';
 import { mcpClient } from '../functions/registry';
-import { sendFeishuCompletion } from '../functions/webhook';
+import { sendFeishuCompletion, isFeishuAutoPushEnabled } from '../functions/webhook';
 import type { HandleChatOptions } from '../ai/orchestrator';
 import { taskManager } from './task-manager';
 import { tabLeaseManager } from './tab-lease-manager';
@@ -39,6 +39,7 @@ import type {
 import {
     MAX_SESSIONS,
     MAX_MODEL_CONTEXT_ITEMS,
+    MAX_RUNTIME_EVENT_LOG,
     TURN_ABORTED_INTERRUPTED_GUIDANCE,
     DEFAULT_REVIEW_TASK_QUERY,
     DEFAULT_COMPACT_TASK_QUERY,
@@ -124,7 +125,7 @@ export { RuntimeResourceManager, trackRuntimeResourceFromEvent } from './session
 export { persistRuntimeSessions, persistRuntimeSessionsImmediate, restoreRuntimeSessions } from './session-persistence';
 
 // 历史
-export { persistSessionHistory } from './session-history';
+export { persistSessionHistory, removeSessionHistory } from './session-history';
 
 // 回放
 export { buildSessionReplayPayload, buildSessionSyncPayload } from './session-replay';
@@ -537,10 +538,13 @@ export function createSessionPushEvent(session: Session) {
         const completionMessage = getFeishuCompletionMessage(session, event);
         // 完成通知失败不应改变 AI 任务已完成状态，只记录原因供后台日志排查。
         if (completionMessage) {
-            const pending = sendFeishuCompletion(completionMessage).then((result) => {
-                if (!result.success) {
-                    console.warn('[Actspan] 调查完成结果飞书推送失败:', result.data?.message || result.error || '未知错误');
-                }
+            const pending = isFeishuAutoPushEnabled().then((enabled) => {
+                if (!enabled) return;
+                return sendFeishuCompletion(completionMessage).then((result) => {
+                    if (!result.success) {
+                        console.warn('[Actspan] 调查完成结果飞书推送失败:', result.data?.message || result.error || '未知错误');
+                    }
+                });
             }).catch((error: unknown) => {
                 console.warn('[Actspan] 调查完成结果飞书推送异常:', error instanceof Error ? error.message : String(error));
             });
@@ -554,6 +558,10 @@ export function createSessionPushEvent(session: Session) {
             ...event,
             timestamp: Date.now(),
         } as SessionEventLogItem);
+        // 内存中同样裁剪，避免长会话 eventLog 无上限增长（持久化只截断快照副本）。
+        if (session.eventLog.length > MAX_RUNTIME_EVENT_LOG) {
+            session.eventLog.splice(0, session.eventLog.length - MAX_RUNTIME_EVENT_LOG);
+        }
         trackRuntimeResourceFromEvent(session.id, event);
 
         // 维护会话级状态快照与失败码
@@ -1119,7 +1127,10 @@ async function executeSessionChat(session: Session, query: string, tabId?: numbe
  * @returns 新会话对象
  */
 export function createSession(summary: string, originTabId?: number): Session {
-    const id = Date.now().toString();
+    const randomId = typeof globalThis.crypto?.randomUUID === 'function'
+        ? globalThis.crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    const id = randomId;
     const session: Session = {
         id,
         status: 'running',
@@ -1142,21 +1153,25 @@ export function createSession(summary: string, originTabId?: number): Session {
     };
     sessions.set(id, session);
 
-    // 超过容量上限时清理最早的非活跃会话
+    // 超过容量上限时淘汰“最久未活动且已结束”的会话；绝不中止正在运行的任务
     if (sessions.size > MAX_SESSIONS) {
-        for (const [sid] of sessions) {
-            if (sid !== id) {
-                // 如果旧会话还有活跃 controller，先取消
-                const oldController = activeControllers.get(sid);
-                if (oldController) {
-                    oldController.abort();
-                    completeActiveTask(sid);
-                }
-                void RuntimeResourceManager.closeAll(sid);
-                sessionTaskKinds.delete(sid);
-                sessions.delete(sid);
-                break;
-            }
+        const candidates = [...sessions.values()]
+            .filter(candidate =>
+                candidate.id !== id &&
+                candidate.status !== 'running' &&
+                !activeControllers.has(candidate.id) &&
+                !findRunningTask(candidate.id))
+            .sort((left, right) =>
+                (left.endedAt ?? left.createdAt) - (right.endedAt ?? right.createdAt));
+        const victim = candidates[0];
+        if (victim) {
+            void RuntimeResourceManager.closeAll(victim.id);
+            sessionTaskKinds.delete(victim.id);
+            sessions.delete(victim.id);
+        } else {
+            // 全部会话都在运行：拒绝新会话，避免 MAX_SESSIONS 退化为软告警。
+            sessions.delete(id);
+            throw new Error(`会话数已达到上限（${MAX_SESSIONS}），请先结束其他任务`);
         }
     }
 

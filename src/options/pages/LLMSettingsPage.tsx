@@ -7,7 +7,7 @@
 import { useEffect, useState } from 'react';
 import { Button, Form, Input, Modal, Space, Typography, App, Select } from 'antd';
 import { CheckCircleOutlined } from '@ant-design/icons';
-import { getAISettings, saveAISettings } from '../../ai/llm-client';
+import { getAISettings, saveAISettings, validateEndpoint } from '../../ai/llm-client';
 import { AI_CONFIG } from '../../config';
 import { OptionsPageLayout, OptionsSectionCard } from '../components/PageLayout';
 
@@ -18,9 +18,18 @@ const API_MODE_OPTIONS = [
   { value: 'chat_completions', label: 'Chat Completions' },
 ];
 
-/** 检查设置是否已配置（至少有 endpoint 和 apiKey） */
+/** 检查设置是否已配置（合法 endpoint + apiKey） */
 const isConfigured = (s: { endpoint?: string; apiKey?: string }): boolean =>
-  !!(s.endpoint?.trim() && s.apiKey?.trim());
+  !!s.apiKey?.trim() && validateEndpoint(String(s.endpoint || '')).ok;
+
+/** endpoint 校验规则：阻止 http 公网地址泄露 API Key */
+const endpointRule = {
+  validator: async (_rule: unknown, value: unknown) => {
+    if (!value) return;
+    const result = validateEndpoint(String(value));
+    if (!result.ok) throw new Error(result.error);
+  },
+};
 
 export function LLMSettingsPage() {
   const { message } = App.useApp();
@@ -104,6 +113,8 @@ export function LLMSettingsPage() {
 
   const configured = isConfigured({ endpoint, apiKey });
   const endpointLabel = endpoint ? String(endpoint).replace(/^https?:\/\//, '') : '未配置';
+  const endpointCheck = validateEndpoint(String(endpoint || ''));
+  const endpointWarning = endpointCheck.ok ? endpointCheck.warning : undefined;
 
   return (
     <>
@@ -148,7 +159,10 @@ export function LLMSettingsPage() {
             <Form.Item
               label="Endpoint URL"
               name="endpoint"
-              extra="填写完整 Responses API 地址；OMP anyrouter 对应默认地址"
+              rules={[endpointRule]}
+              extra={endpointWarning
+                ? <Text type="warning">{endpointWarning}</Text>
+                : '填写完整 Responses API 地址；默认只允许 https'}
             >
               <Input placeholder={AI_CONFIG.DEFAULT_ENDPOINT} />
             </Form.Item>
@@ -212,8 +226,8 @@ export function LLMSettingsPage() {
           <Form.Item
             label={<span style={{ fontWeight: 500 }}>API 地址</span>}
             name="endpoint"
-            rules={[{ required: true, message: '请填写 API Endpoint' }]}
-            extra="填写完整 Responses API 地址；OMP anyrouter 对应默认地址"
+            rules={[{ required: true, message: '请填写 API Endpoint' }, endpointRule]}
+            extra="填写完整 API 地址；默认只允许 https（本机调试可用 localhost）"
           >
             <Input placeholder={AI_CONFIG.DEFAULT_ENDPOINT} />
           </Form.Item>

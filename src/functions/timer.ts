@@ -5,13 +5,48 @@
  */
 
 import type { FunctionDefinition, ToolExecutionContext } from './types';
-import { TimerStore } from '../lib/timer-store';
+import { TimerStore, type TimerTask } from '../lib/timer-store';
 import { TimerScheduler } from '../lib/timer-scheduler';
 
 export const TIMER_ALARM_PREFIX = 'actspan_timer_';
 export const LEGACY_TIMER_ALARM_PREFIX = 'mole_timer_';
 
 const ONE_MINUTE_MS = 60 * 1000;
+const MAX_TIMERS_PER_OWNER = 20;
+const MAX_TIMERS_TOTAL = 100;
+
+const timerOwnerFields = (context?: ToolExecutionContext): Pick<TimerTask, 'taskId' | 'sessionId' | 'owner'> => ({
+  ...(context?.taskId ? { taskId: context.taskId } : {}),
+  ...(context?.sessionId ? { sessionId: context.sessionId } : {}),
+  ...(context?.owner ? { owner: context.owner } : {}),
+});
+
+/** 老数据没有归属字段，无法校验，只能依赖写入动作的审批。 */
+const timerHasOwner = (task: TimerTask): boolean => Boolean(task.taskId || task.sessionId);
+
+const timerOwnedBy = (task: TimerTask, context?: ToolExecutionContext): boolean => {
+  // 无归属的旧数据只能由用户 UI（无任务身份、非常驻代理）操作，AI 会话需走审批后仍拒绝。
+  if (!timerHasOwner(task)) return !context?.taskId && !context?.sessionId && context?.owner !== 'extension-agent';
+  if (task.taskId && context?.taskId === task.taskId) return true;
+  if (task.sessionId && context?.sessionId === task.sessionId) return true;
+  return false;
+};
+
+const canListTimer = (task: TimerTask, context?: ToolExecutionContext): boolean => {
+  // 用户 UI 没有身份时可以看全部；常驻 AI 没有任务身份但也不能枚举。
+  if (!context?.taskId && !context?.sessionId) return context?.owner !== 'extension-agent';
+  return timerOwnedBy(task, context);
+};
+
+const checkTimerQuota = async (context?: ToolExecutionContext): Promise<string | null> => {
+  const tasks = await TimerStore.getAll();
+  if (tasks.length >= MAX_TIMERS_TOTAL) return `定时器总数已达上限（${MAX_TIMERS_TOTAL}）`;
+  const owned = tasks.filter((task) => timerHasOwner(task)
+    && ((task.taskId && task.taskId === context?.taskId)
+      || (task.sessionId && task.sessionId === context?.sessionId)));
+  if (owned.length >= MAX_TIMERS_PER_OWNER) return `当前任务定时器数量已达上限（${MAX_TIMERS_PER_OWNER}）`;
+  return null;
+};
 
 const parseTimeoutDelayMs = (params: {
   delay_ms?: number;
@@ -97,7 +132,21 @@ export const timerFunction: FunctionDefinition = {
   name: 'timer',
   description: 'Timer management. Supports set_timeout (delayed task), set_interval (periodic task), set_schedule (scheduled: daily/weekly), update (modify timer), clear (cancel), list (list all). When a timer fires, AI automatically executes the specified action and pushes the result.',
   supportsParallel: false,
-  permissionLevel: 'interact',
+  permissionLevel: 'read',
+  actionPermissions: {
+    set_timeout: 'sensitive',
+    set_interval: 'sensitive',
+    set_schedule: 'sensitive',
+    update: 'sensitive',
+    clear: 'sensitive',
+  },
+  approvalMessageTemplate: {
+    set_timeout: 'AI 正在请求创建延时定时任务 "{name}"',
+    set_interval: 'AI 正在请求创建周期定时任务 "{name}"',
+    set_schedule: 'AI 正在请求创建定时调度任务 "{name}"',
+    update: 'AI 正在请求修改定时任务 {timer_id}',
+    clear: 'AI 正在请求取消定时任务 {timer_id}',
+  },
   parameters: {
     type: 'object',
     properties: {
@@ -230,6 +279,8 @@ export const timerFunction: FunctionDefinition = {
         }
         const { delayMs, targetTs } = parsedDelay;
         if (delayMs <= 0) return { success: false, error: '执行时间必须在未来' };
+        const quotaError = await checkTimerQuota(context);
+        if (quotaError) return { success: false, error: quotaError };
 
         const scheduleMode: 'alarm' | 'runtime' = delayMs < ONE_MINUTE_MS ? 'runtime' : 'alarm';
         const precision: 'millisecond' | 'minute' = delayMs < ONE_MINUTE_MS ? 'millisecond' : 'minute';
@@ -250,6 +301,7 @@ export const timerFunction: FunctionDefinition = {
 
         await TimerStore.save({
           id, type: 'timeout', action: taskAction, tabId: context?.tabId || 0,
+          ...timerOwnerFields(context),
           createdAt: Date.now(), delayMs, nextRunAt: targetTs, scheduleMode, precision, currentCount: 0,
           ...(params.name ? { name: params.name } : {}),
         });
@@ -274,6 +326,8 @@ export const timerFunction: FunctionDefinition = {
         if (intervalMs <= 0) {
           return { success: false, error: '必须提供有效的 interval_ms / interval_seconds / interval_minutes（可叠加）' };
         }
+        const quotaError = await checkTimerQuota(context);
+        if (quotaError) return { success: false, error: quotaError };
 
         const safeIntervalMs = Math.max(1, Math.floor(intervalMs));
         const minutes = Math.max(1, safeIntervalMs / ONE_MINUTE_MS);
@@ -292,6 +346,7 @@ export const timerFunction: FunctionDefinition = {
 
         await TimerStore.save({
           id, type: 'interval', action: taskAction, tabId: context?.tabId || 0,
+          ...timerOwnerFields(context),
           createdAt: Date.now(), scheduleMode, precision, intervalMinutes: minutes,
           intervalMs: safeIntervalMs, nextRunAt, maxCount: safeMaxCount, currentCount: 0,
           ...(params.name ? { name: params.name } : {}),
@@ -325,6 +380,8 @@ export const timerFunction: FunctionDefinition = {
         }
 
         const nextRunAt = computeNextScheduleRun(scheduleRule);
+        const quotaError = await checkTimerQuota(context);
+        if (quotaError) return { success: false, error: quotaError };
         const id = `s_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
         const alarmName = `${TIMER_ALARM_PREFIX}${id}`;
 
@@ -332,6 +389,7 @@ export const timerFunction: FunctionDefinition = {
 
         await TimerStore.save({
           id, type: 'schedule', action: taskAction, tabId: context?.tabId || 0,
+          ...timerOwnerFields(context),
           createdAt: Date.now(), nextRunAt, scheduleMode: 'alarm', precision: 'minute',
           currentCount: 0, scheduleRule, ...(taskName ? { name: taskName } : {}),
         });
@@ -355,8 +413,8 @@ export const timerFunction: FunctionDefinition = {
         const { timer_id } = params;
         const task = await TimerStore.get(timer_id);
         if (!task) return { success: false, error: `未找到定时器: ${timer_id}` };
-
-        const updates: Partial<import('../lib/timer-store').TimerTask> = {};
+        if (!timerOwnedBy(task, context)) return { success: false, error: '该定时器属于其他任务或会话，当前上下文无权修改' };
+        const updates: Partial<TimerTask> = {};
         const changes: string[] = [];
 
         // 更新文本字段
@@ -450,6 +508,7 @@ export const timerFunction: FunctionDefinition = {
         const { timer_id } = params;
         const task = await TimerStore.get(timer_id);
         if (!task) return { success: false, error: `未找到定时器: ${timer_id}` };
+        if (!timerOwnedBy(task, context)) return { success: false, error: '该定时器属于其他任务或会话，当前上下文无权取消' };
 
         TimerScheduler.clear(timer_id);
         await chrome.alarms.clear(`${TIMER_ALARM_PREFIX}${timer_id}`);
@@ -463,7 +522,9 @@ export const timerFunction: FunctionDefinition = {
 
       case 'list': {
         // 搬迁原 clearTimerFunction.execute 的 "不传 timer_id" 分支
-        const tasks = await TimerStore.getAll();
+        const allTasks = await TimerStore.getAll();
+        // 有任务身份时只返回自己的定时器，避免跨会话枚举。
+        const tasks = allTasks.filter((task) => canListTimer(task, context));
         if (tasks.length === 0) {
           return { success: true, data: { message: '当前没有活跃的定时器', timers: [] } };
         }

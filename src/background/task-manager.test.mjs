@@ -173,8 +173,11 @@ test('direct tab.open creates an owned task and rejects a second client before s
   let effects = 0;
   executor.registerCapabilityHandler('tab.open', async () => { effects++; return { tabId: 21 }; });
   const first = { clientId: 'one', requestId: 'r1', taskId: 'direct-1', sessionId: 's1', owner: 'ide-agent' };
+  // tab.open 已纳入 tabScoped：即使没有 tabId 也必须先显式批准
+  executor.approve('r1', 'one', 'direct-1');
   await executor.execute(first, 'tab.open', {});
   assert.equal(tasks.get('direct-1')?.ownedTabIds.includes(21), true);
+  executor.approve('r2', 'two', 'direct-1');
   await assert.rejects(() => executor.execute({ ...first, clientId: 'two', requestId: 'r2' }, 'tab.open', {}), /client|session|任务/);
   assert.equal(effects, 1);
   assert.equal(await executor.cancel('direct-1'), false);

@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
  
@@ -19,7 +19,8 @@ const STARTUP_TIMEOUT_MS = 10000;
 const SPAWN_GRACE_MS = 2000;
 const STOP_TIMEOUT_MS = 5000;
 export const bridgePaths = (port) => {
-    const dir = path.join(os.homedir(), '.actspan');
+    // 测试可用 ACTSPAN_STATE_DIR 指向临时目录，避免读写真实 ~/.actspan 与并发测试互相干扰。
+    const dir = process.env.ACTSPAN_STATE_DIR || path.join(os.homedir(), '.actspan');
     return {
         dir,
         lockPath: path.join(dir, `bridge-${port}.lock`),
@@ -235,6 +236,26 @@ async function requestGracefulStop(credential, timeoutMs) {
     });
 }
 
+/** PID 可能被系统复用：发信号前确认命令行确实是 bridge daemon，避免杀掉无关进程。 */
+function isBridgeProcess(pid) {
+    try {
+        const cmdline = fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8').replace(/\0/g, ' ');
+        if (cmdline.trim()) return /bridge(?:-daemon)?\.js\b/.test(cmdline);
+    } catch { /* 非 Linux 或进程已退出，继续用 ps 兜底 */ }
+    try {
+        const command = execFileSync('ps', ['-p', String(pid), '-o', 'command='], { encoding: 'utf8', timeout: 1000 });
+        if (command.trim()) return /bridge(?:-daemon)?\.js\b/.test(command);
+    } catch { /* 非 POSIX 或无 ps，继续按平台兜底 */ }
+    if (process.platform === 'win32') {
+        try {
+            const command = execFileSync('powershell.exe', ['-NoProfile', '-Command',
+                `(Get-CimInstance Win32_Process -Filter "ProcessId=${Number(pid)}").CommandLine`], { encoding: 'utf8', timeout: 1500 });
+            return /bridge(?:-daemon)?\.js\b/.test(command);
+        } catch { return false; }
+    }
+    return false;
+}
+
 /** E5：只认 bridge.json 里那个 pid；先走优雅退出，退不掉才发 SIGTERM。 */
 export async function stopBridgeDaemon({ port, timeoutMs = STOP_TIMEOUT_MS } = {}) {
     const metadata = readMetadata(port);
@@ -249,6 +270,8 @@ export async function stopBridgeDaemon({ port, timeoutMs = STOP_TIMEOUT_MS } = {
         }
         return { stopped: false, reason: 'timeout', pid };
     }
+    // 走到 SIGTERM 前必须确认命令行确实是 bridge；PID 可能已被系统复用。
+    if (!isBridgeProcess(pid)) return { stopped: false, reason: 'pid_mismatch', pid };
     try {
         process.kill(pid, 'SIGTERM');
     } catch (error) {

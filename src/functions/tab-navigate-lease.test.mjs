@@ -162,6 +162,22 @@ test('tab_navigate open attaches the new tab to the caller task lease', async ()
   );
 });
 
+test('tab_navigate open requires approval and rejects private targets', async () => {
+  assert.equal(tabNavigateFunction.actionPermissions?.open, 'sensitive');
+  assert.match(
+    tabNavigateFunction.validate?.({ action: 'open', url: 'http://127.0.0.1:9222/json' }) || '',
+    /内网|本机/,
+  );
+  assert.match(
+    tabNavigateFunction.validate?.({ action: 'open', url: 'http://foo.nip.io/' }) || '',
+    /内网|本机/,
+  );
+  assert.equal(tabNavigateFunction.validate?.({ action: 'open', url: 'about:blank' }), null);
+  const result = await tabNavigateFunction.execute({ action: 'open', url: 'http://169.254.169.254/' });
+  assert.equal(result.success, false);
+  assert.match(result.error, /内网|本机/);
+});
+
 test('tab_navigate read and open actions are not lease-gated', async () => {
   resetCalls();
   const opened = await tabNavigateFunction.execute(

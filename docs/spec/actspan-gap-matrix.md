@@ -178,14 +178,14 @@
 | N1 | 已实现 | mcp-server/status-tool.js:3,10-12 | src/content/float-ball/status-state.test.mjs:27（active false and empty text return the cockpit to idle, not to a sticky last status）、src/content/status-virtual-cursor.test.mjs:44,50 | actspan_status_update 描述逐字照搬对方定义（Instant, never blocks. Use the user language. ≤80 chars）；status-state.ts nextStatusState 在 active:false/text: 时清空，粘住问题已修 |
 | N2 | 已实现 | mcp-server/identity.js:128-138（deriveSessionIdentity） | mcp-server/test/identity.mjs:55-63 | sid 纯函数；EMOJIS[16] 保证互异、GROUP_COLORS[9] 带 Chrome 标签组颜色、hashString 派生 |
 | N3 | 已实现 | mcp-server/identity.js:128-143 | mcp-server/test/identity.mjs:65 | 短码取最后一个冒号后的那截；无冒号结构时退化为整串不崩；createStableSessionId 从 host/process 派生 |
-| N4 | 已实现 | src/background/tab-lease-manager.ts:43,59-68,70-86 | src/background/session-manager.test.mjs | ownTabs: Map<number, SessionTabRecord>；conflict() 排除本会话与已断开的主人；ownershipError() 给出下一步；snapshotOwnTabs/restoreOwnTabs 跨桥重启保留 |
+| N4 | 已实现 | src/background/tab-lease-manager.ts:43,59-68,70-86 | src/background/session-manager.test.mjs | ownTabs: Map（number → SessionTabRecord）；conflict() 排除本会话与已断开的主人；ownershipError() 给出下一步；snapshotOwnTabs/restoreOwnTabs 跨桥重启保留 |
 | N5 | 已实现 | src/background/tab-lease-manager.ts:104-109 | mcp-server/index.js（actspan_tab_open label 参数）、src/background/mcp-bridge.ts:776-782 | listTabs 出 marker */+/× 与 label；tab_open 收 label（trim 1-80） |
 | N6 | 已实现 | src/background/mcp-bridge.ts:1105-1107,872 | test/scenarios.test.mjs:405（S5/new-tabs: local child opened by the fixture is observable and follows its opener）【契约证据｜环境限制：无人值守审批通道缺失】 | withNewTabs 回执带 parentTabId/tabId/newTabIds；未开新页时 tabId/newTabIds 不出现（不误报）；attachNewTab 拒绝非新标签页 |
 | N7 | 已实现 | src/background/policy-executor.ts:109-111 | src/background/tab-lease-manager.ts:94-95（selectTab 冲突只回 warning 不阻止）、:88-89（authorizeWrite 抛 TabLeaseError） | 写路径在副作用前 authorizeWrite 拦截；select 别的会话在用只警告；主人已断开可继承（conflict 排除 disconnected） |
 | N8 | 已实现 | mcp-server/bridge.js:378-383 | mcp-server/bridge-daemon.js:87-91（removeClient 调 hub.sessionDisconnected） | sessionDisconnected 通知按 clientId+sessionId 暂存，扩展重连时 :277 重放；受控标签页在扩展侧原地保留 |
 | N9 | 已实现 | src/background/tab-lease-manager.ts:111-119 | src/background/tab-lease-manager.ts:116（10 * 60_000 冷却） | 户口簿 ≥2 页且走缺省槽才提醒；10 分钟冷却 |
 | N10 | 部分实现 | src/content/float-ball/components/Trigger.tsx:191-193、src/content/page-parser.ts:62-66 | 全仓无 chrome.tabs.group / tabGroups / document.title 赋值 | 门牌不碰已成立（title/favicon 只读）；但归属可视化只做到 label + 悬浮球，无 tab group 成员关系（无 tabs.group 调用），规格列的 tab group 一路缺失 |
-| N11 | 已实现 | src/content/virtual-cursor.ts:5-8,28,77-91 | src/content/status-virtual-cursor.test.mjs:112（virtual cursor hook is emitted before obstruction detection）、src/content/page-grounding.test.mjs:149 | VIRTUAL_CURSOR_HOOKS.beforeObstruction/afterObstruction；withVirtualCursorBeforeObstruction 同步先发钩子再检测遮挡；钩子名 actspan-virtual-cursor-<hook> 两侧一致 |
+| N11 | 已实现 | src/content/virtual-cursor.ts:5-8,28,77-91 | src/content/status-virtual-cursor.test.mjs:112（virtual cursor hook is emitted before obstruction detection）、src/content/page-grounding.test.mjs:149 | VIRTUAL_CURSOR_HOOKS.beforeObstruction/afterObstruction；withVirtualCursorBeforeObstruction 同步先发钩子再检测遮挡；钩子名 actspan-virtual-cursor-HOOK 两侧一致 |
 | N12 | 已实现 | src/content/float-ball/ActspanRoot.tsx:20-24,92-94 | src/content/float-ball/status-state.test.mjs:38（curtain renders current status accessibly and disappears in idle state） | StatusCurtain role=status + aria-live=polite；空闲时返回 null 消失；胶囊状态机在 src/content/float-ball/ActspanRoot.tsx:20-24,92-94 |
 
 ## 2. P act 复合工具 DSL（P1-P7）
@@ -237,7 +237,7 @@
 | 需求ID | 状态 | 落点(file:line) | 证据 | 备注 |
 |---|---|---|---|---|
 | U1 | 已实现 | mcp-server/catalog.js:52-100、mcp-server/index.js:23,133 | mcp-server/test/catalog.mjs:68,89 | controlPlane = Boolean(apiUrl \|\| apiKey) 为可选；只强校验 BRIDGE_URL 本地性；EXTENSION_IDS 缺失时 pairingRequired:true 而非报错；actspan_status 未连扩展时回 loop_mode: disabled |
-| U2 | 已实现 | mcp-server/install.js:36-51,65-92 | mcp-server/test/install.mjs:121-123 | discoverConfigs 用 allKnownPaths 去重（排除范围算全部候选路径）；planConfig/applyPlan 备份为 .bak-<ts>；printPlan 用 ·/+ 标已配置/将写入；tomlBlock 只追加 [mcp_servers.x] 块；jsonTarget 认不出的走 manual |
+| U2 | 已实现 | mcp-server/install.js:36-51,65-92 | mcp-server/test/install.mjs:121-123 | discoverConfigs 用 allKnownPaths 去重（排除范围算全部候选路径）；planConfig/applyPlan 备份为 .bak-TIMESTAMP；printPlan 用 ·/+ 标已配置/将写入；tomlBlock 只追加 [mcp_servers.x] 块；jsonTarget 认不出的走 manual |
 | U3 | 已实现 | mcp-server/doctor.js:20-23,38-58,60-91 | mcp-server/test/doctor.mjs | ownerStatus 对 bridge.json 里已消失的 pid 明说「已经没了」；--start --yes 时 startBridge 自己先拉一个再探；probeBridge 走 owner.info 握手 |
 | U4 | 已实现 | mcp-server/install.js:107-124,94-106,125-128 | mcp-server/test/install.mjs:28（loopback onboarding hands the extension URL to the address bar and accepts only the manifest-derived id） | pairExtension 起 127.0.0.1 随机端口 + nonce，POST /pair 回传；extensionIdFromKey 从 manifest key 推导规范 ID；用户只需加载扩展 |
 | U5 | 已实现 | mcp-server/install.js:63 | mcp-server/install.js:63（process.platform === win32 ? npx.cmd : npx） | 双运行模式：fromNpm 走 npx/npx.cmd，本地走 process.execPath + index.js |

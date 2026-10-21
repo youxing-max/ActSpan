@@ -8,6 +8,7 @@ import { getStyles } from './float-ball/styles';
 import { ActspanRoot } from './float-ball/ActspanRoot';
 import { DISABLED_DOMAINS_KEY, LEGACY_DISABLED_DOMAINS_KEY } from './float-ball/constants';
 import { readMigratedStorage } from '../lib/legacy-storage';
+import { emitGlobalClickOutside, emitGlobalEscape } from './float-ball/global-events';
 
 const storageArea = {
   get: (keys: string | string[]) => new Promise<Record<string, unknown>>((resolve) => chrome.storage.local.get<Record<string, unknown>>(keys, resolve)),
@@ -16,13 +17,14 @@ const storageArea = {
 
 /**
  * 创建悬浮球 Shadow DOM 宿主与 React 挂载容器。
- * 使用 open 模式，使宿主侧脚本（CDP 注入、页面解析）可以通过 host.shadowRoot 访问确认卡片。
+ * 使用 closed 模式：页面脚本无法通过 host.shadowRoot 读取或合成点击审批/提问控件，
+ * 内容脚本通过返回的 shadow 引用继续挂载 React。
  */
 export const createFloatBallShadowHost = () => {
   const host = document.createElement('div');
   host.id = 'actspan-root';
   host.style.cssText = 'position: fixed; top: 0; left: 0; width: 0; height: 0; overflow: visible; z-index: 2147483647; pointer-events: none;';
-  const shadow = host.attachShadow({ mode: 'open' });
+  const shadow = host.attachShadow({ mode: 'closed' });
 
   // 注入样式
   const styleEl = document.createElement('style');
@@ -110,21 +112,21 @@ export const initFloatBallReact = async () => {
   });
 
   // ---- 宿主文档上的全局事件监听 ----
-  // 通过 window 上的自定义事件桥接给 React（Shadow DOM 内组件无法直接访问外部 DOM 事件）
-
+  // 只接受用户真实输入（isTrusted），页面脚本合成的 keydown/mousedown 不得中止会话。
 
   // ESC 键（宿主文档）
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') {
-      window.dispatchEvent(new CustomEvent('actspan-escape'));
+    if (e.isTrusted && e.key === 'Escape') {
+      emitGlobalEscape();
     }
   });
 
   // 点击外部关闭（宿主文档 mousedown）
   document.addEventListener('mousedown', (e) => {
+    if (!e.isTrusted) return;
     const path = e.composedPath();
     if (!path.includes(host)) {
-      window.dispatchEvent(new CustomEvent('actspan-click-outside'));
+      emitGlobalClickOutside();
     }
   });
 };

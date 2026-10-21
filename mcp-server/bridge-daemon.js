@@ -1,21 +1,22 @@
 #!/usr/bin/env node
 import net from 'node:net';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { ExtensionHub } from './bridge.js';
-import { takeOverStartLock, releaseStartLock, startLockHeartbeat, BRIDGE_APP_VERSION } from './bridge-lock.js';
+import { takeOverStartLock, releaseStartLock, startLockHeartbeat, BRIDGE_APP_VERSION, bridgePaths } from './bridge-lock.js';
 
 const PROTOCOL = 'actspan-bridge-rpc-v1';
 const MAX_FRAME_BYTES = 16 * 1024 * 1024;
+/** 单个客户端在途请求上限，防止本地客户端堆满内存。 */
+const MAX_PENDING_REQUESTS_PER_CLIENT = 32;
 const portArg = process.argv.indexOf('--port');
 const originsArg = process.argv.indexOf('--origins-json');
 const bridgePort = Number(portArg >= 0 ? process.argv[portArg + 1] : 30121);
 let pairOrigins = [];
 try { pairOrigins = JSON.parse(originsArg >= 0 ? process.argv[originsArg + 1] : '[]'); } catch { pairOrigins = []; }
 
-const rpcPath = path.join(os.homedir(), '.actspan', `bridge-${bridgePort}.rpc`);
+const rpcPath = bridgePaths(bridgePort).credentialPath;
 const frame = (value) => {
     const text = JSON.stringify(value);
     if (Buffer.byteLength(text) > MAX_FRAME_BYTES - 1) throw new Error('RPC frame too large');
@@ -117,6 +118,15 @@ async function request(client, message) {
     // `status.*` 是 daemon 自己的命名空间：不认识的必须当面报错，不能当成扩展命令转发出去。
     if (message.method.startsWith('status.')) {
         client.socket.write(frame({ type: 'result', id: message.id, ok: false, error: `Unknown daemon method: ${message.method}` }));
+        return;
+    }
+    // 同一客户端的 message.id 是响应关联键：重复 id 会覆盖在途记录，导致前一个请求再也收不到结果。
+    if (client.requests.has(message.id)) {
+        client.socket.write(frame({ type: 'result', id: message.id, ok: false, error: 'Duplicate request id' }));
+        return;
+    }
+    if (client.requests.size >= MAX_PENDING_REQUESTS_PER_CLIENT) {
+        client.socket.write(frame({ type: 'result', id: message.id, ok: false, error: 'Too many pending requests' }));
         return;
     }
     // requestId 必须在这里生成：它既是 hub 的响应关联键，也是取消在途请求的句柄。

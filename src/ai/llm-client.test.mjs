@@ -145,6 +145,22 @@ test('chatStream streams chat/completions delta content until finish_reason stop
   assert.equal(chunks.at(-1).unrecognizedEventCount, 0);
 });
 
+test('chatStream emits an assistant message output item so replies survive in context', async () => {
+  installChrome(chatSettings);
+  installFetch(() => sseResponse([
+    { choices: [{ delta: { role: 'assistant', content: '最终' } }] },
+    { choices: [{ delta: { content: '回答' } }] },
+    { choices: [{ delta: {}, finish_reason: 'stop' }] },
+  ]));
+
+  const chunks = await collect(chatStream([{ role: 'user', content: 'hi' }]));
+  const message = chunks.map((chunk) => chunk.outputItem).find((item) => item?.type === 'message');
+
+  assert.equal(message?.role, 'assistant');
+  assert.deepEqual(message?.content, [{ type: 'output_text', text: '最终回答' }]);
+  assert.match(message.id, /^chat_msg_/);
+});
+
 test('chatStream aggregates fragmented tool_calls into one function_call output item', async () => {
   installChrome(chatSettings);
   installFetch(() => sseResponse([
@@ -264,4 +280,20 @@ test('chatComplete keeps pure-text part arrays as plain string content', async (
   assert.deepEqual(calls[0].body.messages, [
     { role: 'user', content: 'line one\nline two' },
   ]);
+});
+
+test('chatStream accepts data: without a space and skips SSE comment lines', async () => {
+  installChrome(chatSettings);
+  globalThis.fetch = async () => new Response([
+    ': keep-alive',
+    'data:{"choices":[{"delta":{"role":"assistant","content":"OK"}}]}',
+    'data:{"choices":[{"delta":{},"finish_reason":"stop"}]}',
+    'data:[DONE]',
+    '',
+  ].join('\n'), { headers: { 'content-type': 'text/event-stream' } });
+
+  const chunks = await collect(chatStream([{ role: 'user', content: 'hi' }]));
+  assert.equal(chunks.map((chunk) => chunk.delta || '').join(''), 'OK');
+  assert.equal(chunks.at(-1).done, true);
+  assert.equal(chunks.at(-1).unrecognizedEventCount, 0);
 });

@@ -5,8 +5,46 @@
 
 import type { FunctionDefinition, ToolExecutionContext } from './types';
 import { tabLeaseManager } from '../background/tab-lease-manager';
+import { isBlockedFetchUrl, isSafeNavigableUrl } from '../lib/ssrf-guard';
+import { waitForTabComplete } from './tab-utils';
 import { taskManager } from '../background/task-manager';
 import type { TaskContext } from '../background/task-types';
+
+/**
+ * 打开标签页后等待首次加载并复检最终地址：初始 URL 是公网不代表 302 后仍是公网。
+ * 命中本机/内网/非 http(s) 时关闭标签页并失败，避免盲 SSRF。
+ */
+const verifyOpenedTabTarget = async (tabId: number, signal?: AbortSignal): Promise<string | null> => {
+  const inspect = (tab: chrome.tabs.Tab | undefined): string | null => {
+    const finalUrl = tab?.url || tab?.pendingUrl || '';
+    if (!finalUrl || finalUrl.startsWith('about:blank')) return null;
+    if (!isSafeNavigableUrl(finalUrl) || isBlockedFetchUrl(finalUrl)) {
+      return '目标页面重定向到本机、内网或非 http(s) 地址，已关闭标签页';
+    }
+    return null;
+  };
+  try {
+    // 已加载完成（含测试替身）时无需等待事件；仍在加载才监听完成事件。
+    const initial = await chrome.tabs.get(tabId);
+    // 测试替身可能没有 onUpdated；真实 Chrome 始终提供，只有能监听时才等待加载完成。
+    const canObserveUpdates = typeof (chrome.tabs as unknown as {
+      onUpdated?: { addListener?: unknown };
+    }).onUpdated?.addListener === 'function';
+    if (initial?.status !== 'complete' && canObserveUpdates) {
+      try {
+        await waitForTabComplete(tabId, 15_000, '打开标签页等待加载超时', signal);
+      } catch {
+        // 超时或被用户中止时仍以当前地址为准，继续做一次静态复检。
+      }
+    }
+    const error = inspect(await chrome.tabs.get(tabId));
+    if (error) await chrome.tabs.remove(tabId).catch(() => undefined);
+    return error;
+  } catch {
+    // 标签页已被用户关闭或读取失败：没有可复检的目标，按成功返回打开结果。
+    return null;
+  }
+};
 
 /** 操作已有标签页的写动作：必须通过任务租约授权，避免跨任务操作他人标签页。 */
 const TAB_WRITE_ACTIONS: Record<string, true> = {
@@ -28,18 +66,30 @@ const ownedContext = (context?: ToolExecutionContext): TaskContext | null => {
   };
 };
 
+const isHttpUrl = (value: string): boolean => /^https?:/i.test(String(value).trim());
+
+/** 只有 http(s) 需要做内网/本机校验；about:blank 应放行。 */
+const isBlockedNavigationTarget = (value: string): boolean =>
+  isHttpUrl(value) && isBlockedFetchUrl(value);
+
 export const tabNavigateFunction: FunctionDefinition = {
   name: 'tab_navigate',
   description: 'Tab navigation control. Supports: open/close/switch/list/reload/go back & forward/duplicate/pin/mute/move tab position.\n\n⚠️ Do NOT use this tool for:\n- Do not use navigate to redirect the page the user is currently browsing (use open to create a new tab instead)\n- Before close, make sure it will not lose the user\'s ongoing work',
   supportsParallel: false,
   permissionLevel: 'interact',
   actionPermissions: {
+    // 打开新标签页会立即发起 GET，可用于数据外发或探测本机/内网服务
+    open: 'sensitive',
     navigate: 'dangerous',
     close: 'dangerous',
+    // 列举所有标签页会暴露用户正在浏览的完整 URL 列表，需确认
+    list: 'sensitive',
   },
   approvalMessageTemplate: {
+    open: 'AI 正在请求打开标签页 {url}',
     navigate: 'AI 正在请求跳转当前页面到 {url}',
     close: 'AI 正在请求关闭标签页',
+    list: 'AI 正在请求列出所有标签页（包含完整 URL）',
   },
   parameters: {
     type: 'object',
@@ -89,6 +139,12 @@ export const tabNavigateFunction: FunctionDefinition = {
     if (!action) return 'Missing action';
     if (action === 'open' && !params.url) return 'open requires url';
     if (action === 'navigate' && !params.url) return 'navigate requires url';
+    if ((action === 'open' || action === 'navigate') && params.url && !isSafeNavigableUrl(params.url)) {
+      return 'url must be http/https (or about:blank)';
+    }
+    if ((action === 'open' || action === 'navigate') && params.url && isBlockedNavigationTarget(params.url)) {
+      return 'url 不允许指向本机或内网地址';
+    }
     if (action === 'switch' && typeof params.tab_id !== 'number') return 'switch requires tab_id';
     if (action === 'move' && typeof params.index !== 'number') return 'move requires index';
     return null;
@@ -120,6 +176,12 @@ export const tabNavigateFunction: FunctionDefinition = {
         if (!url) {
           return { success: false, error: '打开标签页需要提供 url' };
         }
+        if (!isSafeNavigableUrl(url)) {
+          return { success: false, error: '仅允许打开 http/https 页面（或 about:blank）' };
+        }
+        if (isBlockedNavigationTarget(url)) {
+          return { success: false, error: 'url 不允许指向本机或内网地址' };
+        }
         let debugPlacement: Pick<chrome.tabs.CreateProperties, 'openerTabId' | 'windowId'> | undefined;
         if (context?.isolatedDebug && typeof context.tabId === 'number') {
           const openerTab = await chrome.tabs.get(context.tabId);
@@ -139,6 +201,13 @@ export const tabNavigateFunction: FunctionDefinition = {
             } catch { /* 标签页已创建，租约失败不应回滚打开结果 */ }
           }
         }
+        if (typeof tab.id === 'number') {
+          const redirectError = await verifyOpenedTabTarget(tab.id, context?.signal);
+          if (redirectError) {
+            if (taskContext) tabLeaseManager.release(taskContext.taskId, tab.id, taskContext.clientId);
+            return { success: false, error: redirectError };
+          }
+        }
         return {
           success: true,
           data: {
@@ -152,6 +221,12 @@ export const tabNavigateFunction: FunctionDefinition = {
       case 'navigate': {
         if (!url) {
           return { success: false, error: '当前标签页导航需要提供 url' };
+        }
+        if (!isSafeNavigableUrl(url)) {
+          return { success: false, error: '仅允许导航到 http/https 页面（或 about:blank）' };
+        }
+        if (isBlockedNavigationTarget(url)) {
+          return { success: false, error: 'url 不允许指向本机或内网地址' };
         }
         const targetId = tab_id || context?.tabId;
         if (!targetId) {

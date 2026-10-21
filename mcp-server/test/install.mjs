@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { serverDefinition, planConfig, applyPlan, printPlan, runInstall, versionReport, discoverConfigs, extensionIdFromKey, pairExtension } from '../install.js';
+import { serverDefinition, planConfig, applyPlan, printPlan, versionReport, discoverConfigs, extensionIdFromKey, pairExtension } from '../install.js';
 import { validateConfig } from '../catalog.js';
 
 const CONTROL_PLANE = { apiUrl: 'https://api.example.com', apiKey: 'installer-key' };
@@ -74,17 +74,75 @@ test('installer refuses to emit a definition the server would reject', () => {
 });
 
 test('installer CLI runs local-only without the control-plane environment', () => {
-    const result = spawnSync(process.execPath, ['install.js', '--dry-run'], {
-        cwd: new URL('..', import.meta.url),
-        env: { ...process.env, ACTSPAN_API_URL: '', ACTSPAN_API_KEY: '' },
-        encoding: 'utf8',
-    });
-    assert.equal(result.status, 0);
-    assert.doesNotMatch(result.stdout, /control plane|ACTSPAN_API_KEY/);
+    const fakeHome = mkdtempSync(path.join(os.tmpdir(), 'actspan-home-'));
+    fs.mkdirSync(path.join(fakeHome, '.codex'), { recursive: true });
+    writeFileSync(path.join(fakeHome, '.codex', 'config.toml'), 'model = "o3"\n');
+    try {
+        const result = spawnSync(process.execPath, ['install.js', '--dry-run'], {
+            cwd: new URL('..', import.meta.url),
+            env: { ...process.env, HOME: fakeHome, ACTSPAN_API_URL: '', ACTSPAN_API_KEY: '' },
+            encoding: 'utf8',
+        });
+        assert.equal(result.status, 0);
+        assert.doesNotMatch(result.stdout, /control plane|ACTSPAN_API_KEY/);
+    } finally {
+        fs.rmSync(fakeHome, { recursive: true, force: true });
+    }
 });
 
-test('installer refuses a caller-supplied extension id that drifts from the manifest key', async () => {
-    await assert.rejects(() => runInstall({ dryRun: true, extensionId: 'a'.repeat(32) }), /扩展 ID 不匹配/);
+test('installer refuses a caller-supplied extension id that drifts from the manifest key', () => {
+    const fakeHome = mkdtempSync(path.join(os.tmpdir(), 'actspan-home-'));
+    fs.mkdirSync(path.join(fakeHome, '.codex'), { recursive: true });
+    writeFileSync(path.join(fakeHome, '.codex', 'config.toml'), 'model = "o3"\n');
+    try {
+        const result = spawnSync(process.execPath, ['install.js', '--dry-run', '--extension-id', 'a'.repeat(32)], {
+            cwd: new URL('..', import.meta.url),
+            env: { ...process.env, HOME: fakeHome, ACTSPAN_API_URL: '', ACTSPAN_API_KEY: '' },
+            encoding: 'utf8',
+        });
+        assert.equal(result.status, 1);
+        assert.match(result.stderr, /扩展 ID 不匹配/);
+    } finally {
+        fs.rmSync(fakeHome, { recursive: true, force: true });
+    }
+});
+
+test('非交互安装没有扩展 ID 时快速失败，不会空等配对', () => {
+    const fakeHome = mkdtempSync(path.join(os.tmpdir(), 'actspan-home-'));
+    const config = path.join(fakeHome, '.codex', 'config.toml');
+    fs.mkdirSync(path.dirname(config), { recursive: true });
+    writeFileSync(config, 'model = "o3"\n');
+    try {
+        const startedAt = Date.now();
+        const result = spawnSync(process.execPath, ['install.js', '--apply', '--yes'], {
+            cwd: new URL('..', import.meta.url),
+            env: { ...process.env, HOME: fakeHome, ACTSPAN_API_URL: '', ACTSPAN_API_KEY: '' },
+            encoding: 'utf8',
+        });
+        assert.equal(result.status, 1);
+        assert.match(result.stderr, /非交互环境/);
+        assert.equal(fs.readFileSync(config, 'utf8'), 'model = "o3"\n');
+        assert.ok(Date.now() - startedAt < 5000, 'should not wait for the default 120s pairing timeout');
+    } finally {
+        fs.rmSync(fakeHome, { recursive: true, force: true });
+    }
+});
+
+test('非法 --pair-timeout 在写配置前被拒绝', () => {
+    const fakeHome = mkdtempSync(path.join(os.tmpdir(), 'actspan-home-'));
+    fs.mkdirSync(path.join(fakeHome, '.codex'), { recursive: true });
+    writeFileSync(path.join(fakeHome, '.codex', 'config.toml'), 'model = "o3"\n');
+    try {
+        const result = spawnSync(process.execPath, ['install.js', '--apply', '--yes', '--pair-timeout', 'abc'], {
+            cwd: new URL('..', import.meta.url),
+            env: { ...process.env, HOME: fakeHome, ACTSPAN_API_URL: '', ACTSPAN_API_KEY: '' },
+            encoding: 'utf8',
+        });
+        assert.equal(result.status, 1);
+        assert.match(result.stderr, /Invalid --pair-timeout/);
+    } finally {
+        fs.rmSync(fakeHome, { recursive: true, force: true });
+    }
 });
 
 test('JSON install creates a timestamped backup before merge and writes a server-valid definition', () => {
@@ -120,4 +178,127 @@ test('discovery deduplicates known and home-scanned paths', () => {
     writeFileSync(path.join(nested, 'mcp.json'), JSON.stringify({ mcpServers: {} }));
     const found = discoverConfigs({ homeDir: dir, env: {}, platform: 'linux' });
     assert.equal(new Set(found.map((entry) => entry.path.toLowerCase())).size, found.length);
+});
+
+test('扫描到的未知配置默认只预览，必须显式 --include-unknown 才写入', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'actspan-unknown-'));
+    const nested = path.join(dir, '.unknown-client');
+    fs.mkdirSync(nested);
+    const file = path.join(nested, 'mcp.json');
+    writeFileSync(file, JSON.stringify({ mcpServers: {} }));
+    const entry = discoverConfigs({ homeDir: dir, env: {}, platform: 'linux' }).find((item) => item.path === file);
+    assert.equal(entry?.known, false);
+    const definition = serverDefinition({ extensionId: extensionIdFromKey(), ...CONTROL_PLANE });
+    const blocked = planConfig(entry, definition);
+    assert.equal(blocked.action, 'manual');
+    assert.match(blocked.reason, /include-unknown/);
+    assert.equal(applyPlan(blocked).applied, false);
+    assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { mcpServers: {} });
+
+    const allowed = planConfig(entry, definition, { unknownAllowed: true });
+    assert.notEqual(allowed.action, 'manual');
+    assert.equal(applyPlan(allowed).applied, true);
+    assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).mcpServers.actspan.command, process.execPath);
+});
+
+test('非对象的 mcpServers 被判为 unsupported，绝不展开成数字键', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'actspan-shape-'));
+    const definition = serverDefinition({ extensionId: extensionIdFromKey(), ...CONTROL_PLANE });
+    for (const value of [[{ command: 'node' }], 'oops', null]) {
+        const file = path.join(dir, `mcp-${typeof value}-${Array.isArray(value) ? 'array' : String(value)}.json`);
+        const original = JSON.stringify({ mcpServers: value }, null, 2);
+        writeFileSync(file, original);
+        const plan = planConfig({ path: file, exists: true, format: 'json' }, definition);
+        assert.equal(plan.action, 'manual');
+        assert.match(plan.reason, /mcpServers 不是普通对象/);
+        assert.equal(applyPlan(plan).applied, false);
+        assert.equal(fs.readFileSync(file, 'utf8'), original);
+    }
+});
+
+test('旧 actspan 配置与当前安装不一致时要求 --force 才更新', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'actspan-stale-'));
+    const file = path.join(dir, 'mcp.json');
+    writeFileSync(file, JSON.stringify({ mcpServers: { actspan: { command: 'old-node', args: ['old.js'] } } }, null, 2));
+    const definition = serverDefinition({ extensionId: extensionIdFromKey(), ...CONTROL_PLANE });
+    const stale = planConfig({ path: file, exists: true, format: 'json' }, definition);
+    assert.equal(stale.action, 'manual');
+    assert.match(stale.reason, /--force/);
+    assert.equal(applyPlan(stale).applied, false);
+
+    const forced = planConfig({ path: file, exists: true, format: 'json' }, definition, { force: true });
+    assert.equal(forced.action, 'merge');
+    assert.equal(applyPlan(forced, { now: 456 }).applied, true);
+    const written = JSON.parse(fs.readFileSync(file, 'utf8')).mcpServers.actspan;
+    assert.deepEqual(written, definition);
+    assert.equal(fs.existsSync(`${file}.bak-456`), true);
+});
+
+test('原子写入保留 dotfiles 符号链接并更新真实目标', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'actspan-symlink-'));
+    const real = path.join(dir, 'dotfiles-config.toml');
+    const link = path.join(dir, 'config.toml');
+    writeFileSync(real, '[other]\nkey = "value"\n');
+    fs.symlinkSync(real, link);
+    const definition = serverDefinition({ extensionId: extensionIdFromKey(), ...CONTROL_PLANE });
+    const plan = planConfig({ path: link, exists: true, format: 'toml' }, definition);
+    assert.equal(applyPlan(plan, { now: 789 }).applied, true);
+    assert.equal(fs.lstatSync(link).isSymbolicLink(), true);
+    assert.equal(fs.realpathSync(link), fs.realpathSync(real));
+    const updated = fs.readFileSync(real, 'utf8');
+    assert.match(updated, /\[other\]/);
+    assert.match(updated, /\[mcp_servers\.actspan\]/);
+});
+
+test('损坏配置导致 0 写入时 CLI 以非零退出', () => {
+    const fakeHome = mkdtempSync(path.join(os.tmpdir(), 'actspan-home-'));
+    const cursorDir = path.join(fakeHome, 'Library', 'Application Support', 'Cursor', 'User');
+    fs.mkdirSync(cursorDir, { recursive: true });
+    writeFileSync(path.join(cursorDir, 'mcp.json'), '{bad');
+    const result = spawnSync(process.execPath, ['install.js', '--apply', '--yes', '--extension-id', extensionIdFromKey()], {
+        cwd: new URL('..', import.meta.url),
+        env: { ...process.env, HOME: fakeHome, ACTSPAN_API_URL: '', ACTSPAN_API_KEY: '' },
+        encoding: 'utf8',
+    });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /没有写入任何配置/);
+});
+
+test('TOML 首次写入后二次安装应 skip，--force 不产生重复 env 表', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'actspan-toml-idem-'));
+    const file = path.join(dir, 'config.toml');
+    writeFileSync(file, '[other]\nx = 1\n');
+    const definition = serverDefinition({ extensionId: extensionIdFromKey(), ...CONTROL_PLANE });
+    const first = planConfig({ path: file, exists: true, format: 'toml' }, definition);
+    assert.equal(first.action, 'append');
+    assert.equal(applyPlan(first, { now: 111 }).applied, true);
+
+    const second = planConfig({ path: file, exists: true, format: 'toml' }, definition);
+    assert.equal(second.action, 'skip', second.reason);
+
+    const changed = { ...definition, command: '/tmp/new-node' };
+    const forced = planConfig({ path: file, exists: true, format: 'toml' }, changed, { force: true });
+    assert.equal(forced.action, 'merge');
+    assert.equal(applyPlan(forced, { now: 222 }).applied, true);
+    const text = fs.readFileSync(file, 'utf8');
+    assert.match(text, /command = "\/tmp\/new-node"/);
+    assert.equal((text.match(/^\[mcp_servers\.actspan\]$/gm) || []).length, 1);
+    assert.equal((text.match(/^\[mcp_servers\.actspan\.env\]$/gm) || []).length, 1);
+    assert.match(text, /\[other\]\nx = 1/);
+});
+
+test('TOML 旧 actspan 段在 --force 时原位替换并保留其它表', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'actspan-toml-stale-'));
+    const file = path.join(dir, 'config.toml');
+    writeFileSync(file, '[other]\nx = 1\n\n[mcp_servers.actspan]\ncommand = "old"\nargs = ["old.js"]\n\n[after]\ny = 2\n');
+    const definition = serverDefinition({ extensionId: extensionIdFromKey(), ...CONTROL_PLANE });
+    assert.equal(planConfig({ path: file, exists: true, format: 'toml' }, definition).action, 'manual');
+    const forced = planConfig({ path: file, exists: true, format: 'toml' }, definition, { force: true });
+    assert.equal(forced.action, 'merge');
+    assert.equal(applyPlan(forced, { now: 321 }).applied, true);
+    const text = fs.readFileSync(file, 'utf8');
+    assert.match(text, /\[other\]\nx = 1/);
+    assert.match(text, /\[after\]\ny = 2/);
+    assert.match(text, new RegExp(`command = "${definition.command.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`));
+    assert.equal((text.match(/\[mcp_servers\.actspan\]/g) || []).length, 1);
 });

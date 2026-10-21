@@ -14,7 +14,6 @@ import type {
   AISettings,
   ToolChoice,
   ContentPart,
-  InputTextContent,
 } from './types';
 import { DEFAULT_LLM_IDLE_TIMEOUT_MS, DEFAULT_LLM_TOTAL_TIMEOUT_MS, createDeadlineSignal } from './deadline';
 
@@ -79,16 +78,17 @@ type ChatMessage = {
  */
 const toChatContent = (content: string | ContentPart[]): string | ChatContentPart[] => {
   if (typeof content === 'string') return content;
-  if (!content.some((part) => part.type === 'input_image')) {
+  const hasImage = content.some((part) => (part as { type?: string }).type === 'input_image');
+  if (!hasImage) {
     return content
-      .filter((part): part is InputTextContent => part.type === 'input_text')
-      .map((part) => part.text)
+      .filter((part) => typeof (part as { text?: unknown }).text === 'string')
+      .map((part) => (part as { text: string }).text)
       .join('\n');
   }
   return content.map((part) => (
-    part.type === 'input_image'
-      ? { type: 'image_url' as const, image_url: { url: part.image_url } }
-      : { type: 'text' as const, text: part.text }
+    (part as { type?: string }).type === 'input_image'
+      ? { type: 'image_url' as const, image_url: { url: (part as { image_url: string }).image_url } }
+      : { type: 'text' as const, text: (part as { text?: string }).text ?? '' }
   ));
 };
 
@@ -149,9 +149,52 @@ export const getAISettings = async (): Promise<AISettings> => {
 
 /** 保存 AI 配置 */
 export const saveAISettings = async (settings: Partial<AISettings>): Promise<void> => {
+  if (settings.endpoint !== undefined) {
+    const checked = validateEndpoint(settings.endpoint);
+    if (!checked.ok) throw new Error(checked.error);
+    settings = { ...settings, endpoint: checked.endpoint };
+  }
   const current = await getAISettings();
   const updated = { ...current, ...settings };
   await chrome.storage.local.set({ [STORAGE_KEY_AI_SETTINGS]: updated });
+};
+
+export type EndpointValidation =
+  | { ok: true; endpoint: string; warning?: string }
+  | { ok: false; error: string };
+
+const LOCAL_HTTP_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
+
+/**
+ * 校验 LLM Endpoint：默认只允许 https；仅本机地址允许 http（并给出警告）。
+ * 同时拒绝 URL 内嵌账号密码，避免把 Basic 凭据一起发出去。
+ */
+export const validateEndpoint = (value: string): EndpointValidation => {
+  const trimmed = String(value || '').trim();
+  if (!trimmed) return { ok: false, error: '请填写 API Endpoint' };
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    return { ok: false, error: 'Endpoint 不是合法 URL' };
+  }
+  if (url.username || url.password) {
+    return { ok: false, error: 'Endpoint 不能包含用户名或密码' };
+  }
+  if (url.protocol === 'https:') {
+    return { ok: true, endpoint: url.toString() };
+  }
+  if (url.protocol === 'http:') {
+    if (!LOCAL_HTTP_HOSTS.has(url.hostname.toLowerCase())) {
+      return { ok: false, error: 'API Key 只能通过 https 发送；本机调试请使用 localhost/127.0.0.1' };
+    }
+    return {
+      ok: true,
+      endpoint: url.toString(),
+      warning: '正在使用 http 明文连接本机服务，请确认该端口仅监听本机。',
+    };
+  }
+  return { ok: false, error: 'Endpoint 仅支持 https（或本机 http）' };
 };
 
 /**
@@ -215,12 +258,15 @@ export const chatComplete = async (
 
   const deadline = createDeadlineSignal(signal, DEFAULT_LLM_TOTAL_TIMEOUT_MS, 'LLM request exceeded its total deadline');
   try {
-    const res = await fetch(settings.endpoint, {
+    // 防御性校验：即使旧配置/外部写入绕过设置页，也绝不把 API Key 明文发到公网
+    const endpointCheck = validateEndpoint(settings.endpoint);
+    if (!endpointCheck.ok) throw new Error(endpointCheck.error);
+
+    const res = await fetch(endpointCheck.endpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${settings.apiKey}`,
-        'User-Agent': 'claude-code/1.0.0',
       },
       body: JSON.stringify(body),
       signal: deadline.signal,
@@ -335,12 +381,14 @@ export async function* chatStream(
   const deadline = createDeadlineSignal(signal, DEFAULT_LLM_TOTAL_TIMEOUT_MS, 'LLM stream exceeded its total deadline');
   let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
   try {
-    const res = await fetch(settings.endpoint, {
+    const endpointCheck = validateEndpoint(settings.endpoint);
+    if (!endpointCheck.ok) throw new Error(endpointCheck.error);
+
+    const res = await fetch(endpointCheck.endpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${settings.apiKey}`,
-        'User-Agent': 'claude-code/1.0.0',
       },
       body: JSON.stringify(body),
       signal: deadline.signal,
@@ -364,8 +412,26 @@ export async function* chatStream(
       done,
       unrecognizedEventCount,
     } as StreamChunk & { unrecognizedEventCount: number });
+    /** Chat Completions 模式累积的助手文本（用于补写 assistant message） */
+    let chatFullText = '';
+    let sawAssistantMessage = false;
     /** chat/completions 流式工具调用按 index 聚合的累加器 */
     const toolCallAcc = new Map<number, { id: string; name: string; arguments: string }>();
+    /** chat/completions 不返回 message 输出项，结束时补一条，供上下文/子代理读取 */
+    const flushAssistantMessage = function* (): Generator<StreamChunk> {
+      if (!isChatCompletions || sawAssistantMessage) return;
+      const text = chatFullText.trim();
+      if (!text) return;
+      sawAssistantMessage = true;
+      yield {
+        outputItem: {
+          type: 'message',
+          id: `chat_msg_${Date.now()}`,
+          role: 'assistant',
+          content: [{ type: 'output_text', text }],
+        },
+      };
+    };
     const flushToolCalls = function* (): Generator<StreamChunk> {
       for (const [, entry] of [...toolCallAcc.entries()].sort((a, b) => a[0] - b[0])) {
         yield {
@@ -403,12 +469,16 @@ export async function* chatStream(
 
         for (const line of lines) {
           const trimmed = line.trim();
-          if (!trimmed || trimmed.startsWith('event:')) continue;
-          if (!trimmed.startsWith('data: ')) continue;
+          // 以冒号开头的是 SSE 注释行；兼容 "data: {...}" 与不带空格的 "data:{...}"。
+          if (!trimmed || trimmed.startsWith(':') || trimmed.startsWith('event:')) continue;
+          if (!trimmed.startsWith('data:')) continue;
 
-          const data = trimmed.slice(6);
+          const data = trimmed.slice(5).trimStart();
           if (data === '[DONE]') {
-            if (isChatCompletions) yield* flushToolCalls();
+            if (isChatCompletions) {
+              yield* flushAssistantMessage();
+              yield* flushToolCalls();
+            }
             yield terminalChunk();
             return;
           }
@@ -422,6 +492,7 @@ export async function* chatStream(
             }
             if (json.type === 'response.output_item.done' && json.item) {
               recognized = true;
+              if (json.item.type === 'message') sawAssistantMessage = true;
               yield { outputItem: json.item as OutputItem };
             }
             if (json.type === 'response.completed' || json.type === 'response.done') {
@@ -432,6 +503,7 @@ export async function* chatStream(
             const content = json.choices?.[0]?.delta?.content;
             if (typeof content === 'string') {
               recognized = true;
+              chatFullText += content;
               yield { delta: content };
             }
             if (isChatCompletions) {
@@ -455,12 +527,14 @@ export async function* chatStream(
               const finishReason = choice?.finish_reason;
               if (finishReason === 'tool_calls') {
                 recognized = true;
+                yield* flushAssistantMessage();
                 yield* flushToolCalls();
                 yield terminalChunk();
                 return;
               }
               if (finishReason === 'stop') {
                 recognized = true;
+                yield* flushAssistantMessage();
                 yield terminalChunk();
                 return;
               }
@@ -475,7 +549,10 @@ export async function* chatStream(
         idle.cleanup();
       }
     }
-    if (isChatCompletions) yield* flushToolCalls();
+    if (isChatCompletions) {
+      yield* flushAssistantMessage();
+      yield* flushToolCalls();
+    }
     if (unrecognizedEventCount > 0) yield terminalChunk();
   } catch (error) {
     if (deadline.didTimeout()) throw deadline.timeoutError;

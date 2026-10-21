@@ -166,6 +166,7 @@ export class TabLeaseManager {
 
   authorize(context: TaskContext, tabId: number, write = true): TabLease {
     const lease = this.leases.get(tabId);
+    // 过期租约不会被 authorize 静默续期；原任务需调用 reclaim() 显式接管
     if (!lease || lease.releasedAt || lease.expiresAt <= Date.now()) {
       throw new TabLeaseError(`任务未拥有标签页 ${tabId}。请调用 tabs.list 选择自己的标签页，或先新建标签页取得租约。`, 'E_TAB_OWNERSHIP');
     }
@@ -178,6 +179,59 @@ export class TabLeaseManager {
     this.disconnected.delete(this.sessionKey(context));
     lease.expiresAt = Date.now() + LEASE_TTL_MS;
     return lease;
+  }
+
+  /** 显式接管：租约已过期或未释放时，允许新任务取得所有权；有效租约仍拒绝抢占。 */
+  reclaim(context: TaskContext, tabId: number): TabLease {
+    const now = Date.now();
+    const current = this.leases.get(tabId);
+    const sameOwner = current
+      && current.taskId === context.taskId
+      && current.sessionId === context.sessionId
+      && current.clientId === context.clientId;
+    if (current && !current.releasedAt && current.expiresAt > now && !sameOwner) {
+      throw this.ownershipError(tabId);
+    }
+    const lease: TabLease = {
+      taskId: context.taskId,
+      sessionId: context.sessionId,
+      clientId: context.clientId,
+      tabId,
+      creator: context.owner,
+      createdAt: current?.createdAt || now,
+      expiresAt: now + LEASE_TTL_MS,
+    };
+    this.leases.set(tabId, lease);
+    const record = this.ownTabs.get(tabId);
+    if (!record || record.taskId === context.taskId || sameOwner) {
+      this.ownTabs.set(tabId, {
+        taskId: context.taskId,
+        sessionId: context.sessionId,
+        clientId: context.clientId,
+        tabId,
+        label: record?.label,
+        defaultSlot: record?.defaultSlot ?? false,
+        createdAt: record?.createdAt ?? now,
+        updatedAt: now,
+      });
+    }
+    this.disconnected.delete(this.sessionKey(context));
+    this.onChange();
+    return lease;
+  }
+
+  /** 标签页关闭：释放该标签页上的租约、归属记录与调试器租约（避免残留阻挡后续操作）。 */
+  releaseTab(tabId: number): void {
+    const hadLease = this.leases.delete(tabId);
+    const hadRecord = this.ownTabs.delete(tabId);
+    const hadOwner = this.debuggerOwners.delete(tabId);
+    const debuggerLease = this.debuggerLeases.get(tabId);
+    if (debuggerLease) {
+      clearTimeout(debuggerLease.timer);
+      this.debuggerLeases.delete(tabId);
+      void debuggerLease.detach().catch(() => undefined);
+    }
+    if (hadLease || hadRecord || hadOwner || debuggerLease) this.onChange();
   }
 
   release(taskId: string, tabId?: number, clientId?: string): number {

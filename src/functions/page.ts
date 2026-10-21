@@ -189,20 +189,29 @@ export const pageFunction: FunctionDefinition = {
           tab_id: params.tab_id,
         }, context);
 
-      case 'assert':
+      case 'assert': {
+        // assert/repair 通过 context.tabId 定位页面：显式 tab_id 必须覆盖会话标签页
+        const assertContext = typeof params.tab_id === 'number'
+          ? { ...context, tabId: params.tab_id }
+          : context;
         return pageAssertFunction.execute({
           mode: params.mode,
           scope_selector: params.scope_selector,
           assertions: params.assertions,
-        }, context);
+        }, assertContext);
+      }
 
-      case 'repair':
+      case 'repair': {
+        const repairContext = typeof params.tab_id === 'number'
+          ? { ...context, tabId: params.tab_id }
+          : context;
         return pageRepairFunction.execute({
           target_hint: params.target_hint,
           scope_selector: params.scope_selector,
           attempts: params.attempts,
           scroll_amount: params.scroll_amount,
-        }, context);
+        }, repairContext);
+      }
 
       default:
         return { success: false, error: `Unknown action: ${action}. Supported: view/snapshot/skeleton/assert/repair` };

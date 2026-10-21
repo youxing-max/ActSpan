@@ -4,6 +4,7 @@
  */
 import Channel from '../lib/channel';
 import { mcpClient } from '../functions/registry';
+import { resetSensitiveAccessTrust } from '../ai/tool-executor';
 import type { AIStreamEvent, SessionReplayPayload } from '../ai/types';
 import {
     sessions,
@@ -31,9 +32,9 @@ import {
     getSessionTaskKind,
     dispatchSessionOp,
     persistRuntimeSessions,
-    persistSessionHistory,
     RuntimeResourceManager,
 } from './session-manager';
+import { removeSessionHistory } from './session-history';
 import type {
     SessionOp,
     SessionCreateOp,
@@ -379,7 +380,6 @@ async function handleSessionClearOp(op: SessionClearOp) {
     if (session) {
         if (session.status === 'running') {
             await abortSessionTask(op.sessionId, 'interrupted', '会话已清除', 'E_CANCELLED');
-            persistSessionHistory(session);
         }
     }
 
@@ -407,6 +407,10 @@ async function handleSessionClearOp(op: SessionClearOp) {
         opQueue: buildSessionOpQueueSnapshot(now),
     });
     sessionTaskKinds.delete(op.sessionId);
+    // “清除”必须真正删除内存会话与历史，否则 persistRuntimeSessions 会把它原样写回
+    sessions.delete(op.sessionId);
+    removeSessionHistory(op.sessionId);
+    resetSensitiveAccessTrust(op.sessionId);
     persistRuntimeSessions();
 }
 
@@ -417,6 +421,7 @@ async function handleSessionCancelOp(op: SessionCancelOp) {
     } else {
         await RuntimeResourceManager.closeAll(op.sessionId);
     }
+    resetSensitiveAccessTrust(op.sessionId);
 
     const session = sessions.get(op.sessionId);
     if (session && session.status === 'error') {

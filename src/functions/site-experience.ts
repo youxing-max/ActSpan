@@ -774,31 +774,55 @@ const subtractSiteExperience = (merged: SiteExperienceMemory, builtin: SiteExper
   return result;
 };
 
-export const saveSiteExperience = async (input: SiteExperienceMemory | Record<string, unknown> | null | undefined, builtin: SiteExperienceMemory | Record<string, unknown> | null | undefined = null): Promise<SiteExperienceSaveResult> => {
+let siteExperienceMutationQueue: Promise<unknown> = Promise.resolve();
+/** 串行化本机层读改写，避免并发保存时后写者覆盖先写者的域。 */
+const serializeSiteExperienceMutation = <T>(operation: () => Promise<T>): Promise<T> => {
+  const run = siteExperienceMutationQueue.then(operation, operation);
+  siteExperienceMutationQueue = run.then(() => undefined, () => undefined);
+  return run;
+};
+
+const saveSiteExperienceUnlocked = async (input: SiteExperienceMemory | Record<string, unknown> | null | undefined, builtin: SiteExperienceMemory | Record<string, unknown> | null | undefined = null): Promise<SiteExperienceSaveResult> => {
   const unwrapped = unwrapSiteExperience(input);
   if (!unwrapped) throw new Error('site experience save requires a memory object, a site_experience get result, or their JSON text');
   // 回贴的全文自带出厂段；调用方没显式给 builtin 时就用它，否则出厂条目会被当成本机内容存下来。
   const declaredBuiltin = isPlainObject(input) && isPlainObject(input.builtin) ? input.builtin : null;
   const experience = subtractSiteExperience(unwrapped, stripSiteExperienceProvenance(builtin ?? declaredBuiltin));
   const current = await readMigratedStorage<SiteExperienceMemory>(storageArea, SITE_EXPERIENCE_LAYERS_STORAGE_KEY, 'mole_site_experience_layers_v1');
+  // 按域合并而不是整体覆盖：页面注入不能清空其他站点的经验，写入只影响本次提交的域。
+  const merged = copyMemory(current);
+  const incoming = copyMemory(experience);
+  for (const [key, record] of Object.entries(incoming.domains)) {
+    merged.domains[key] = record;
+  }
   const previous = await readMigratedStorage<SiteExperienceMemory[]>(storageArea, SITE_EXPERIENCE_REVISIONS_STORAGE_KEY, 'mole_site_experience_revisions_v1');
   const priorSnapshots = current && typeof current === 'object' && current.domains
     ? [stripSiteExperienceProvenance(current)]
     : [];
   const revisions = [...priorSnapshots, ...(Array.isArray(previous) ? previous.map(stripSiteExperienceProvenance) : [])].slice(0, 10);
-  await storageArea.set({ [SITE_EXPERIENCE_LAYERS_STORAGE_KEY]: experience, [SITE_EXPERIENCE_REVISIONS_STORAGE_KEY]: revisions });
-  return { experience, revisions, warning: '经验仅保存本机站点提示，不含凭据、表单值或完整 URL；经验是提示不是规则。' };
+  await storageArea.set({ [SITE_EXPERIENCE_LAYERS_STORAGE_KEY]: merged, [SITE_EXPERIENCE_REVISIONS_STORAGE_KEY]: revisions });
+  return { experience: merged, revisions, warning: '经验仅保存本机站点提示，不含凭据、表单值或完整 URL；经验是提示不是规则。' };
 };
+
+export const saveSiteExperience = (
+  input: SiteExperienceMemory | Record<string, unknown> | null | undefined,
+  builtin: SiteExperienceMemory | Record<string, unknown> | null | undefined = null,
+): Promise<SiteExperienceSaveResult> => serializeSiteExperienceMutation(
+  () => saveSiteExperienceUnlocked(input, builtin),
+);
 
 /** Promote a sanitized draft into the local layer, ahead of every existing recipe. */
 export const addSiteExperienceDraft = async (hostOrUrl: unknown, input: SiteExperienceDraft): Promise<void> => {
   const host = siteExperienceKey(hostOrUrl);
   const draft = safeDraft(input);
   if (!host || !draft) throw new Error('Invalid site draft');
-  const stored = await readMigratedStorage<SiteExperienceMemory>(storageArea, SITE_EXPERIENCE_LAYERS_STORAGE_KEY, 'mole_site_experience_layers_v1');
-  const local = stripSiteExperienceProvenance(stored);
-  const domain = local.domains[host] || { selectors: {}, failureReasons: {} };
-  domain.drafts = [draft, ...(domain.drafts || []).filter(existing => existing.id !== draft.id)];
-  local.domains[host] = domain;
-  await saveSiteExperience(local);
+  // 读改写一并入队：否则草稿会拿旧快照覆盖并发保存的其他域。
+  await serializeSiteExperienceMutation(async () => {
+    const stored = await readMigratedStorage<SiteExperienceMemory>(storageArea, SITE_EXPERIENCE_LAYERS_STORAGE_KEY, 'mole_site_experience_layers_v1');
+    const local = stripSiteExperienceProvenance(stored);
+    const domain = local.domains[host] || { selectors: {}, failureReasons: {} };
+    domain.drafts = [draft, ...(domain.drafts || []).filter(existing => existing.id !== draft.id)];
+    local.domains[host] = domain;
+    await saveSiteExperienceUnlocked(local);
+  });
 };

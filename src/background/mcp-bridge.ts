@@ -14,12 +14,13 @@ import { getBuiltinFunction } from '../functions/registry';
 import { readWebhookConfig, selectFeishuWebhooks, sendWebhookEntries } from '../functions/webhook';
 import { requestConfirmationFunction } from '../functions/request-confirmation';
 import { getWorkflowPlanActionNames, isWorkflowPlanActionAllowed, isWorkflowPlanSubActionAllowed, resolveWorkflowPlanAction, resolveTemplateValue, readPathValue } from '../functions/remote-workflow';
-import { redactAuditParams, redactPageContent, redactSensitive } from '../functions/redact';
+import { redactAuditParams, redactPageContent, redactSensitive, isCredentialUrl } from '../functions/redact';
 import { CHALLENGE_MESSAGE, createReadDriftTracker, detectChallenge, type ChallengeEvidence } from '../functions/risk-detect';
 import { getSyncStatus } from '../options/pages/actspan-console-status';
 import { DeadlineTimeoutError } from '../ai/deadline';
 import { getTaskExecutor, PolicyError, registerCapabilityHandler } from './policy-executor';
 import { TabLeaseError, tabLeaseManager } from './tab-lease-manager';
+import { isBlockedFetchUrl, isSafeNavigableUrl } from '../lib/ssrf-guard';
 import { taskManager } from './task-manager';
 import { handleMcpInteraction, isPageResultEnvelope } from './mcp-interaction';
 import { sendToTabWithRetry } from '../functions/tab-message';
@@ -119,6 +120,11 @@ export const handleOffscreenRequest = async (frame: BridgeRequestFrame): Promise
         tabLeaseManager.setSessionConnected({ clientId: frame.context.clientId, sessionId: frame.context.sessionId }, true);
     }
     const controller = new AbortController();
+    // 重复 id 会覆盖前一个 controller，令前一个请求永远无法取消，其 finally 还会删掉后一个条目。
+    if (inFlightBridgeRequests.has(frame.id)) {
+        sendOffscreen({ type: runtimeResponseType, frame: { id: frame.id, ...frame.context, ok: false, error: '重复的请求 id，已拒绝' } });
+        return;
+    }
     inFlightBridgeRequests.set(frame.id, controller);
     try {
         const result = await executeBridgeRequest(frame.method, normalizedParams, frame.context, controller.signal);
@@ -128,7 +134,7 @@ export const handleOffscreenRequest = async (frame: BridgeRequestFrame): Promise
         sendBridgeAudit(frame, false, normalizedParams, error);
         sendOffscreen({ type: runtimeResponseType, frame: { id: frame.id, ...frame.context, ok: false, error: error instanceof Error ? error.message : String(error) } });
     } finally {
-        inFlightBridgeRequests.delete(frame.id);
+        if (inFlightBridgeRequests.get(frame.id) === controller) inFlightBridgeRequests.delete(frame.id);
     }
 };
 const WORKFLOW_CAPABILITY: Record<string, string> = {
@@ -323,6 +329,16 @@ export function wrapUntrustedPageContent(content: string): string {
 
 
 const approvedPaymentActions = new WeakMap<Record<string, unknown>, string>();
+/** MCP 审批的“本次会话内不再询问”记忆（按 session + tab 收敛，dangerous/支付始终确认） */
+const mcpTrustedScopes = new Set<string>();
+const MCP_TRUSTED_SCOPE_LIMIT = 200;
+const rememberMcpTrustedScope = (key: string) => {
+    if (mcpTrustedScopes.size >= MCP_TRUSTED_SCOPE_LIMIT) {
+        const oldest = mcpTrustedScopes.values().next().value;
+        if (oldest !== undefined) mcpTrustedScopes.delete(oldest);
+    }
+    mcpTrustedScopes.add(key);
+};
 
 /** 校验并归一化三选一定位参数，拒绝含糊或互相冲突的定位方式。 */
 export function buildActionTarget(params: Record<string, unknown>): ActionTarget {
@@ -601,6 +617,21 @@ async function pageAction(action: 'inspect' | 'click' | 'type' | 'observe' | 're
     }
 }
 
+/** 出站/落盘能力必须每次确认：批准一次不能通过“本轮不再询问”覆盖后续外发。 */
+const ALWAYS_CONFIRM_CAPABILITIES = new Set([
+    'data.fetch', 'data.paginate', 'data.paginate_page', 'data.download',
+]);
+
+/** 导航前拒绝本机/内网与凭据页；about:blank 仍允许。 */
+function assertSafeNavigableTarget(value: unknown): string {
+    const raw = String(value ?? '').trim();
+    if (!isSafeNavigableUrl(raw)) throw new Error('仅允许 http/https 页面（或 about:blank）');
+    if (/^https?:/i.test(raw)) {
+        if (isBlockedFetchUrl(raw)) throw new Error('不允许打开本机或内网地址');
+        if (isCredentialUrl(raw)) throw new Error('不允许打开凭据页面');
+    }
+    return raw;
+}
 /**
  * ref 动作的唯一通道：句柄解析与动作执行发生在同一次 content-script 调用里，
  * 页面无法用公开属性把 ref 重定向到别的元素。
@@ -644,10 +675,16 @@ export async function executeBridgeRequest(method: string, params: Record<string
     const action = method === 'page.click' || submit
         ? await inspectAction(runContext, normalizedParams, actionTarget!, submit) : undefined;
     assertSignalActive(signal);
-    if (decision.requiresApproval || action?.kind === 'payment') {
+    const trustKey = `${context.sessionId}:${tabId ?? 'all'}`;
+    // dangerous 与支付永远不能被“不再询问”跳过；无明确 tabId 时也不建立信任，
+    // 否则 session:all 会让一次确认覆盖该会话的所有标签页。
+    const alwaysConfirm = decision.level === 'dangerous' || action?.kind === 'payment'
+        || ALWAYS_CONFIRM_CAPABILITIES.has(method);
+    const trustedByUser = !alwaysConfirm && typeof tabId === 'number' && mcpTrustedScopes.has(trustKey);
+    if ((decision.requiresApproval && !trustedByUser) || action?.kind === 'payment') {
         const timeout = new AbortController();
         // 用带类型的超时原因中止，下游才能把“审批等待超时”与“用户取消”区分开。
-        const timer = setTimeout(() => timeout.abort(new DeadlineTimeoutError('审批等待超时')), 25_000);
+        const timer = setTimeout(() => timeout.abort(new DeadlineTimeoutError('审批等待超时')), 15_000);
         const onAbort = () => timeout.abort(signal?.reason);
         signal?.addEventListener('abort', onAbort, { once: true });
         if (signal?.aborted) onAbort();
@@ -655,8 +692,8 @@ export async function executeBridgeRequest(method: string, params: Record<string
             const result = await requestConfirmationFunction.execute({
                 message: action?.kind === 'payment'
                     ? `Actspan 支付确认：${action.label || method}${action.amount ? `，金额 ${action.amount}` : ''}。客户端 ${context.clientId}，请求 ${context.requestId}，任务 ${context.taskId}，标签页 ${tabId ?? '未指定'}。`
-                    : `Actspan 请求 ${decision.level} 权限：${method}。客户端 ${context.clientId}，请求 ${context.requestId}，任务 ${context.taskId}，标签页 ${tabId ?? '未指定'}。`,
-            }, { signal: timeout.signal });
+                    : `Actspan 请求 ${decision.level} 权限：${method}${typeof normalizedParams.url === 'string' && normalizedParams.url.trim() ? `，目标 ${redactSensitive({ url: normalizedParams.url }).url}` : ''}。客户端 ${context.clientId}，请求 ${context.requestId}，任务 ${context.taskId}，标签页 ${tabId ?? '未指定'}。`,
+            }, { signal: timeout.signal, tabId: tabId ?? undefined, sessionId: context.sessionId, taskId: context.taskId });
             if (!result.success) {
                 assertSignalActive(signal);
                 const message = result.error || '请求确认失败';
@@ -667,6 +704,9 @@ export async function executeBridgeRequest(method: string, params: Record<string
             if (result.data?.approved !== true) throw new PolicyError(action?.kind === 'payment'
                 ? `用户未批准支付${action.amount ? `：${action.amount}` : ''}` : '用户未批准此请求', 'E_APPROVAL_DENIED');
             if (decision.requiresApproval) executor.approve(context.requestId, context.clientId, context.taskId, tabId);
+            if (result.data?.trustAll === true && !alwaysConfirm && typeof tabId === 'number') {
+                rememberMcpTrustedScope(trustKey);
+            }
             if (action?.kind === 'payment') approvedPaymentActions.set(normalizedParams, action.signature);
         } finally {
             clearTimeout(timer);
@@ -705,11 +745,32 @@ const sleep = (ms: number, signal?: AbortSignal): Promise<void> => new Promise((
     signal?.addEventListener('abort', onAbort, { once: true });
 });
 
+/** 过期/已释放的租约允许同一会话重新接管，避免长时间任务只能重新 tab.open。 */
+function authorizeOrReclaim(context: TaskContext, tabId: number, mutate: boolean): void {
+    const lease = tabLeaseManager.get(tabId);
+    if (!lease) {
+        if (mutate) tabLeaseManager.authorize(context, tabId, true);
+        return;
+    }
+    if (lease.releasedAt || lease.expiresAt <= Date.now()) {
+        const sameOwner = lease.taskId === context.taskId
+            && lease.sessionId === context.sessionId
+            && lease.clientId === context.clientId;
+        // 只读请求不能抢走其他任务过期/释放的标签页；仅写操作或原所有者可接管。
+        if (!mutate && !sameOwner) {
+            tabLeaseManager.authorize(context, tabId, false);
+            return;
+        }
+        tabLeaseManager.reclaim(context, tabId);
+        return;
+    }
+    tabLeaseManager.authorize(context, tabId, mutate);
+}
+
 async function resolveTab(context: TaskContext, tabId: number | undefined, mode: 'read' | 'mutate'): Promise<chrome.tabs.Tab> {
     assertSignalActive(context.signal);
     if (typeof tabId === 'number') {
-        const lease = tabLeaseManager.get(tabId);
-        if (lease || mode === 'mutate') tabLeaseManager.authorize(context, tabId, mode === 'mutate');
+        authorizeOrReclaim(context, tabId, mode === 'mutate');
         const tab = await chrome.tabs.get(tabId);
         assertSignalActive(context.signal);
         return tab;
@@ -718,12 +779,12 @@ async function resolveTab(context: TaskContext, tabId: number | undefined, mode:
         const found = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
         assertSignalActive(context.signal);
         if (!found[0]?.id) throw new Error('找不到目标标签页');
-        if (tabLeaseManager.get(found[0].id)) tabLeaseManager.authorize(context, found[0].id, false);
+        if (tabLeaseManager.get(found[0].id)) authorizeOrReclaim(context, found[0].id, false);
         return found[0];
     }
     const task = taskManager.get(context.taskId);
     if (task?.activeTabId !== undefined) {
-        tabLeaseManager.authorize(context, task.activeTabId);
+        authorizeOrReclaim(context, task.activeTabId, true);
         const tab = await chrome.tabs.get(task.activeTabId);
         assertSignalActive(context.signal);
         return tab;
@@ -847,8 +908,9 @@ export async function dispatch(method: string, params: Record<string, unknown>, 
             const task = taskManager.get(context.taskId);
             if (!task) throw new Error('任务记录不存在');
             assertSignalActive(context.signal);
+            const targetUrl = assertSafeNavigableTarget(params.url);
             const tab = await chrome.tabs.create({
-                url: String(params.url),
+                url: targetUrl,
                 active: params.active === true,
             });
             const tabId = tab.id;
@@ -860,6 +922,8 @@ export async function dispatch(method: string, params: Record<string, unknown>, 
                 tabLeaseManager.registerTab(task, tabId, { ...(label ? { label } : {}), defaultSlot: true });
                 await taskManager.persist();
                 const done = await waitComplete(tabId, 20000, context.signal);
+                // 302 等最终地址同样不得落在本机/内网/凭据页。
+                assertSafeNavigableTarget(done.url);
                 readDriftTracker.setBaseline(context.sessionId, done.url);
                 return { tabId: done.id, url: done.url, title: done.title, label: label || undefined,
                     taskId: context.taskId, sessionId: context.sessionId };
@@ -874,9 +938,20 @@ export async function dispatch(method: string, params: Record<string, unknown>, 
         case 'tab.navigate': {
             const tab = await resolveTab(context, params.tabId as number | undefined, 'mutate');
             assertSignalActive(context.signal);
+            const targetUrl = assertSafeNavigableTarget(params.url);
             tabLeaseManager.authorizeWrite(context, tab.id!);
-            await chrome.tabs.update(tab.id!, { url: String(params.url) });
+            const previousUrl = tab.url;
+            await chrome.tabs.update(tab.id!, { url: targetUrl });
             const done = await waitComplete(tab.id!, 20000, context.signal);
+            try {
+                assertSafeNavigableTarget(done.url);
+            } catch (error) {
+                // 回滚可避免继续在已租用标签页上读取内网页面；请求本身已发生，属残余盲 SSRF。
+                if (previousUrl && isSafeNavigableUrl(previousUrl) && !isBlockedFetchUrl(previousUrl)) {
+                    try { await chrome.tabs.update(tab.id!, { url: previousUrl }); } catch { /* 标签页可能已关闭 */ }
+                }
+                throw error;
+            }
             readDriftTracker.setBaseline(context.sessionId, done.url);
             return { tabId: done.id, url: done.url, title: done.title };
         }
@@ -987,7 +1062,9 @@ export async function dispatch(method: string, params: Record<string, unknown>, 
                 only_viewport: params.only_viewport === true,
                 limit,
             };
-            const frames = await listTabFrames(tab.id!);
+            // 默认只读主框架；跨源 iframe 文本需要显式 include_frames 并触发敏感审批。
+            const allFrames = await listTabFrames(tab.id!);
+            const frames = params.include_frames === true ? allFrames : allFrames.filter((frame) => frame.frameId === MAIN_FRAME_ID);
             const collected = await Promise.all(frames.map(async (frame) => {
                 try {
                     const result = await sendToTabWithRetry<{ success: boolean; error?: string; data?: { elements?: unknown[] } }>(
@@ -1066,6 +1143,15 @@ export async function dispatch(method: string, params: Record<string, unknown>, 
             };
             // A1：真实事件通道复用 cdp-input 的 CDP 事件序列；坐标由内容脚本解析，桥只负责派发。
             const replayReal = async (): Promise<RealOutcome> => {
+                // 真实事件不经过 content script 的签名校验，必须在派发前重新判定目标。
+                // 否则审批时是普通按钮、执行时页面把它换成支付按钮，real:true 会静默付款。
+                const recheck = await inspectAction(context, params, target, submit);
+                if (recheck.kind === 'payment' && approvedSignature !== recheck.signature) {
+                    throw new Error(`支付动作未经确认${recheck.amount ? `：${recheck.amount}` : ''}`);
+                }
+                if (approvedSignature && approvedSignature !== recheck.signature) {
+                    throw new Error('确认后目标已变化，请重新确认');
+                }
                 const before = await observe();
                 if (!before) return { success: false, error: '无法观测目标状态', changed: false, changedFields: [], before: null, after: null };
                 let real: { success: boolean; error?: string };
@@ -1277,6 +1363,9 @@ export function initMcpBridge() {
         registerCapabilityHandler(method, (input, context) => dispatch(method, input, context));
     }
     registerDataCapabilityHandlers(registerCapabilityHandler);
+    // page.snapshot 默认只读主框架；显式请求跨源子框架时提升为敏感审批。
+    registerCapabilityHandler('page.snapshot', (input, context) => dispatch('page.snapshot', input, context),
+        (input: Record<string, unknown>): PermissionLevel => input.include_frames === true ? 'sensitive' : 'read');
     for (const method of ['page.select', 'page.upload', 'page.key', 'page.wait', 'page.scroll',
         'network.list', 'network.detail', 'network.query', 'act.draft', 'act.adopt']) {
         const policy = method.startsWith('network.') ? (input: Record<string, unknown>): PermissionLevel => input.reload === true ? 'interact' : 'read'
@@ -1551,6 +1640,11 @@ export function initMcpBridge() {
         return { taskId: task.taskId, sessionId: task.sessionId, registryRevision: snapshot.revision, state: 'queued' };
     });
     chrome.tabs.onRemoved?.addListener((tabId) => {
+        // 标签页关闭后该 tab 的“不再询问”记忆与租约必须失效，避免 id 复用后继承信任。
+        tabLeaseManager.releaseTab(tabId);
+        for (const key of [...mcpTrustedScopes]) {
+            if (key.endsWith(`:${tabId}`)) mcpTrustedScopes.delete(key);
+        }
         if (authenticatedBridge) sendOffscreen({ type: 'actspan_mcp_event', frame: { type: 'event', event: { type: 'tab_closed', tabId } } });
     });
 }

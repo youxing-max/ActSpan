@@ -4,6 +4,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { mkdtempSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import WebSocket, { WebSocketServer } from 'ws';
 import { identityCheck, probeBridge, runDoctor } from '../doctor.js';
 import { ExtensionHub } from '../bridge.js';
@@ -116,4 +118,32 @@ test('doctor refuses to start a bridge for a drifted extension id', async () => 
         () => runDoctor({ metadataPath: path.join(dir, 'missing.json'), start: true, yes: true, extensionId: 'a'.repeat(32) }),
         /扩展 ID 不匹配/,
     );
+});
+
+test('doctor --json keeps stdout parseable and rejects invalid ports', () => {
+    const home = mkdtempSync(path.join(os.tmpdir(), 'actspan-doctor-cli-'));
+    const cli = fileURLToPath(new URL('../doctor.js', import.meta.url));
+    const run = (...extra) => spawnSync(process.execPath, [cli, '--json', '--port', ...extra], {
+        env: { ...process.env, HOME: home },
+        encoding: 'utf8',
+    });
+    try {
+        const ok = run('39999');
+        assert.equal(ok.status, 0);
+        const parsed = JSON.parse(ok.stdout);
+        assert.equal(parsed.status.state, 'not_running');
+        assert.match(ok.stderr, /桥未运行/);
+
+        for (const port of ['0', '70000', 'abc']) {
+            const bad = run(port);
+            assert.equal(bad.status, 1, port);
+            assert.match(bad.stderr, /Invalid port/);
+            assert.equal(bad.stdout, '');
+        }
+        const missing = spawnSync(process.execPath, [cli, '--port'], { env: { ...process.env, HOME: home }, encoding: 'utf8' });
+        assert.equal(missing.status, 1);
+        assert.match(missing.stderr, /Invalid port/);
+    } finally {
+        fs.rmSync(home, { recursive: true, force: true });
+    }
 });

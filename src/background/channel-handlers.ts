@@ -7,6 +7,8 @@ import _console from '../lib/console';
 import { VERSION } from '../config';
 import dayjs from 'dayjs';
 import { CDPSessionManager } from '../lib/cdp-session';
+import { isBlockedFetchUrl } from '../lib/ssrf-guard';
+import { tabLeaseManager } from './tab-lease-manager';
 
 // ============ 工具函数 ============
 
@@ -60,10 +62,45 @@ Channel.on('__show_notification', (data, _sender, sendResponse) => {
  * content script 请求 → background fetch → 提取 <title> → 返回
  */
 const pageTitleCache = new Map<string, string>();
+/** link preview 缓存上限，防止大量唯一链接无限增长 */
+const MAX_PAGE_TITLE_CACHE = 200;
+
+const rememberPageTitle = (url: string, title: string) => {
+    if (pageTitleCache.size >= MAX_PAGE_TITLE_CACHE) {
+        const oldest = pageTitleCache.keys().next().value;
+        if (oldest !== undefined) pageTitleCache.delete(oldest);
+    }
+    pageTitleCache.set(url, title);
+};
+
+/** 手动跟随重定向并逐跳校验，防止公网 URL 302 到内网 */
+const fetchPublicHtml = async (url: string, depth = 0): Promise<Response> => {
+    const resp = await fetch(url, {
+        headers: { 'Accept': 'text/html' },
+        redirect: 'manual',
+        signal: AbortSignal.timeout(5000),
+    });
+    if (resp.type === 'opaqueredirect' || resp.status === 0) {
+        // 浏览器不会把 manual 重定向的 Location 交给扩展：无法逐跳校验就 fail-closed。
+        throw new Error('重定向无法安全校验');
+    }
+    if (resp.status < 300 || resp.status >= 400) return resp;
+    const location = resp.headers.get('location');
+    if (!location || depth >= 3) throw new Error('重定向过多');
+    const next = new URL(location, url).toString();
+    if (isBlockedFetchUrl(next)) throw new Error('重定向目标被拒绝');
+    return fetchPublicHtml(next, depth + 1);
+};
 
 Channel.on('__fetch_page_title', async (data, _sender, sendResponse) => {
     const url = data?.url;
-    if (!url || !sendResponse) return true;
+    if (!url || typeof url !== 'string' || !sendResponse) return true;
+
+    // content script 传来的链接可能来自模型输出：只允许公网 http(s)，避免成为内网探测器
+    if (isBlockedFetchUrl(url)) {
+        sendResponse({});
+        return true;
+    }
 
     // 缓存命中
     const cached = pageTitleCache.get(url);
@@ -73,10 +110,7 @@ Channel.on('__fetch_page_title', async (data, _sender, sendResponse) => {
     }
 
     try {
-        const resp = await fetch(url, {
-            headers: { 'Accept': 'text/html' },
-            signal: AbortSignal.timeout(5000),
-        });
+        const resp = await fetchPublicHtml(url);
         // 只读前 16KB 提取 title，避免下载整页
         const reader = resp.body?.getReader();
         if (!reader) { sendResponse({}); return true; }
@@ -91,13 +125,13 @@ Channel.on('__fetch_page_title', async (data, _sender, sendResponse) => {
             if (match) {
                 reader.cancel().catch(() => {});
                 const title = match[1].trim().replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)));
-                pageTitleCache.set(url, title);
+                rememberPageTitle(url, title);
                 sendResponse({ title });
                 return true;
             }
         }
         reader.cancel().catch(() => {});
-        pageTitleCache.set(url, '');
+        rememberPageTitle(url, '');
         sendResponse({});
     } catch {
         sendResponse({});
@@ -157,6 +191,8 @@ Channel.on('__log_report', (data, sender) => {
 // tab 关闭时清理注册
 chrome.tabs.onRemoved.addListener((tabId) => {
     Channel.unregisterTab(tabId);
+    // 标签页关闭后租约不会自己消失，必须主动释放，否则同标签 ID 被复用时会被误判占用
+    tabLeaseManager.releaseTab(tabId);
     // CDP debugger 会话清理
     CDPSessionManager.detachTab(tabId).catch(() => {});
 });

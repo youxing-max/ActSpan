@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import WebSocket from 'ws';
 import { ExtensionHub } from '../bridge.js';
 import { MAX_FRAME_BYTES } from '../daemon-rpc.js';
+import { stopBridgeDaemon } from '../bridge-lock.js';
 import { extensionIdFromKey } from '../install.js';
 
 const origin = `chrome-extension://${extensionIdFromKey()}`;
@@ -193,7 +194,12 @@ test('closing MCP stdio preserves daemon-owned listener and metadata', async (t)
     });
     let stderr = '';
     child.stderr.on('data', (chunk) => { stderr += String(chunk); });
-    t.after(() => { if (child.exitCode === null) child.kill(); });
+    t.after(async () => {
+        if (child.exitCode === null) child.kill();
+        await stopBridgeDaemon({ port });
+        rmSync(lockPath, { force: true });
+        rmSync(metadataPath, { force: true });
+    });
     for (let tries = 0; !existsSync(metadataPath) && tries < 500; tries++) await pause(20);
     assert.equal(existsSync(metadataPath), true, stderr);
     assert.notEqual(JSON.parse(readFileSync(metadataPath, 'utf8')).pid, child.pid);
@@ -203,8 +209,6 @@ test('closing MCP stdio preserves daemon-owned listener and metadata', async (t)
     if (child.exitCode === null) await once(child, 'exit');
     assert.equal(existsSync(lockPath), true);
     assert.equal(existsSync(metadataPath), true);
-    rmSync(lockPath, { force: true });
-    rmSync(metadataPath, { force: true });
 });
 
 test('authenticated audit receipts require the full pending identity and never persist secrets', async (t) => {

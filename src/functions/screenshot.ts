@@ -10,6 +10,9 @@ import { CDPSessionManager } from '../lib/cdp-session';
 import Channel from '../lib/channel';
 import { sendToTabWithRetry } from './tab-message';
 import { sleep, waitForTabComplete } from './tab-utils';
+import { isBlockedFetchUrl, isSafeNavigableUrl } from '../lib/ssrf-guard';
+import { taskManager } from '../background/task-manager';
+import { tabLeaseManager } from '../background/tab-lease-manager';
 
 const waitUntilTabReady = async (tabId: number, timeoutMs: number, signal?: AbortSignal): Promise<void> => {
   try {
@@ -173,11 +176,23 @@ export const screenshotFunction: FunctionDefinition = {
       }
 
       if (url) {
+        // 新开页面同样要有协议/主机白名单与任务租约，避免截取本地、内网或 file:// 页面。
+        if (!isSafeNavigableUrl(url) || isBlockedFetchUrl(url)) {
+          return { success: false, error: 'url 只允许可公开访问的 http/https 页面' };
+        }
+        const task = context?.taskId ? taskManager.get(context.taskId) : undefined;
+        if (!task) {
+          return { success: false, error: '截图新开页面需要任务上下文' };
+        }
         targetTab = await chrome.tabs.create({
           url,
           active: !preserve_focus,
         });
         createdTempTab = true;
+        targetTabId = targetTab.id;
+        if (typeof targetTabId === 'number') {
+          tabLeaseManager.acquire(task, targetTabId);
+        }
       } else if (targetTab?.id && !targetTab.active && !preserve_focus) {
         targetTab = await chrome.tabs.update(targetTab.id, { active: true });
       }
@@ -191,6 +206,13 @@ export const screenshotFunction: FunctionDefinition = {
       }
 
       await waitUntilTabReady(targetTabId, normalizedWaitMs, signal);
+      // 初始 URL 可能 302 到 file:// 或内网；截图前以标签页最终地址为准再校验一次。
+      try {
+        const finalTab = await chrome.tabs.get(targetTabId);
+        if (finalTab.url && (!isSafeNavigableUrl(finalTab.url) || isBlockedFetchUrl(finalTab.url))) {
+          return { success: false, error: '目标页面重定向到本地/内网或非 http(s) 地址，已拒绝截图' };
+        }
+      } catch { /* tabs.get 不可用时依赖初始 URL 校验 */ }
       if (!useCDP) await sleep(260, signal);
 
       // 截图前临时隐藏悬浮球，避免遮挡页面内容
@@ -344,6 +366,7 @@ export const screenshotFunction: FunctionDefinition = {
       if (createdTempTab && close_after_capture && targetTabId) {
         try {
           await chrome.tabs.remove(targetTabId);
+          tabLeaseManager.releaseTab(targetTabId);
         } catch {
           // ignore
         }

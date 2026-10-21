@@ -11,6 +11,7 @@ const bundle = await build({
     export { getTaskExecutor } from './src/background/policy-executor.ts';
     export { tabLeaseManager } from './src/background/tab-lease-manager.ts';
     export { CDPSessionManager } from './src/lib/cdp-session.ts';
+    export { DATA_CAPABILITY_POLICIES } from './src/background/mcp-data.ts';
   `, resolveDir: process.cwd(), loader: 'ts' },
   bundle: true, write: false, format: 'esm', platform: 'node',
   plugins: [{ name: 'bridge-test-exports', setup(build) {
@@ -20,7 +21,7 @@ const bundle = await build({
   } }],
 });
 const { filterTabsForContext, getWorkflowPlanForExecution, registerWorkflowPlanHandlers, executeBridgeRequest, dispatch, handleOffscreenRequest,
-  wrapUntrustedPageContent, buildActionTarget, requestConfirmationFunction, taskManager, tabLeaseManager, getTaskExecutor, CDPSessionManager } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].contents).toString('base64')}`);
+  wrapUntrustedPageContent, buildActionTarget, requestConfirmationFunction, taskManager, tabLeaseManager, getTaskExecutor, CDPSessionManager, DATA_CAPABILITY_POLICIES } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].contents).toString('base64')}`);
 
 test('accepts recorder-shaped plan-only workflows without structured steps', () => {
   const plan = {
@@ -143,11 +144,11 @@ test('registers workflow plan capabilities only for the allowlist', async () => 
       assert.notEqual(getTaskExecutor().check(context, method, { action: 'view' }).level, 'dangerous');
     }
     assert.equal(getTaskExecutor().check(context, 'workflow.plan.page', { action: 'view' }).requiresApproval, false);
-    // 受限只读 evaluate 按 read 计权：不弹审批、只租读租约。
+    // cdp_frame.evaluate 可读取 cookie/storage，按 sensitive 计权，必须显式批准。
     assert.equal(getTaskExecutor().check(context, 'workflow.plan.cdp_frame',
-      { action: 'evaluate', tabId: fixture.context.tabId }).level, 'read');
+      { action: 'evaluate', tabId: fixture.context.tabId }).level, 'sensitive');
     assert.equal(getTaskExecutor().check(context, 'workflow.plan.cdp_frame',
-      { action: 'evaluate', tabId: fixture.context.tabId }).requiresApproval, false);
+      { action: 'evaluate', tabId: fixture.context.tabId }).requiresApproval, true);
     // 写动作仍是 interact：指定标签页时必须先审批，plan 侧再取写租约。
     assert.equal(getTaskExecutor().check(context, 'workflow.plan.cdp_input',
       { action: 'click', tabId: fixture.context.tabId }).requiresApproval, true);
@@ -171,19 +172,22 @@ test('plan execution rejects a disallowed cdp_dom sub-action before any page eff
   } finally { fixture.restore(); }
 });
 
-test('workflow plan cdp_frame evaluate is read-only and gated by the challenge check', async () => {
+test('workflow plan cdp_frame evaluate requires approval and is gated by the challenge check', async () => {
   registerWorkflowPlanHandlers();
   const fixture = browserFixture();
   const originalQuerySelectorAll = globalThis.document.querySelectorAll;
   try {
     globalThis.chrome.runtime = { lastError: undefined };
-    // 纯读表达式按 read 计权：不弹审批，直接返回页面数据。
+    // evaluate 可能读取 cookie/storage，必须走敏感审批；批准后仍只做只读评估。
+    getTaskExecutor().approve('plan-frame-read', fixture.context.clientId, fixture.context.taskId, fixture.context.tabId);
     const read = await executeBridgeRequest('workflow.plan.cdp_frame',
       { action: 'evaluate', expression: 'document.title.length', tab_id: fixture.context.tabId },
       { ...fixture.context, requestId: 'plan-frame-read' });
     assert.equal(read.result, 7);
-    assert.deepEqual(fixture.effects.prompts, []);
+    // sensitive 能力会先弹一次审批（此处 stub 返回 approved），再消费预先批准的凭证执行。
+    assert.ok(fixture.effects.prompts[0]?.includes('workflow.plan.cdp_frame'));
     // 写副作用被 Runtime.evaluate 的 throwOnSideEffect 拦下，页面上零点击。
+    getTaskExecutor().approve('plan-frame-write', fixture.context.clientId, fixture.context.taskId, fixture.context.tabId);
     await assert.rejects(
       () => executeBridgeRequest('workflow.plan.cdp_frame',
         { action: 'evaluate', expression: "document.querySelector('#target').click()", tab_id: fixture.context.tabId },
@@ -194,13 +198,14 @@ test('workflow plan cdp_frame evaluate is read-only and gated by the challenge c
     // 读页面内容的验证页闸门同样覆盖 cdp_frame.evaluate。
     globalThis.document.querySelectorAll = (selector) => selector === 'iframe'
       ? [{ src: 'https://newassets.hcaptcha.com/captcha/v1/abc/hcaptcha.html' }] : [];
+    getTaskExecutor().approve('plan-frame-challenge', fixture.context.clientId, fixture.context.taskId, fixture.context.tabId);
     await assert.rejects(
       () => executeBridgeRequest('workflow.plan.cdp_frame',
         { action: 'evaluate', expression: 'document.title', tab_id: fixture.context.tabId },
         { ...fixture.context, requestId: 'plan-frame-challenge' }),
       /检测到站点验证，需要用户完成/,
     );
-    assert.deepEqual(fixture.effects.prompts, ['检测到站点验证，需要用户完成']);
+    assert.ok(fixture.effects.prompts.some((message) => message.includes('检测到站点验证，需要用户完成')));
   } finally {
     globalThis.document.querySelectorAll = originalQuerySelectorAll;
     fixture.restore();
@@ -294,7 +299,7 @@ function browserFixture({ label = 'Continue', nearby = label, approved = true, f
   // 双调试器管理器互相踩的缺陷在测试里永远是绿的。
   const debuggerAttached = new Set();
   globalThis.chrome = {
-    storage: { local: { async set() {} } },
+    storage: { local: { async get() { return {}; }, async set() {} } },
     tabs: { sendMessage() {}, async get(tabId) { return { id: tabId, url, title: 'Shop', status: 'complete' }; },
       async query() { return [...knownTabs]; },
       onCreated: { addListener(fn) { createdListeners.add(fn); }, removeListener(fn) { createdListeners.delete(fn); } },
@@ -425,6 +430,65 @@ test('tab.open waits for created tab and returns its resolved data', async () =>
     assert.equal(result.url, 'https://shop.test/checkout');
     assert.deepEqual(fixture.effects.removed, []);
   } finally { fixture.restore(); }
+});
+
+test('MCP data capabilities keep outbound operations at sensitive', () => {
+  assert.equal(DATA_CAPABILITY_POLICIES['data.fetch'], 'sensitive');
+  assert.equal(DATA_CAPABILITY_POLICIES['data.paginate'], 'sensitive');
+  assert.equal(DATA_CAPABILITY_POLICIES['data.paginate_page'], 'sensitive');
+  assert.equal(DATA_CAPABILITY_POLICIES['data.download'], 'sensitive');
+});
+
+test('tab.open and tab.navigate reject loopback targets before creating or navigating', async () => {
+  const fixture = browserFixture();
+  try {
+    fixture.context.tabId = undefined;
+    await assert.rejects(
+      () => dispatch('tab.open', { url: 'http://127.0.0.1:9/admin' }, { ...fixture.context, owner: 'ide-agent' }),
+      /本机或内网/,
+    );
+    await assert.rejects(
+      () => dispatch('tab.open', { url: 'https://evil.nip.io/' }, { ...fixture.context, owner: 'ide-agent' }),
+      /本机或内网/,
+    );
+    await assert.rejects(
+      () => dispatch('tab.navigate', { tabId: fixture.context.tabId, url: 'http://169.254.169.254/latest' }, { ...fixture.context, owner: 'ide-agent' }),
+      /本机或内网/,
+    );
+  } finally { fixture.restore(); }
+});
+
+test('page.snapshot reads only the main frame unless include_frames is explicit', async () => {
+  const fixture = browserFixture();
+  const originalSend = globalThis.chrome.tabs.sendMessage;
+  const originalNavigation = globalThis.chrome.webNavigation;
+  const framesSeen = [];
+  try {
+    globalThis.chrome.runtime = { lastError: undefined };
+    globalThis.chrome.webNavigation = { getAllFrames: async () => [
+      { frameId: 0, parentFrameId: -1, url: 'https://shop.test/checkout' },
+      { frameId: 7, parentFrameId: 0, url: 'https://bank.test/account' },
+    ] };
+    globalThis.chrome.tabs.sendMessage = (_tabId, message, optionsOrCallback, callback) => {
+      const options = typeof optionsOrCallback === 'function' ? undefined : optionsOrCallback;
+      const respond = typeof optionsOrCallback === 'function' ? optionsOrCallback : callback;
+      framesSeen.push(options?.frameId);
+      respond?.({ success: true, data: { elements: [] } });
+    };
+    const mainFrame = await dispatch('page.snapshot', { tabId: fixture.context.tabId }, { ...fixture.context, owner: 'ide-agent' });
+    assert.deepEqual(framesSeen, [0]);
+    assert.equal(mainFrame.frames.length, 1);
+    assert.equal(mainFrame.frames[0].error, undefined);
+    framesSeen.length = 0;
+    const allFrames = await dispatch('page.snapshot', { tabId: fixture.context.tabId, include_frames: true }, { ...fixture.context, owner: 'ide-agent' });
+    assert.deepEqual(framesSeen.sort(), [0, 7]);
+    assert.equal(allFrames.frames.length, 2);
+    assert.equal(allFrames.frames.every((frame) => frame.error === undefined), true);
+  } finally {
+    globalThis.chrome.tabs.sendMessage = originalSend;
+    globalThis.chrome.webNavigation = originalNavigation;
+    fixture.restore();
+  }
 });
 
 test('forged skip flags do not bypass payment guard, and a changed target is rechecked before click', async () => {

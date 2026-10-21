@@ -53,30 +53,44 @@ export const waitForTabComplete = (
       return;
     }
 
-    const timeout = setTimeout(() => {
-      chrome.tabs.onUpdated.removeListener(listener);
-      signal?.removeEventListener('abort', onAbort);
-      reject(new Error(timeoutMessage));
-    }, timeoutMs);
-
-    const onAbort = () => {
+    let settled = false;
+    const cleanup = () => {
       chrome.tabs.onUpdated.removeListener(listener);
       clearTimeout(timeout);
       signal?.removeEventListener('abort', onAbort);
-      reject(buildAbortError());
+    };
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (error) reject(error);
+      else resolve();
     };
 
+    const timeout = setTimeout(() => finish(new Error(timeoutMessage)), timeoutMs);
+
+    const onAbort = () => finish(buildAbortError());
+
     const listener = (id: number, changeInfo: chrome.tabs.TabChangeInfo) => {
-      if (id === tabId && changeInfo.status === 'complete') {
-        chrome.tabs.onUpdated.removeListener(listener);
-        clearTimeout(timeout);
-        signal?.removeEventListener('abort', onAbort);
-        resolve();
-      }
+      if (id === tabId && changeInfo.status === 'complete') finish();
     };
 
     signal?.addEventListener('abort', onAbort, { once: true });
+    // 先注册监听再查当前状态，避免两者之间完成事件丢失
     chrome.tabs.onUpdated.addListener(listener);
+    try {
+      chrome.tabs.get(tabId, (tab) => {
+        const lastError = chrome.runtime?.lastError?.message;
+        if (lastError) {
+          // 标签页已不存在：立即失败，而不是等到超时
+          finish(new Error(`标签页 ${tabId} 不存在或已关闭`));
+          return;
+        }
+        if (tab?.status === 'complete') finish();
+      });
+    } catch {
+      // 某些测试/受限环境没有实现 tabs.get，仅依赖事件监听
+    }
   });
 };
 

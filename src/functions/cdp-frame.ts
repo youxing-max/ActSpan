@@ -91,9 +91,14 @@ export const cdpFrameFunction: FunctionDefinition = {
   ].join(' ') + '\n\n⚠️ Do NOT use this tool for:\n- Reading localStorage / sessionStorage (use cdp_dom storage_get_items)\n- Reading or manipulating Cookies (use cdp_network get_cookies / set_cookie)\n- Simple DOM queries (use cdp_dom query_selector)\n- Click or input operations (use cdp_input)\n- Do not bypass dedicated tools for sensitive data by executing JS; those tools have user authorization flows\n- Only use when custom JavaScript execution is truly needed and no dedicated tool is available',
   supportsParallel: true,
   permissionLevel: 'interact',
-  // evaluate 固定走 Runtime.evaluate + throwOnSideEffect：V8 拒绝任何副作用，因此按只读动作计权；
-  // list/snapshot 不在 plan 白名单内，继续沿用 permissionLevel。
-  actionPermissions: { evaluate: 'read' },
+  // evaluate 能读取 document.cookie / storage / 全局变量；throwOnSideEffect 只拦写入，
+  // 不是安全边界，因此必须走敏感审批，避免绕过专用工具的授权流程。
+  // snapshot 内部复用 evaluate 读取跨域 iframe 文本，同样必须单独审批。
+  actionPermissions: { evaluate: 'sensitive', snapshot: 'sensitive' },
+  approvalMessageTemplate: {
+    evaluate: 'AI 正在页面上下文中执行自定义 JavaScript，可能读取当前站点数据。是否允许？',
+    snapshot: 'AI 正在请求读取 iframe 的正文内容（可能包含跨域敏感数据）',
+  },
   parameters: {
     type: 'object',
     properties: {
@@ -194,6 +199,15 @@ export const cdpFrameFunction: FunctionDefinition = {
       }
 
       case 'evaluate': {
+        // 静态拦截敏感读取入口：评估表达式不得直接触碰 cookie/storage，
+        // 这些数据只能通过带审批的专用工具读取。
+        if (/\b(?:document\s*\.\s*cookie|localStorage|sessionStorage|indexedDB)\b/.test(rawExpression)) {
+          return {
+            success: false,
+            error: '不允许通过 evaluate 读取 cookie/storage；请使用 cdp_dom storage_get_items 或 cdp_network get_cookies（需用户授权）。',
+          };
+        }
+
         // 自动检测 return 语句并包装为 IIFE
         const finalExpression = wrapExpressionIfNeeded(rawExpression);
 

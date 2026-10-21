@@ -47,6 +47,40 @@ const installChromeMock = () => {
   return messages;
 };
 
+test('url capture rejects non-http and unowned page creation', async () => {
+  installChromeMock();
+  let created = 0;
+  globalThis.chrome.tabs.create = async (options) => { created += 1; return { id: 9, windowId: 7, active: false, status: 'complete', url: options.url }; };
+
+  const fileResult = await screenshotFunction.execute({ url: 'file:///etc/passwd' });
+  assert.equal(fileResult.success, false);
+  assert.match(fileResult.error, /http|https/);
+  assert.equal(created, 0);
+
+  const noTask = await screenshotFunction.execute({ url: 'https://evil.example/' });
+  assert.equal(noTask.success, false);
+  assert.match(noTask.error, /任务上下文/);
+  assert.equal(created, 0);
+});
+
+test('rejects screenshots after a redirect to loopback', async () => {
+  globalThis.chrome = {
+    tabs: {
+      query: async () => [{ id: 1, windowId: 7, active: true, url: 'https://user.example/' }],
+      get: async (id) => ({ id, windowId: 7, active: id === 1, status: 'complete',
+        url: id === 2 ? 'http://127.0.0.1/admin' : 'https://user.example/' }),
+      sendMessage: (_id, _message, callback) => callback?.({ success: false }),
+    },
+    storage: { local: { get: (_key, callback) => callback({}), set: (_items, callback) => callback?.() } },
+    runtime: { lastError: undefined },
+  };
+
+  const result = await screenshotFunction.execute({ tab_id: 2, wait_ms: 3000 });
+
+  assert.equal(result.success, false);
+  assert.match(result.error, /重定向/);
+});
+
 test('forwards snapshot_id when resolving an element rect', async () => {
   const messages = installChromeMock();
 

@@ -98,3 +98,18 @@ test('an idle lease past its TTL is still rejected and is not revived', () => {
   );
   assert.equal(lease.expiresAt, expiredAt, 'a failed authorize must not extend the lease');
 });
+
+test('reclaim explicitly takes over an expired lease, releaseTab frees a closed tab', () => {
+  const leases = new TabLeaseManager();
+  const task = makeTask();
+  const lease = leases.acquire(task, 36, 'c1');
+  lease.expiresAt = Date.now() - 1;
+
+  const reclaimed = leases.reclaim(context(task, 36), 36);
+  assert.ok(reclaimed.expiresAt > Date.now(), 'reclaim must issue a fresh deadline');
+  assert.doesNotThrow(() => leases.authorize(context(task, 36), 36));
+
+  leases.releaseTab(36);
+  assert.equal(leases.get(36), undefined);
+  assert.throws(() => leases.authorize(context(task, 36), 36), /未拥有/);
+});

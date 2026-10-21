@@ -1,22 +1,28 @@
 import { Policy } from './policy.js';
 import { DEFAULT_AGENTS } from './identity.js';
 import { createUsageLedger } from './usage.js';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import WebSocket, { WebSocketServer } from 'ws';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { compareProtocolVersions, PROTOCOL_VERSION } from './protocol-version.js';
-import { lockIsStale } from './bridge-lock.js';
+import { bridgePaths, lockIsStale } from './bridge-lock.js';
 const LOCAL_VERSION = JSON.parse(fs.readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version;
+/** 单个 hub 在途请求上限，防止本地客户端堆满内存。 */
+const MAX_PENDING_REQUESTS = 64;
 
-const LOG_FILE = process.env.ACTSPAN_MCP_LOG || path.join(os.homedir(), '.actspan', 'mcp-server.log');
+function logFile() {
+    return process.env.ACTSPAN_MCP_LOG
+        || path.join(process.env.ACTSPAN_STATE_DIR || path.join(os.homedir(), '.actspan'), 'mcp-server.log');
+}
 
 function log(...a) {
     try {
-        fs.mkdirSync(path.dirname(LOG_FILE), { recursive: true });
-        fs.appendFileSync(LOG_FILE, `${new Date().toISOString()} [actspan-mcp] ${a.map(redact).join(' ')}\n`);
+        const target = logFile();
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.appendFileSync(target, `${new Date().toISOString()} [actspan-mcp] ${a.map(redact).join(' ')}\n`);
     } catch {
         // Logging must never break the stdio MCP transport.
     }
@@ -38,11 +44,16 @@ export class ExtensionHub extends EventEmitter {
     constructor(token, { port = 30121, pairOrigins = [], lockPath, metadataPath, auditPath, reconnectGraceMs = 250, initialQueueMs = 250, pingIdleMs = 30000, pongTimeoutMs = 10000 } = {}) {
         super();
         this.token = token || randomUUID().replaceAll('-', '');
+        /**
+         * 配对证明：首次配对（TOFU）时签发随机 secret，之后所有 pair 请求必须携带它。
+         * 仅凭 Origin 头不能证明扩展身份（本地进程可伪造），token 不能无证明下发。
+         */
+        this.pairSecretHash = null;
         this.port = port;
         this.pairOrigins = new Set(pairOrigins.filter((origin) => /^chrome-extension:\/\/[a-p]{32}$/.test(origin)));
-        this.lockPath = lockPath || path.join(os.homedir(), '.actspan', `bridge-${port}.lock`);
-        this.metadataPath = metadataPath || path.join(os.homedir(), '.actspan', `bridge-${port}.json`);
-        this.auditPath = auditPath || path.join(os.homedir(), '.actspan', 'audit.jsonl');
+        this.lockPath = lockPath || bridgePaths(port).lockPath;
+        this.metadataPath = metadataPath || bridgePaths(port).metadataPath;
+        this.auditPath = auditPath || path.join(bridgePaths(port).dir, 'audit.jsonl');
         this.usage = createUsageLedger({ path: path.join(path.dirname(this.auditPath), 'usage.json') });
         this.customLockPath = Boolean(lockPath);
         this.customMetadataPath = Boolean(metadataPath);
@@ -72,8 +83,8 @@ export class ExtensionHub extends EventEmitter {
     async start(port = this.port) {
         if (this.listening || this.lockNonce) throw new Error('Bridge already started');
         if (port !== this.port) {
-            if (!this.customLockPath) this.lockPath = path.join(os.homedir(), '.actspan', `bridge-${port}.lock`);
-            if (!this.customMetadataPath) this.metadataPath = path.join(os.homedir(), '.actspan', `bridge-${port}.json`);
+            if (!this.customLockPath) this.lockPath = bridgePaths(port).lockPath;
+            if (!this.customMetadataPath) this.metadataPath = bridgePaths(port).metadataPath;
         }
         this.port = port;
         this.stopped = false;
@@ -102,9 +113,11 @@ export class ExtensionHub extends EventEmitter {
                 try {
                     if (this.lockNonce) {
                         fs.mkdirSync(path.dirname(this.metadataPath), { recursive: true, mode: 0o700 });
+                        this.loadPairSecretHash();
                         fs.writeFileSync(this.metadataPath, JSON.stringify({
                             pid: process.pid, nonce: this.lockNonce, protocol: OWNER_PROTOCOL,
                             port, origins: [...this.pairOrigins].sort(),
+                            ...(this.pairSecretHash ? { pairSecretHash: this.pairSecretHash } : {}),
                         }), { mode: 0o600 });
                     }
                     this.listening = true;
@@ -212,7 +225,14 @@ export class ExtensionHub extends EventEmitter {
                 resolve(owner);
             };
             const timer = setTimeout(() => finish(), 500);
-            socket.on('open', () => socket.send(JSON.stringify({ type: 'owner.info' })));
+            // 另一个实例通过 0600 的元数据文件读取 owner nonce，证明自己不是任意本地进程
+            let nonce;
+            try {
+                nonce = JSON.parse(fs.readFileSync(this.metadataPath, 'utf8')).nonce;
+            } catch { /* 临时端口或首次启动没有元数据 */ }
+            socket.on('open', () => socket.send(JSON.stringify({
+                type: 'owner.info', ...(nonce ? { nonce } : {}),
+            })));
             socket.on('message', (raw) => {
                 try {
                     const info = JSON.parse(raw.toString());
@@ -225,6 +245,40 @@ export class ExtensionHub extends EventEmitter {
         });
     }
 
+    static hashPairSecret(secret) {
+        return createHash('sha256').update(secret).digest('hex');
+    }
+
+    verifyPairSecret(secret) {
+        if (!this.pairSecretHash || !/^[a-f0-9]{64}$/.test(secret)) return false;
+        const actual = Buffer.from(ExtensionHub.hashPairSecret(secret), 'hex');
+        const expected = Buffer.from(this.pairSecretHash, 'hex');
+        return actual.length === expected.length && timingSafeEqual(actual, expected);
+    }
+
+    loadPairSecretHash() {
+        try {
+            const previous = JSON.parse(fs.readFileSync(this.metadataPath, 'utf8'));
+            if (typeof previous.pairSecretHash === 'string' && /^[a-f0-9]{64}$/.test(previous.pairSecretHash)) {
+                this.pairSecretHash = previous.pairSecretHash;
+            }
+        } catch { /* 首次启动没有元数据 */ }
+    }
+
+    persistPairSecretHash() {
+        if (!this.lockNonce) return;
+        try {
+            fs.mkdirSync(path.dirname(this.metadataPath), { recursive: true, mode: 0o700 });
+            fs.writeFileSync(this.metadataPath, JSON.stringify({
+                pid: process.pid, nonce: this.lockNonce, protocol: OWNER_PROTOCOL,
+                port: this.port, origins: [...this.pairOrigins].sort(),
+                pairSecretHash: this.pairSecretHash,
+            }), { mode: 0o600 });
+        } catch (error) {
+            log('failed to persist pairing secret hash:', error?.message || String(error));
+        }
+    }
+
     onConnection(ws, req) {
         if (this.stopped) { ws.close(4001, 'bridge stopped'); return; }
         let ready = false;
@@ -233,7 +287,12 @@ export class ExtensionHub extends EventEmitter {
             ws.once('message', (raw) => {
                 let msg;
                 try { msg = JSON.parse(raw.toString()); } catch { ws.close(4000, 'bad frame'); return; }
-                if (msg.type !== 'owner.info') { ws.close(4001, 'unauthorized'); return; }
+                // owner 信息包含扩展 ID、端口与在线状态：生产端口必须证明持有 0600 owner nonce。
+                // port=0 的临时实例没有所有权文件，仅用于测试，允许无 nonce 探测。
+                if (msg.type !== 'owner.info' || (this.lockNonce && msg.nonce !== this.lockNonce)) {
+                    ws.close(4001, 'unauthorized');
+                    return;
+                }
                 ws.send(JSON.stringify({ type: 'owner_info', protocol: OWNER_PROTOCOL, pid: process.pid,
                     origins: [...this.pairOrigins].sort(), port: this.wss?.address()?.port,
                     connected: this.isConnected() }), () => ws.close());
@@ -305,7 +364,24 @@ export class ExtensionHub extends EventEmitter {
                         }
                     }
                 } else if (msg.type === 'pair') {
-                    ws.send(JSON.stringify({ type: 'pair_ok', token: this.token, port: this.port }));
+                    const provided = typeof msg.pairingSecret === 'string' ? msg.pairingSecret : '';
+                    if (this.pairSecretHash) {
+                        if (!this.verifyPairSecret(provided)) {
+                            log(`pair rejected origin=${origin} reason=missing-or-invalid-proof`);
+                            ws.close(4001, 'pairing proof required');
+                            return;
+                        }
+                        ws.send(JSON.stringify({ type: 'pair_ok', token: this.token, port: this.port }));
+                        return;
+                    }
+                    // 首次配对：签发一次性 pairing secret；此后无证明的 pair 一律拒绝。
+                    const secret = randomBytes(32).toString('hex');
+                    this.pairSecretHash = ExtensionHub.hashPairSecret(secret);
+                    this.persistPairSecretHash();
+                    log(`pair accepted origin=${origin} reason=trust-on-first-use`);
+                    ws.send(JSON.stringify({
+                        type: 'pair_ok', token: this.token, port: this.port, pairingSecret: secret,
+                    }));
                 } else {
                     ws.close(4001, 'unauthorized');
                 }
@@ -429,6 +505,7 @@ export class ExtensionHub extends EventEmitter {
         const decision = Policy.check(method, request);
         const id = request.requestId;
         if (this.pending.has(id)) return Promise.reject(new Error('Duplicate requestId'));
+        if (this.pending.size >= MAX_PENDING_REQUESTS) return Promise.reject(new Error('Too many pending bridge requests'));
         return new Promise((resolve, reject) => {
             const deadline = Date.now() + timeoutMs;
             const timer = setTimeout(() => {

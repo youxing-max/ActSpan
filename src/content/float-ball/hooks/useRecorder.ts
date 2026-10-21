@@ -9,6 +9,7 @@ import Channel from '../../../lib/channel';
 import { useActspan } from '../context/useActspan';
 import { buildTaskTitle } from '../text-utils';
 import { getRecorderRecovery } from '../../recorder-recovery';
+import { redactRecordedStep, type RecordedFieldMeta } from '../../../lib/recorder-redaction';
 import {
   showRecorderOverlay,
   updateRecorderStepCount,
@@ -71,6 +72,7 @@ export const useRecorder = () => {
   const inputDebounceTimerRef = useRef<number | null>(null);
   const lastInputTargetRef = useRef<Element | null>(null);
   const lastInputValueRef = useRef('');
+  const lastInputMetaRef = useRef<RecordedFieldMeta>({});
 
 
   /** 提交未完成的输入步骤 */
@@ -81,7 +83,7 @@ export const useRecorder = () => {
 
     const isSelect = target.tagName === 'SELECT';
     stepCountRef.current++;
-    Channel.send('__recorder_step', {
+    const step = {
       seq: stepCountRef.current,
       action: isSelect ? 'select' : 'type',
       selector: buildSimpleSelector(target),
@@ -91,9 +93,12 @@ export const useRecorder = () => {
       value,
       url: window.location.href,
       timestamp: Date.now(),
-    });
+    };
+    // 密码、验证码、银行卡等字段只保留「已填写」标记，原文不离开页面
+    Channel.send('__recorder_step', redactRecordedStep(step, lastInputMetaRef.current));
     lastInputTargetRef.current = null;
     lastInputValueRef.current = '';
+    lastInputMetaRef.current = {};
     dispatch({ type: 'SET_RECORDING', payload: { isRecording: true, stepCount: stepCountRef.current } });
     updateRecorderStepCount(stepCountRef.current);
   }, [dispatch]);
@@ -142,6 +147,13 @@ export const useRecorder = () => {
 
         lastInputTargetRef.current = target;
         lastInputValueRef.current = target.value || '';
+        lastInputMetaRef.current = {
+          tag: target.tagName.toLowerCase(),
+          selector: buildSimpleSelector(target),
+          semanticHint: getElementSemanticHint(target),
+          inputType: (target as HTMLInputElement).type,
+          autocomplete: target.getAttribute('autocomplete') || undefined,
+        };
 
         if (inputDebounceTimerRef.current) window.clearTimeout(inputDebounceTimerRef.current);
         inputDebounceTimerRef.current = window.setTimeout(() => {
@@ -195,6 +207,7 @@ export const useRecorder = () => {
     }
     lastInputTargetRef.current = null;
     lastInputValueRef.current = '';
+    lastInputMetaRef.current = {};
   }, []);
 
   /** 提交录制给 background AI 审计 */

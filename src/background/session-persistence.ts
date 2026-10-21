@@ -20,10 +20,18 @@ export function getLocalStorage<T>(key: string): Promise<T | undefined> {
     });
 }
 
-/** 写入 chrome.storage.local */
+/** 写入 chrome.storage.local（失败时 reject，避免配额错误被静默吞掉） */
 export function setLocalStorage(data: Record<string, unknown>): Promise<void> {
-    return new Promise((resolve) => {
-        chrome.storage.local.set(data, () => resolve());
+    return new Promise((resolve, reject) => {
+        chrome.storage.local.set(data, () => {
+            const lastError = chrome.runtime?.lastError?.message;
+            if (lastError) {
+                console.error('[Actspan] 写入会话存储失败:', lastError);
+                reject(new Error(lastError));
+                return;
+            }
+            resolve();
+        });
     });
 }
 

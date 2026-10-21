@@ -208,3 +208,35 @@ test('reports when no enabled Feishu webhook is configured', async () => {
     globalThis.chrome = originalChrome;
   }
 });
+
+test('Bark 推送把正文放进 POST body，不写入 URL 路径或查询串', async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), init });
+    return new Response('{"code":200,"message":"success"}', {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  try {
+    const result = await sendWebhookEntries([{
+      id: 'bark-1', name: '手机', type: 'bark', enabled: true, createdAt: 1,
+      bark: { server: 'https://api.day.app', deviceKey: 'device-key', group: 'actspan' },
+    }], { title: '调查完成', message: '结论：账号存在风险 token=secret' });
+
+    assert.equal(result.success, true);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].url, 'https://api.day.app/push');
+    assert.equal(calls[0].init.method, 'POST');
+    const payload = JSON.parse(calls[0].init.body);
+    assert.equal(payload.device_key, 'device-key');
+    assert.equal(payload.title, '调查完成');
+    assert.equal(payload.body, '结论：账号存在风险 token=secret');
+    assert.equal(payload.group, 'actspan');
+    assert.doesNotMatch(calls[0].url, /secret|调查完成/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

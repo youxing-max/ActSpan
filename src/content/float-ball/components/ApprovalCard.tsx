@@ -27,12 +27,15 @@ export const ApprovalCard: React.FC<ApprovalCardProps> = ({ requestId, message }
     setTimeout(() => dispatch({ type: 'SET_APPROVAL_REQUEST', payload: null }), 1500);
   }, [dispatch]);
 
-  const handleApprove = useCallback(() => {
+  // 卡片位于开放 Shadow DOM，页面脚本可调用 click()；只接受可信的用户事件。
+  const handleApprove = useCallback((event: React.MouseEvent) => {
+    if (!event.nativeEvent.isTrusted) return;
     Channel.send('__approval_response', { requestId, approved: true });
     settle('approved');
   }, [requestId, settle]);
 
-  const handleReject = useCallback(() => {
+  const handleReject = useCallback((event: React.MouseEvent) => {
+    if (!event.nativeEvent.isTrusted) return;
     if (!showRejectInput) {
       setShowRejectInput(true);
       return;
@@ -41,7 +44,8 @@ export const ApprovalCard: React.FC<ApprovalCardProps> = ({ requestId, message }
     settle('rejected');
   }, [requestId, showRejectInput, rejectReason, settle]);
 
-  const handleTrustAll = useCallback(() => {
+  const handleTrustAll = useCallback((event: React.MouseEvent) => {
+    if (!event.nativeEvent.isTrusted) return;
     Channel.send('__approval_response', { requestId, approved: true, trustAll: true });
     settle('approved');
   }, [requestId, settle]);
@@ -65,7 +69,7 @@ export const ApprovalCard: React.FC<ApprovalCardProps> = ({ requestId, message }
             <button className="actspan-approval-btn reject" onClick={handleReject}>
               {showRejectInput ? '确认拒绝' : '拒绝'}
             </button>
-            <button className="actspan-approval-btn trust-all" onClick={handleTrustAll}>本次不再询问</button>
+            <button className="actspan-approval-btn trust-all" onClick={handleTrustAll}>本轮内不再询问</button>
           </div>
         )}
         {showRejectInput && !settled && (

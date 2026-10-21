@@ -97,7 +97,8 @@ test('starts without an allowlist but reports pairing as required', () => {
 test('publishes the fixed npm entrypoint and runtime versions', () => {
     assert.equal(packageJson.name, '@actspan/mcp-server');
     assert.equal(packageJson.bin['actspan-mcp'], './index.js');
-    assert.equal(packageJson.dependencies.ws, '8.18.0');
+    assert.equal(packageJson.dependencies.ws,
+        JSON.parse(readFileSync(new URL('../node_modules/ws/package.json', import.meta.url), 'utf8')).version);
     assert.match(packageJson.engines.node, />=/);
 });
 

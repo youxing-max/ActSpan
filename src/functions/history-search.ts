@@ -9,7 +9,8 @@ export const historySearchFunction: FunctionDefinition = {
   name: 'history_search',
   description: 'Search browser history. Search previously visited pages by keyword, or retrieve recent browsing history. Use cases: find a previously viewed page, recall visited websites, understand recent browsing preferences.',
   supportsParallel: true,
-  permissionLevel: 'read',
+  // 浏览历史属于用户隐私数据，模型主动读取需要确认
+  permissionLevel: 'sensitive',
   parameters: {
     type: 'object',
     properties: {

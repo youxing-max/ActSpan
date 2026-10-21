@@ -7,6 +7,7 @@
 import { useEffect, useRef, useState } from 'react';
 import Channel from '../../../lib/channel';
 import { useActspan } from '../context/useActspan';
+import { registerGlobalUiEventHandlers } from '../global-events';
 
 /**
  * 监听宿主文档通过 CustomEvent 桥接的全局事件（ESC、点击外部）
@@ -56,16 +57,12 @@ export const useGlobalEvents = () => {
       }
     };
 
-    // 监听来自入口文件桥接的 CustomEvent
-    // 注意：这些事件分发在 reactRoot 上，但在 open Shadow DOM 中
-    // 我们无法从组件内拿到 reactRoot 引用，改为使用 window 上的自定义事件
-    window.addEventListener('actspan-escape' as any, handleEscape);
-    window.addEventListener('actspan-click-outside' as any, handleClickOutside);
-
-    return () => {
-      window.removeEventListener('actspan-escape' as any, handleEscape);
-      window.removeEventListener('actspan-click-outside' as any, handleClickOutside);
-    };
+    // 通过模块内回调接收入口文件转发的可信宿主事件；不使用 window 自定义事件，
+    // 避免页面脚本 dispatchEvent 合成 ESC 中止会话。
+    return registerGlobalUiEventHandlers({
+      escape: handleEscape,
+      clickOutside: handleClickOutside,
+    });
   }, [dispatch]);
 };
 

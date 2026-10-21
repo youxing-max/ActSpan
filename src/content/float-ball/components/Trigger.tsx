@@ -27,34 +27,39 @@ const PillActionCard: React.FC<{
     setTextInput('');
   }, [dispatch]);
 
+  // 审批/提问卡片位于开放 Shadow DOM 中，页面脚本可以拿到按钮并调用 click()。
+  // 只接受浏览器产生的可信事件，合成点击一律忽略。
+  const isTrustedEvent = (event?: React.MouseEvent | React.KeyboardEvent): boolean =>
+    event?.nativeEvent?.isTrusted === true;
+
   // 审批操作
-  const handleApprove = useCallback(() => {
-    if (!approvalRequest) return;
+  const handleApprove = useCallback((event: React.MouseEvent) => {
+    if (!isTrustedEvent(event) || !approvalRequest) return;
     Channel.send('__approval_response', { requestId: approvalRequest.requestId, approved: true });
     hideSelf();
   }, [approvalRequest, hideSelf]);
 
-  const handleReject = useCallback(() => {
-    if (!approvalRequest) return;
+  const handleReject = useCallback((event: React.MouseEvent) => {
+    if (!isTrustedEvent(event) || !approvalRequest) return;
     Channel.send('__approval_response', { requestId: approvalRequest.requestId, approved: false, userMessage: '' });
     hideSelf();
   }, [approvalRequest, hideSelf]);
 
   // 提问操作
-  const handleOption = useCallback((opt: string) => {
-    if (!askUserRequest) return;
+  const handleOption = useCallback((opt: string, event: React.MouseEvent) => {
+    if (!isTrustedEvent(event) || !askUserRequest) return;
     Channel.send('__ask_user_response', { requestId: askUserRequest.requestId, answer: opt, source: 'option' });
     hideSelf();
   }, [askUserRequest, hideSelf]);
 
-  const handleSendText = useCallback(() => {
-    if (!askUserRequest || !textInput.trim()) return;
+  const handleSendText = useCallback((event: React.MouseEvent | React.KeyboardEvent) => {
+    if (!isTrustedEvent(event) || !askUserRequest || !textInput.trim()) return;
     Channel.send('__ask_user_response', { requestId: askUserRequest.requestId, answer: textInput.trim(), source: 'text' });
     hideSelf();
   }, [askUserRequest, textInput, hideSelf]);
 
-  const handleDeny = useCallback(() => {
-    if (!askUserRequest) return;
+  const handleDeny = useCallback((event: React.MouseEvent) => {
+    if (!isTrustedEvent(event) || !askUserRequest) return;
     Channel.send('__ask_user_response', { requestId: askUserRequest.requestId, denied: true, source: 'deny' });
     hideSelf();
   }, [askUserRequest, hideSelf]);
@@ -84,7 +89,7 @@ const PillActionCard: React.FC<{
           {askUserRequest.options && askUserRequest.options.length > 0 && (
             <div className="pac-options">
               {askUserRequest.options.map((opt, idx) => (
-                <button key={idx} className="pac-btn pac-option" onClick={() => handleOption(opt)}>{opt}</button>
+                <button key={idx} className="pac-btn pac-option" onClick={(event) => handleOption(opt, event)}>{opt}</button>
               ))}
             </div>
           )}
@@ -95,7 +100,7 @@ const PillActionCard: React.FC<{
                 placeholder="输入回答..."
                 value={textInput}
                 onChange={e => setTextInput(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) handleSendText(); }}
+                onKeyDown={e => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) handleSendText(e); }}
               />
               <button className="pac-btn pac-send" onClick={handleSendText}>发送</button>
             </div>

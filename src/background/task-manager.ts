@@ -6,12 +6,45 @@ export type TaskRunner = (task: BrowserTask, input: Record<string, unknown>, con
 export type TerminalTaskListener = (task: BrowserTask) => void;
 
 export const TASK_STATE_STORAGE_KEY = 'actspan_task_state';
+/** 仅保留最近 N 个终态任务，防止结果（整页内容等）无限堆积 */
+const MAX_RETAINED_TERMINAL_TASKS = 50;
+const TERMINAL_TASK_STATES = new Set(['succeeded', 'failed', 'cancelled']);
+const MAX_PERSISTED_RESULT_CHARS = 16_000;
+const MAX_PERSISTED_ERROR_CHARS = 2_000;
+const MAX_PERSISTED_OWNED_TABS = 50;
+
+/** 把超大 JSON 字段替换为带大小/预览的占位符，保留“被截断”这一事实 */
+const truncateJsonField = (value: unknown, limit: number): unknown => {
+  let serialized = '';
+  try {
+    serialized = JSON.stringify(value) ?? '';
+  } catch {
+    return { truncated: true, reason: 'unserializable' };
+  }
+  if (serialized.length <= limit) return value;
+  return { truncated: true, size: serialized.length, preview: serialized.slice(0, 1_000) };
+};
+
+/** 持久化前裁剪任务字段，避免单条任务撑爆 storage 配额 */
+const sanitizeTaskForPersist = (task: BrowserTask): BrowserTask => {
+  let sanitized: BrowserTask = task;
+  if (task.error && task.error.message.length > MAX_PERSISTED_ERROR_CHARS) {
+    sanitized = { ...sanitized, error: { ...task.error, message: `${task.error.message.slice(0, MAX_PERSISTED_ERROR_CHARS)}…[已截断]` } };
+  }
+  if (task.ownedTabIds.length > MAX_PERSISTED_OWNED_TABS) {
+    sanitized = { ...sanitized, ownedTabIds: task.ownedTabIds.slice(-MAX_PERSISTED_OWNED_TABS) };
+  }
+  if (!TERMINAL_TASK_STATES.has(task.state) || task.result === undefined) return sanitized;
+  const result = truncateJsonField(task.result, MAX_PERSISTED_RESULT_CHARS);
+  return result === task.result ? sanitized : { ...sanitized, result };
+};
 
 export class TaskManager {
   private readonly tasks = new Map<string, BrowserTask>();
   private persistQueue: Promise<void> = Promise.resolve();
   private runner: TaskRunner | null = null;
   private readonly controllers = new Map<string, AbortController>();
+  private readonly pruning = new Set<string>();
   private readonly terminalListeners = new Set<TerminalTaskListener>();
   private readonly leases: TabLeaseManager;
   constructor(leases: TabLeaseManager = tabLeaseManager) {
@@ -42,6 +75,27 @@ export class TaskManager {
 
   get(taskId: string): BrowserTask | undefined { return this.tasks.get(taskId); }
   list(sessionId?: string): BrowserTask[] { return [...this.tasks.values()].filter((t) => !sessionId || t.sessionId === sessionId); }
+
+  /** 删除超出保留上限的最旧终态任务；运行中/等待中的任务永不删除 */
+  private pruneTerminalTasks(): void {
+    const terminal = [...this.tasks.values()].filter((task) => TERMINAL_TASK_STATES.has(task.state));
+    if (terminal.length <= MAX_RETAINED_TERMINAL_TASKS) return;
+    terminal.sort((left, right) => right.updatedAt - left.updatedAt);
+    for (const stale of terminal.slice(MAX_RETAINED_TERMINAL_TASKS)) {
+      if (this.controllers.has(stale.taskId) || this.pruning.has(stale.taskId)) continue;
+      this.pruning.add(stale.taskId);
+      // 先关标签页再删任务：closeOwnedTabs 需要读 tasks/leases，
+      // 且它内部的 update(taskId) 要求任务记录仍然存在。
+      void this.closeOwnedTabs(stale.taskId)
+        .catch(() => { /* 关闭失败不阻塞淘汰 */ })
+        .finally(() => {
+          this.leases.release(stale.taskId);
+          this.tasks.delete(stale.taskId);
+          this.pruning.delete(stale.taskId);
+          void this.persist();
+        });
+    }
+  }
   has(taskId: string): boolean { return this.tasks.has(taskId); }
   onTerminal(listener: TerminalTaskListener): () => void {
     this.terminalListeners.add(listener);
@@ -54,7 +108,8 @@ export class TaskManager {
     const previousState = task.state;
     Object.assign(task, patch, { updatedAt: Date.now() });
     void this.persist();
-    if (previousState !== task.state && (task.state === 'succeeded' || task.state === 'failed' || task.state === 'cancelled')) {
+    if (previousState !== task.state && TERMINAL_TASK_STATES.has(task.state)) {
+      this.pruneTerminalTasks();
       for (const listener of this.terminalListeners) {
         try { listener(task); } catch { /* status cleanup cannot change task outcome */ }
       }
@@ -204,8 +259,20 @@ export class TaskManager {
 
   async persist(): Promise<void> {
     if (typeof chrome === 'undefined' || !chrome.storage?.local) return;
-    const state: PersistedTaskState = structuredClone({ version: 1, tasks: this.list(), leases: this.leases.snapshot(), ownTabs: this.leases.snapshotOwnTabs(), updatedAt: Date.now() });
-    this.persistQueue = this.persistQueue.then(() => chrome.storage.local.set({ [TASK_STATE_STORAGE_KEY]: state })).catch(() => undefined);
+    this.pruneTerminalTasks();
+    const state: PersistedTaskState = structuredClone({
+      version: 1,
+      tasks: this.list().map(sanitizeTaskForPersist),
+      leases: this.leases.snapshot(),
+      ownTabs: this.leases.snapshotOwnTabs(),
+      updatedAt: Date.now(),
+    });
+    this.persistQueue = this.persistQueue
+      .then(() => chrome.storage.local.set({ [TASK_STATE_STORAGE_KEY]: state }))
+      .catch((err) => {
+        // 配额/序列化失败必须留下日志，否则任务状态会静默丢失
+        console.error('[Actspan] 持久化任务状态失败:', err);
+      });
     await this.persistQueue;
   }
 
@@ -227,6 +294,8 @@ export class TaskManager {
       }
       this.tasks.set(task.taskId, task);
     }
+    // 恢复时同样执行保留上限，避免历史数据把内存和配额继续撑大
+    this.pruneTerminalTasks();
     this.leases.restore(Array.isArray(state.leases) ? state.leases : []);
     this.leases.restoreOwnTabs(Array.isArray(state.ownTabs) ? state.ownTabs : (state.leases || []).filter((lease) => !lease.releasedAt).map((lease) => ({
       taskId: lease.taskId, sessionId: lease.sessionId, clientId: lease.clientId, tabId: lease.tabId,

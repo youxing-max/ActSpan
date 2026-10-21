@@ -36,8 +36,9 @@ export class Policy {
     // 会改动既有标签页的 interact 能力一律要确认：page.* 的写动作，加上 tab.navigate。
     // 判据必须是 capability——context.tabId 是调用方可选参数（bridge.js 直接取 params.tabId），
     // 省略它就能跳过确认，而 resolveTab 在 mutate 模式下会回退到任务的活动标签页，动作照样落地。
-    // tab.open 只是新建标签页，不在此列。
-    const tabScoped = capability.startsWith('page.') || capability === 'tab.navigate';
+    // tab.open 同样纳入确认：它会创建可被后续工具读取的新页面。
+    // tab.open 也纳入确认：否则同一能力会因 context.tabId 是否传入而时弹时不弹。
+    const tabScoped = capability.startsWith('page.') || capability === 'tab.navigate' || capability === 'tab.open';
     const requiresApproval = level === 'dangerous' || level === 'sensitive'
       || (level === 'interact' && (tabScoped || context.tabId !== undefined));
     return { level, requiresApproval };

@@ -15,6 +15,8 @@ export interface ToolExecutionContext {
   tabId?: number;
   isolatedDebug?: boolean;
   debugTabIds?: Set<number>;
+  /** 本会话禁止调用的工具名（执行器层面强制，而不只是过滤 schema） */
+  disallowedTools?: Set<string>;
   signal?: AbortSignal;
 }
 

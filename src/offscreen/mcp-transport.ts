@@ -40,6 +40,8 @@ interface BridgeSettings {
 interface AutoPairing {
     port?: number;
     token?: string;
+    /** 首次配对时 bridge 签发的证明；bridge 重启或重新配对时必须带回 */
+    pairingSecret?: string;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -89,6 +91,7 @@ class McpOffscreenTransport {
     private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     private autoToken: string | null = null;
     private autoPort: number | undefined;
+    private autoPairingSecret: string | null = null;
     private readonly pending = new Map<string, WebSocket>();
 
     start(): void {
@@ -220,6 +223,9 @@ class McpOffscreenTransport {
             this.autoToken = auto.token;
             this.autoPort = port;
         }
+        this.autoPairingSecret = auto.port === port && typeof auto.pairingSecret === 'string'
+            ? auto.pairingSecret
+            : null;
         const token = settings.token || (this.autoPort === port ? this.autoToken : null);
         this.connecting = true;
         let socket: WebSocket;
@@ -237,7 +243,10 @@ class McpOffscreenTransport {
             this.backoffMs = 1_000;
             socket.send(JSON.stringify(token
                 ? { type: 'hello', role: 'extension', token, appVersion: VERSION, protocolVersion: PROTOCOL_VERSION }
-                : { type: 'pair', role: 'extension', appVersion: VERSION, protocolVersion: PROTOCOL_VERSION }));
+                : {
+                    type: 'pair', role: 'extension', appVersion: VERSION, protocolVersion: PROTOCOL_VERSION,
+                    ...(this.autoPairingSecret ? { pairingSecret: this.autoPairingSecret } : {}),
+                }));
         };
         socket.onmessage = (event) => { void this.onSocketMessage(socket, event.data, port, settings); };
         socket.onclose = (event) => {
@@ -271,10 +280,16 @@ class McpOffscreenTransport {
         if (message.type === 'pair_ok' && typeof message.token === 'string' && !this.authenticated) {
             this.autoToken = message.token;
             this.autoPort = port;
+            if (typeof message.pairingSecret === 'string' && message.pairingSecret) {
+                this.autoPairingSecret = message.pairingSecret;
+            }
             // 配对令牌由 service worker 落盘：offscreen 文档没有 chrome.storage。
             void sendRuntimeMessage({
                 type: SETTINGS_SET_AUTO_MESSAGE,
-                value: { port, token: message.token, pairedAt: Date.now() },
+                value: {
+                    port, token: message.token, pairedAt: Date.now(),
+                    ...(this.autoPairingSecret ? { pairingSecret: this.autoPairingSecret } : {}),
+                },
             }).catch(() => undefined);
             socket.send(JSON.stringify({ type: 'hello', role: 'extension', token: message.token, appVersion: VERSION, protocolVersion: PROTOCOL_VERSION }));
             return;

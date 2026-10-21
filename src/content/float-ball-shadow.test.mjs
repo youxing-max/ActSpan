@@ -131,17 +131,16 @@ test('float ball host exposes an open shadow root', () => {
   const { host, shadow, reactRoot } = createFloatBallShadowHost();
 
   assert.equal(host.id, 'actspan-root');
-  assert.notEqual(host.shadowRoot, null, 'host.shadowRoot must be reachable from page scripts');
-  assert.equal(host.shadowRoot, shadow);
-  assert.equal(host.shadowRoot.mode, 'open');
-  assert.equal(host.shadowRoot.querySelector('#actspan-react-root'), reactRoot);
-  assert.match(host.shadowRoot.querySelector('style').textContent, /\.actspan-approval-card/);
+  assert.equal(host.shadowRoot, null, 'page scripts must not reach the shadow root');
+  assert.equal(shadow.mode, 'closed');
+  assert.equal(shadow.querySelector('#actspan-react-root'), reactRoot);
+  assert.match(shadow.querySelector('style').textContent, /\.actspan-approval-card/);
 });
 
 test('rendered confirmation card is reachable through the shadow root', () => {
   installFakeDocument();
 
-  const { host, reactRoot } = createFloatBallShadowHost();
+  const { host, shadow, reactRoot } = createFloatBallShadowHost();
   const markup = renderToStaticMarkup(
     React.createElement(
       ActspanContext.Provider,
@@ -157,7 +156,7 @@ test('rendered confirmation card is reachable through the shadow root', () => {
   card.className = cardClass;
   reactRoot.appendChild(card);
 
-  assert.notEqual(host.shadowRoot, null, 'shadowRoot must stay reachable after the card mounts');
-  assert.equal(host.shadowRoot.querySelector('#actspan-react-root .actspan-approval-card'), card);
+  assert.equal(host.shadowRoot, null, 'shadowRoot must stay closed after the card mounts');
+  assert.equal(shadow.querySelector('#actspan-react-root .actspan-approval-card'), card);
   assert.match(markup, /data-request-id="req_1"/);
 });

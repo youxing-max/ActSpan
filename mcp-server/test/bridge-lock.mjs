@@ -11,6 +11,15 @@ import net from 'node:net';
 import { bridgePaths, lockIsStale, processAlive, readCredential, tryAcquireStartLock, releaseStartLock, takeOverStartLock, STALE_LOCK_MS } from '../bridge-lock.js';
 
 const origin = `chrome-extension://${'a'.repeat(32)}`;
+// 每个测试文件使用独立状态目录，避免覆盖真实 ~/.actspan 或与其他套件并发冲突。
+process.env.ACTSPAN_STATE_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'actspan-bridge-lock-'));
+process.on('exit', () => { try { fs.rmSync(process.env.ACTSPAN_STATE_DIR, { recursive: true, force: true }); } catch { /* 清理失败不影响结果 */ } });
+/** 随机端口避开真实桥常用端口（30121），降低撞车概率。 */
+const randomPort = () => {
+    let port = 0;
+    do { port = 30000 + Math.floor(Math.random() * 20000); } while (port === 30121 || port === 31921);
+    return port;
+};
 const CLI = fileURLToPath(new URL('../bridge-cli.js', import.meta.url));
 
 const runCli = (args) => new Promise((resolve) => {
@@ -43,7 +52,7 @@ test('a live owner with a fresh heartbeat is not stale, but a frozen one is', ()
 });
 
 test('only one contender wins the start lock and a stale one is reclaimed', () => {
-    const port = 30000 + Math.floor(Math.random() * 20000);
+    const port = randomPort();
     const { startLockPath } = bridgePaths(port);
     fs.rmSync(startLockPath, { force: true });
     const first = tryAcquireStartLock(port);
@@ -66,7 +75,7 @@ test('only one contender wins the start lock and a stale one is reclaimed', () =
 });
 
 test('the daemon takes over the start lock so its heartbeat keeps the lock fresh', () => {
-    const port = 30000 + Math.floor(Math.random() * 20000);
+    const port = randomPort();
     const { startLockPath } = bridgePaths(port);
     const held = tryAcquireStartLock(port);
     try {
@@ -83,7 +92,7 @@ test('the daemon takes over the start lock so its heartbeat keeps the lock fresh
 });
 
 test('bridge status and stop report honestly when no daemon is running', async () => {
-    const port = 30000 + Math.floor(Math.random() * 20000);
+    const port = randomPort();
     const status = await runCli(['status', '--port', String(port)]);
     const parsed = JSON.parse(status.out.trim());
     assert.equal(parsed.ok, true);
@@ -98,11 +107,12 @@ test('bridge status and stop report honestly when no daemon is running', async (
 });
 
 test('stopBridge only signals the pid recorded in bridge.json', async () => {
-    const port = 30000 + Math.floor(Math.random() * 20000);
+    const port = randomPort();
     const { metadataPath } = bridgePaths(port);
     const dir = path.dirname(metadataPath);
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-    const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore', detached: true });
+    // 命令行必须带 bridge daemon 标识：stop 会校验 /proc/<pid>/cmdline（或 ps）后才发信号。
+    const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)', 'bridge-daemon.js'], { stdio: 'ignore', detached: true });
     child.unref();
     fs.writeFileSync(metadataPath, JSON.stringify({ pid: child.pid, port, origins: [origin] }));
     try {
@@ -198,7 +208,7 @@ test('the bridge label is frozen at connect and cannot be changed afterwards', a
 });
  
 test('restarts an older daemon before reuse', async () => {
-    const port = 30000 + Math.floor(Math.random() * 20000);
+    const port = randomPort();
     const started = await runCli(['start', '--port', String(port), '--origins-json', JSON.stringify([origin])]);
     assert.equal(JSON.parse(started.out).ok, true, started.out);
     const { credentialPath: rpcPath } = bridgePaths(port);
@@ -215,4 +225,24 @@ test('restarts an older daemon before reuse', async () => {
     } finally {
         await runCli(['stop', '--port', String(port)]);
     }
+});
+
+test('bridge-cli help, invalid origins and status never silently start a daemon', async () => {
+    const port = randomPort();
+    const { metadataPath } = bridgePaths(port);
+    fs.rmSync(metadataPath, { force: true });
+
+    const help = await runCli(['--port', String(port), '--help']);
+    assert.equal(help.code, 0);
+    assert.match(JSON.parse(help.out).usage, /start\|stop\|status\|usage/);
+
+    const bad = await runCli(['start', '--port', String(port), '--origins-json', '[bad']);
+    assert.equal(bad.code, 1);
+    assert.equal(JSON.parse(bad.out).ok, false);
+    assert.match(JSON.parse(bad.out).error, /Invalid --origins-json/);
+
+    const status = await runCli(['--port', String(port), 'status']);
+    assert.equal(status.code, 0);
+    assert.equal(JSON.parse(status.out).state, 'not_running');
+    assert.equal(fs.existsSync(metadataPath), false);
 });

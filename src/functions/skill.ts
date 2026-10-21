@@ -14,9 +14,25 @@ import type { ToolSchema } from '../ai/types';
 import type { SkillSpec, WorkflowEntry } from './skill-types';
 import { ensureSkillRegistryReady, registryService } from './skill-registry';
 import { matchSkills } from './skill-matcher';
-import { executeDebugRemotePlan } from './remote-workflow';
+import { executeDebugRemotePlan, resolveWorkflowPlanAction } from './remote-workflow';
+import { requestConfirmationFunction } from './request-confirmation';
 
 const MAX_WORKFLOWS_IN_SCHEMA = 15;
+
+/** 技能 plan 中需要用户明确同意的写操作 */
+const RISKY_PLAN_ACTIONS = new Set(['cdp_input', 'screenshot', 'tab_navigate']);
+const MUTATING_PAGE_ACTIONS = new Set(['click', 'type', 'eval', 'submit', 'press', 'fill']);
+
+const isRiskyPlanStep = (step: { action?: string; params?: Record<string, unknown> }): boolean => {
+  if (!step.action) return false;
+  // 旧动作别名（page_action/js_execute 等）必须先解析成白名单内的规范动作再判定。
+  const action = resolveWorkflowPlanAction(step.action)?.name || step.action;
+  if (RISKY_PLAN_ACTIONS.has(action)) return true;
+  const subAction = String(step.params?.action || '').toLowerCase();
+  if (action === 'page') return MUTATING_PAGE_ACTIONS.has(subAction);
+  if (action === 'cdp_frame') return subAction === 'evaluate';
+  return false;
+};
 
 /** guide 条目（传给系统提示词，仅域级 Skill） */
 export interface SkillGuideEntry {
@@ -300,6 +316,27 @@ const handleRun = async (
       : context?.tabId,
     signal: context?.signal,
   };
+
+  // 技能 plan 可能包含点击/填表/evaluate/导航等写动作：白名单只保证动作存在，
+  // 执行前仍需用户明确同意，避免恶意导入的技能静默操作页面。
+  const planSteps = (Array.isArray(targetWorkflow.plan?.steps) ? targetWorkflow.plan.steps : []) as Array<{ action?: string; params?: Record<string, unknown> }>;
+  const riskySteps = planSteps.filter(isRiskyPlanStep);
+  if (riskySteps.length > 0) {
+    const summary = riskySteps.slice(0, 6)
+      .map((step) => `${step.action}${step.params?.action ? `(${String(step.params.action)})` : ''}`)
+      .join('、');
+    const approval = await requestConfirmationFunction.execute({
+      message: `技能「${workflowName}」将执行 ${riskySteps.length} 个写操作：${summary}。标签页 ${effectiveContext.tabId ?? '未指定'}。`,
+    }, {
+      tabId: effectiveContext.tabId,
+      signal: context?.signal,
+      sessionId: effectiveContext.sessionId,
+      taskId: effectiveContext.taskId,
+    });
+    if (!approval.success || approval.data?.approved !== true) {
+      return { success: false, error: approval.data?.userMessage || '用户未批准执行该技能' };
+    }
+  }
 
   const result = await executeDebugRemotePlan(
     workflowName,

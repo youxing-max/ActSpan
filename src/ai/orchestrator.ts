@@ -48,8 +48,9 @@ export const handleChat = async (
   previousContext?: InputItem[],
   options?: HandleChatOptions,
 ): Promise<InputItem[]> => {
-  // 新对话开始时重置敏感操作信任标记
-  resetSensitiveAccessTrust();
+  // 每轮开始只清理本会话的敏感信任；无身份调用不能清空其他会话。
+  const trustScope = options?.toolContext?.sessionId || options?.toolContext?.taskId;
+  if (trustScope) resetSensitiveAccessTrust(trustScope);
 
   const budget: LoopBudget = {
     ...DEFAULT_BUDGET,

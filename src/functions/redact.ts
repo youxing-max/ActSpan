@@ -14,6 +14,9 @@ const summarizeBase64 = (text: string): string | null => {
 const redactUrl = (text: string): string => {
     try {
         const url = new URL(text);
+        // URL 里的 userinfo 常携带临时凭据，路径也可能直接放 token。
+        if (url.username) url.username = '[REDACTED]';
+        if (url.password) url.password = '[REDACTED]';
         for (const key of [...url.searchParams.keys()]) if (QUERY_SENSITIVE.test(key)) url.searchParams.set(key, '[REDACTED]');
         const fragment = url.hash.replace(/^#/, '');
         if (fragment.includes('=')) {
@@ -110,7 +113,11 @@ export function redactSensitive<T>(input: T, options: RedactOptions = {}): T {
             if (base64) return base64;
             return redactText(value);
         }
-        if (typeof value === 'number' || typeof value === 'boolean') return sensitive ? '[REDACTED]' : value;
+        // 数值/布尔值保持原类型：`value` 是通用结构化字段，改成字符串会破坏载荷；
+        // 但 passcode/cookie 等明确敏感键仍要掩码。
+        if (typeof value === 'number' || typeof value === 'boolean') {
+            return sensitive && !/^value$/i.test(key) ? '[REDACTED]' : value;
+        }
         if (value === null || typeof value !== 'object') return value;
         if (sensitive) return '[REDACTED]';
         if (seen.has(value as object)) return '[循环引用]';
