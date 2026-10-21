@@ -49,8 +49,9 @@ export const isBuiltinResolverReady = (): boolean => resolverReady;
 /**
  * 工作流 plan 动作白名单：只有录制器文档化且不绕过桥接策略的动作可执行。
  * 值为该动作允许的子动作集合；null 表示子动作不在 plan 层收窄（仍受桥接权限与租约约束）。
- * cdp_frame / cdp_input 等可执行任意 JS 或直接触发页面副作用的动作一律不在白名单内，
- * 必须走 page.eval / page.click / page.type 的桥接策略路径。
+ * cdp_frame.evaluate 只以「只读 evaluate」形态放行：cdp-frame.ts 对 Runtime.evaluate 强制
+ * throwOnSideEffect，写副作用会被 V8 拒绝；写操作仍必须走 page.click / page.type 的桥接策略路径，
+ * 或 cdp_input 的显式写子动作（plan 层按 interact 触发审批与写租约）。
  */
 const WORKFLOW_PLAN_ACTION_SUB_ACTIONS: Record<string, readonly string[] | null> = {
   tab_navigate: null,
@@ -60,6 +61,8 @@ const WORKFLOW_PLAN_ACTION_SUB_ACTIONS: Record<string, readonly string[] | null>
     'get_document', 'get_text', 'get_html', 'get_computed_style_simple', 'wait_for',
     'css_get_computed_style', 'css_get_matched_rules', 'css_get_stylesheets', 'css_get_stylesheet',
   ],
+  cdp_frame: ['evaluate'],
+  cdp_input: ['wait_for_element', 'click', 'click_text', 'fill', 'key_press'],
   extract_data: null,
   screenshot: null,
 };

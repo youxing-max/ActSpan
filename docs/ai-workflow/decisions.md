@@ -95,3 +95,97 @@
   - 不可利用性：上述 DoS/注入均需「攻击者控制特定输入」（URL pattern、template 字符串、path 数组），扩展场景下这些输入是开发者常量或受控值，实际不可利用。
   - 修复成本：大多 breaking（vite 5→6、@typescript-eslint 6→8、pro-layout 降级 7.20.0），`npm audit fix --force` 会破坏现有构建。
 - 裁决：CI 审计门槛从 high 降为 **critical**（0 critical 阻塞，high/moderate/low 保留在 CI 日志供审阅）；high 漏洞待 Dependabot 按 advisory 追踪升级，单独排期不做强行 breaking 升级。
+
+## D009 · 功能断链修复 Wave 1 拆分与方案（6 项 / 4 任务）
+
+- 状态：approved
+- 日期：2026-10-21
+- owner：编排者（Main）
+- 内容：功能健康审计（7 并行角色）发现 20+ 断链。用户拍板第一波范围 B：后台任务生命周期 3 硬伤 + 工作流白名单 2 断链 + data.* 门禁，共 6 项，拆 4 个并行任务（writeScopes 互不相交）。
+
+### 任务拆分（What it delivers）
+
+| 任务 | 交付 | 落点 |
+|---|---|---|
+| T015 | 取消后任务终态可读且取消幂等；非 task 能力不误标 succeeded；data.* 首调可自建任务 | src/background/policy-executor.ts + task-manager.ts |
+| T016 | MCP 进程重启后 taskId 仍可查询（clientId/sessionId 跨进程稳定） | mcp-server/index.js + identity.js |
+| T017 | save_workflow 保存时按 (action, subAction) 校验，杜绝「保存成功跑不了」 | src/functions/save-workflow.ts |
+| T018 | 内置 6 域技能 plan 迁移到白名单内动作（workflow_run 可跑） | public/skills/domains/manifest.json |
+
+### 关键方案
+
+1. markSucceeded 责任归属（T015/P0-2）：任务终态只由 owner 执行器设置——task.submit 的 runner（task-manager.submit:133）与 workflow.run 执行器负责；policy-executor.execute 只对「本次调用自建的单动作任务」（tab.open/page.read/data.*）补 markSucceeded，删除 :156-158 对任意非 task 能力的误标。
+2. clientId/sessionId 稳定化（T016/P0-3）：clientId 从 randomUUID 改为按 host slug 持久化到本地 state 文件跨进程复用；createStableSessionId 去掉 process.pid 与 randomUUID（保留 host slug 隔离），兑现函数名「stable」。不破坏不同 host 隔离。
+3. data 门禁（T015/P0-6）：data.fetch/data.paginate/data.download 加入 taskCreation 与自建任务白名单（policy-executor.ts:106/:109-111），作为首调可自建任务。
+4. 白名单一致性（T017/T018）：save-workflow 逐 step 复用 isWorkflowPlanSubActionAllowed；内置技能 plan 从 cdp_input/cdp_frame/cdp_dom.query 迁移到 tab_navigate/page/cdp_dom.query_selector_all/cdp_dom.wait_for/extract_data/screenshot，不扩白名单（cdp_input/cdp_frame 仍禁，安全语义不变）。
+
+## D010 · Wave 1 功能断链修复收口 + 残留风险登记
+
+- 状态：approved
+- 日期：2026-10-21
+- owner：编排者（Main）
+- 内容：T015/T016/T017 三任务完成并全绿——根 npm test 367 pass/19 skip/0 fail（+4 新测试）、mcp-server 99 pass/0 fail（+3 新测试）、typecheck 0 error、lint 0 error（309 warning 全为 pre-existing no-explicit-any）。RED→GREEN 证据在 docs/ai-workflow/evidence/T015/T016/T017-2026-10-21.log。残留风险登记如下，不静默消失：
+
+### 残留风险
+
+| ID | 风险 | 去向 |
+|---|---|---|
+| W1-R1 | task.status/result 带 tabId 时 leases.authorize 先抛 E_TAB_OWNERSHIP，catch 重写为 E_TASK_CANCELLED，终态仍不可读（mcp-server agent_status/result/cancel 不带 tabId，当前链不触发） | 下轮处理 |
+| W1-R2 | tab-lease setSessionConnected(...,false) 从不置回 true（tab-lease-manager.ts:55-58），身份稳定后重启用同一 key，disconnected 集合残留可抢占原主存活标签页 | 下轮处理：收到已认证帧时补 setSessionConnected(true) |
+| W1-R3 | docs/spec/actspan-gap-matrix.md:180 仍写「createStableSessionId 从 host/process 派生」，签名已去 process | 文档同步任务 |
+| W1-R4 | data.fetch_chunk/fetch_release/paginate_page 未加入自建任务集合（ticket scope 边界），仍要求已存在任务 | 下轮评估 |
+| W1-R5 | save_workflow 对「完全缺 subAction」的 page/cdp_dom 步骤不告警（只校验字符串 subAction），执行时仍 E_POLICY_DENIED | 另开单 |
+
+
+## D011 · 内置技能 vs 白名单（用户拍板：方案 A）
+
+- 状态：approved
+- 拍板：2026-10-21
+- 用户指令：确保所有功能有效进行最小改动
+- 落地：白名单扩「受限只读 evaluate」（复用 page.eval 的 throwOnSideEffect 兜底），迁移三技能纯读采集；boss 写操作（click/fill/press_key/navigate/注入徽标）走审批路径保留功能
+
+### 原三方案（选定 A）
+
+| 方案 | 做法 | 代价 |
+|---|---|---|
+| A 扩白名单（受限只读 evaluate） | cdp_frame.evaluate 收窄为「只读 evaluate」进白名单，复用 page.eval 的 V8 throwOnSideEffect 校验 | 无法静态证明只读，靠运行时 throwOnSideEffect 兜底 |
+| B 重写技能用白名单动作 | 采集改 cdp_dom.query_selector_all + get_text + extract_data 字段映射；boss 写操作改 page.click/type | 工作量大 |
+| C 接受只读化 | 保留 6 技能但砍写操作 | 改变产品语义 |
+
+## D012 · Wave 2 功能断链修复拆分
+
+- 状态：approved
+- 日期：2026-10-21
+- owner：编排者（Main）
+- 内容：T019/T020/T021 三个明确小修复并行（writeScopes 不相交：screenshot.ts / mcp-bridge.ts / tab-lease-manager.ts）。llm-client chat/completions 兼容（README 宣称支持 Ollama/LM Studio 但代码固定 Responses 形状）范围大——需端点模式配置 + InputItem→messages 转换 + 双模式 SSE 解析 + LLMSettingsPage UI 下拉，单独作为 T022 下一波仔细做，不与三个小修混批。
+
+## D013 · T022 llm-client chat/completions 兼容方案
+
+- 状态：approved
+- 日期：2026-10-21
+- owner：编排者（Main）
+- 内容：AISettings 加 `apiMode?: 'responses' | 'chat_completions'`（默认 responses，向后兼容）。InputItem→chat messages 转换（developer/system→system；function_call 合并到 assistant.tool_calls；function_call_output→tool 消息）。chatComplete/chatStream 按 apiMode 分派：chat_completions 发 `{model,messages,max_tokens,stream,tools?}`，解析 `choices[0].message`（非流式）与 `choices[0].delta`（流式，delta.tool_calls 按 index 聚合）。ToolSchema/ToolChoice 转 chat completions 嵌套 function 格式。LLMSettingsPage 加 apiMode 下拉。
+
+## D014 · Wave 4 安全加固拆分 + T025/T026 设计标记
+
+- 状态：approved
+- 日期：2026-10-21
+- owner：编排者（Main）
+- 内容：T023（断线恢复 + 验证页检测扩展）与 T024（图片映射）可立即并行修（writeScopes 不相交：mcp-bridge.ts / llm-client.ts）。T025（tab_navigate 租约）标 blocked——tool-executor（ai 层）不 import tabLeaseManager，MCP 层走租约而 agent 层不走，两条 tab 操作路径未统一，需 D015 设计注入方案。T026（死代码）需先审计清单再删，避免误删。
+
+## D015 · T025 tab_navigate 租约统一注入方案
+
+- 状态：approved
+- 日期：2026-10-21
+- owner：编排者（Main）
+- 内容：agent 层（tool-executor）不 import tabLeaseManager，MCP 层（mcp-bridge）走租约，两条 tab 操作路径未统一。三个方案：
+  - A（推荐）tool-executor 直接 import tabLeaseManager 单例，在 tab_navigate/page.* 执行前按 taskId/sessionId/clientId 校验租约（tabLeaseManager 是纯类，不 import ai 层，无循环依赖）。
+  - B ToolExecutionContext 注入 authorize 回调，由 background 层构造 context 时传入。
+  - C agent 循环（session-manager）在每次工具调用前统一 acquire/authorize。
+
+## D016 · T026 死代码审计范围
+
+- 状态：approved
+- 日期：2026-10-21
+- owner：编排者（Main）
+- 内容：死代码（~3.1k 行 UI 死组件 + 双循环 + 死模块）先派 scout 审计出「确无引用的死代码清单」，经确认后再删。删除后全量测试/typecheck/build 必须仍绿。

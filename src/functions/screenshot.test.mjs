@@ -10,6 +10,66 @@ const bundle = await build({
 });
 const { screenshotFunction } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].contents).toString('base64')}`);
 
+/** 安装 chrome mock，返回所有发往 tab 的消息，便于断言透传字段 */
+const installChromeMock = () => {
+  const messages = [];
+  globalThis.chrome = {
+    tabs: {
+      query: async () => [{ id: 1, windowId: 7, active: true, url: 'https://user.example/' }],
+      get: async (id) => ({ id, windowId: 7, active: id === 1, status: 'complete', url: 'https://user.example/' }),
+      update: async (id, change) => ({ id, windowId: 7, active: change.active === true, status: 'complete', url: 'https://user.example/' }),
+      remove: async () => {},
+      sendMessage: (_id, message, callback) => {
+        messages.push(message);
+        if (!callback) return;
+        callback(message.type === '__get_element_rect'
+          ? { success: true, rect: { x: 10, y: 20, width: 100, height: 50 } }
+          : { success: true });
+      },
+      captureVisibleTab: async () => { throw new Error('element screenshot must use CDP'); },
+    },
+    storage: {
+      local: {
+        get: (_key, callback) => callback({}),
+        set: (_items, callback) => callback?.(),
+      },
+    },
+    debugger: {
+      onEvent: { addListener() {} },
+      attach: async () => {},
+      detach: async () => {},
+      sendCommand: async (_target, method) => method === 'Page.captureScreenshot'
+        ? { data: 'c2NyZWVuc2hvdA==' }
+        : {},
+    },
+    runtime: { lastError: undefined },
+  };
+  return messages;
+};
+
+test('forwards snapshot_id when resolving an element rect', async () => {
+  const messages = installChromeMock();
+
+  const result = await screenshotFunction.execute({ tab_id: 2, element_id: 'el-1', snapshot_id: 'snap-1' });
+
+  assert.equal(result.success, true);
+  const rectMessages = messages.filter((message) => message.type === '__get_element_rect');
+  assert.equal(rectMessages.length, 1);
+  assert.deepEqual(rectMessages[0].data, { element_id: 'el-1', snapshot_id: 'snap-1' });
+});
+
+test('keeps the legacy payload when snapshot_id is omitted', async () => {
+  const messages = installChromeMock();
+
+  const result = await screenshotFunction.execute({ tab_id: 2, element_id: 'el-1' });
+
+  assert.equal(result.success, true);
+  const rectMessages = messages.filter((message) => message.type === '__get_element_rect');
+  assert.equal(rectMessages.length, 1);
+  assert.deepEqual(rectMessages[0].data, { element_id: 'el-1' });
+  assert.equal(Object.hasOwn(rectMessages[0].data, 'snapshot_id'), false);
+});
+
 
 test('captures an explicit background tab without activating it', async () => {
   const updates = [];

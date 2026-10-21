@@ -322,6 +322,290 @@
       "requiresDecision": [],
       "evidence": "docs/ai-workflow/evidence/T014-2026-10-21.log",
       "notes": "关 FR-7 其余部分；依赖 T009 建立 decisions.md"
+    },
+    {
+      "id": "T015",
+      "title": "任务生命周期状态机修正 + data 门禁",
+      "milestone": "M5",
+      "wave": 1,
+      "status": "ready_for_review",
+      "blockedBy": [],
+      "owner": "agent",
+      "files": [
+        "src/background/policy-executor.ts",
+        "src/background/task-manager.ts"
+      ],
+      "writeScopes": [
+        "src/background/policy-executor.ts",
+        "src/background/task-manager.ts",
+        "src/background/task-manager.test.mjs"
+      ],
+      "acceptance": "Given 取消后的任务，When 调 task.status/task.result/task.cancel，Then 返回 cancelled 终态而非抛 E_TASK_CANCELLED，且再次 cancel 幂等；Given running 的 agent 任务，When 调 ping/tabs.list/feishu.push，Then 任务 state 不变（不误标 succeeded）；Given 无任务，When 首调 data.fetch/data_paginate/data_download，Then 自建任务并成功而非抛 E_TASK_OWNERSHIP",
+      "verify": "node --test src/background/task-manager.test.mjs",
+      "requiresDecision": [],
+      "evidence": "docs/ai-workflow/evidence/T015-2026-10-21.log",
+      "notes": "P0-1/P0-2/P0-6；markSucceeded 责任归属见 D009"
+    },
+    {
+      "id": "T016",
+      "title": "taskId 跨 MCP 进程重启可恢复",
+      "milestone": "M5",
+      "wave": 1,
+      "status": "ready_for_review",
+      "blockedBy": [],
+      "owner": "agent",
+      "files": [
+        "mcp-server/index.js",
+        "mcp-server/identity.js",
+        "mcp-server/catalog.js"
+      ],
+      "writeScopes": [
+        "mcp-server/index.js",
+        "mcp-server/identity.js",
+        "mcp-server/catalog.js",
+        "mcp-server/test/identity.mjs"
+      ],
+      "acceptance": "Given 同一 host 两次 MCP 进程启动，When 重启，Then clientId 与 sessionId 一致（跨进程稳定）；Given 已创建任务，When MCP 重启后用旧 taskId 查询，Then 任务可读而非抛 E_TASK_OWNERSHIP",
+      "verify": "node --test mcp-server/test/identity.mjs",
+      "requiresDecision": [],
+      "evidence": "docs/ai-workflow/evidence/T016-2026-10-21.log",
+      "notes": "P0-3；clientId 按 host slug 持久化 + sessionId 去 pid/randomUUID，见 D009"
+    },
+    {
+      "id": "T017",
+      "title": "save_workflow 白名单粒度对齐（校验 subAction）",
+      "milestone": "M5",
+      "wave": 1,
+      "status": "ready_for_review",
+      "blockedBy": [],
+      "owner": "agent",
+      "files": [
+        "src/functions/save-workflow.ts"
+      ],
+      "writeScopes": [
+        "src/functions/save-workflow.ts",
+        "src/functions/save-workflow.test.mjs"
+      ],
+      "acceptance": "Given 含合法 action 但不合法 subAction 的 plan 步骤，When 保存，Then warnings 点名该步骤；Given 全合法 (action, subAction) 步骤，When 保存，Then 零 warning",
+      "verify": "node --test src/functions/save-workflow.test.mjs",
+      "requiresDecision": [],
+      "evidence": "docs/ai-workflow/evidence/T017-2026-10-21.log",
+      "notes": "P0-5；复用 isWorkflowPlanSubActionAllowed；健康样本从 page.read 改为合法步骤"
+    },
+    {
+      "id": "T018",
+      "title": "内置 6 域技能迁移到白名单内动作",
+      "milestone": "M5",
+      "wave": 1,
+      "status": "ready_for_review",
+      "blockedBy": [],
+      "owner": "agent",
+      "files": [
+        "public/skills/domains/manifest.json"
+      ],
+      "writeScopes": [
+        "public/skills/domains/manifest.json",
+        "src/functions/skill.test.mjs"
+      ],
+      "acceptance": "Given manifest.json 6 技能所有 workflow plan，When 遍历每 step，Then 每 (action, subAction) 通过 isWorkflowPlanSubActionAllowed；Given workflow_run 任一内置技能，Then 不再抛「不支持的工作流步骤」",
+      "verify": "node --test src/functions/skill.test.mjs",
+      "requiresDecision": [],
+      "evidence": "docs/ai-workflow/evidence/T018-2026-10-21.log",
+      "notes": "D011 方案 A 落地：cdp_frame.evaluate 走 throwOnSideEffect 只读、cdp_input 写子动作复用审批；boss 徽标 step 砍掉；修正 click→click_text、press_key→key_press、补 .result 信封"
+    },
+    {
+      "id": "T019",
+      "title": "screenshot element_id 截图补 snapshot_id 透传",
+      "milestone": "M6",
+      "wave": 2,
+      "status": "ready_for_review",
+      "blockedBy": [],
+      "owner": "agent",
+      "files": [
+        "src/functions/screenshot.ts"
+      ],
+      "writeScopes": [
+        "src/functions/screenshot.ts",
+        "src/functions/screenshot.test.mjs"
+      ],
+      "acceptance": "Given element_id 截图带 snapshot_id，When 执行，Then __get_element_rect 收到 snapshot_id 且成功返回 rect；Given 不带 snapshot_id 的旧调用，Then 行为不变（向后兼容）",
+      "verify": "node --test src/functions/screenshot.test.mjs",
+      "requiresDecision": [],
+      "evidence": "docs/ai-workflow/evidence/T019-2026-10-21.log",
+      "notes": "P1；page-grounding __get_element_rect 已支持 snapshot_id 转发，screenshot resolveElementRect 未传导致 element_id 截图必然失败"
+    },
+    {
+      "id": "T020",
+      "title": "page.snapshot elements 脱敏",
+      "milestone": "M6",
+      "wave": 2,
+      "status": "ready_for_review",
+      "blockedBy": [],
+      "owner": "agent",
+      "files": [
+        "src/background/mcp-bridge.ts"
+      ],
+      "writeScopes": [
+        "src/background/mcp-bridge.ts",
+        "src/background/mcp-bridge.test.mjs"
+      ],
+      "acceptance": "Given snapshot 元素 descriptor 含敏感 value/text，When 生成快照，Then value 为 [REDACTED]、text 定点脱敏、element_id/snapshot_id 保留；Given 普通元素，Then 定位字段与普通文本不误伤",
+      "verify": "node --test src/background/mcp-bridge.test.mjs",
+      "requiresDecision": [],
+      "evidence": "docs/ai-workflow/evidence/T020-2026-10-21.log",
+      "notes": "P1；mcp-bridge.ts:1005/1015 elements merged 未过 redactSensitive，value 明文泄漏；修复用 redactSensitive(descriptor)（text 走定点脱敏、value 整体掩码、定位字段保留）"
+    },
+    {
+      "id": "T021",
+      "title": "标签页租约续租（authorize touch）",
+      "milestone": "M6",
+      "wave": 2,
+      "status": "ready_for_review",
+      "blockedBy": [],
+      "owner": "agent",
+      "files": [
+        "src/background/tab-lease-manager.ts"
+      ],
+      "writeScopes": [
+        "src/background/tab-lease-manager.ts",
+        "src/background/tab-lease-manager.test.mjs"
+      ],
+      "acceptance": "Given 租约 acquire 后 expiresAt 固定，When authorize 成功，Then expiresAt 滑动到 now+TTL；Given 闲置超 TTL 的租约，Then authorize 仍抛 E_TAB_OWNERSHIP（不复活）",
+      "verify": "node --test src/background/tab-lease-manager.test.mjs",
+      "requiresDecision": [],
+      "evidence": "docs/ai-workflow/evidence/T021-2026-10-21.log",
+      "notes": "P1；全仓 6 个 acquire 一次性、无续租，长任务 >10min 断链。加 LEASE_TTL_MS 常量 + authorize 成功时 touch expiresAt"
+    },
+    {
+      "id": "T022",
+      "title": "llm-client 支持 chat/completions 端点（OpenAI 兼容）",
+      "milestone": "M7",
+      "wave": 1,
+      "status": "ready_for_review",
+      "blockedBy": [],
+      "owner": "agent",
+      "files": [
+        "src/ai/llm-client.ts",
+        "src/ai/types.ts",
+        "src/options/pages/LLMSettingsPage.tsx"
+      ],
+      "writeScopes": [
+        "src/ai/llm-client.ts",
+        "src/ai/types.ts",
+        "src/options/pages/LLMSettingsPage.tsx",
+        "src/ai/llm-client.test.mjs"
+      ],
+      "acceptance": "Given apiMode=chat_completions，When chatComplete，Then 发 messages 形状且解析 choices[0].message 为 OutputItem[]（含 tool_calls）；When chatStream，Then 解析 choices[0].delta.content + 聚合 delta.tool_calls 产出 function_call OutputItem；Given apiMode=responses（默认），Then 现有行为不变；Given UI 保存 apiMode，Then 持久化到 storage",
+      "verify": "node --test src/ai/llm-client.test.mjs",
+      "requiresDecision": [],
+      "evidence": "docs/ai-workflow/evidence/T022-2026-10-21.log",
+      "notes": "P1；README 宣称 OpenAI 兼容 Ollama/LM Studio，但 llm-client 固定 Responses 形状（input/max_output_tokens/instructions）。方案见 D013"
+    },
+    {
+      "id": "T023",
+      "title": "mcp-bridge 安全加固：断线恢复 + 验证页检测扩展",
+      "milestone": "M8",
+      "wave": 1,
+      "status": "ready_for_review",
+      "blockedBy": [],
+      "owner": "agent",
+      "files": [
+        "src/background/mcp-bridge.ts"
+      ],
+      "writeScopes": [
+        "src/background/mcp-bridge.ts",
+        "src/background/mcp-bridge.test.mjs"
+      ],
+      "acceptance": "Given session 断线后重连（发有效请求帧），Then disconnected 标记被清除（他人不能抢占存活标签页）；Given page.snapshot/page.view/cdp_dom 读验证页，Then 同 page.read 一样抛 E_CHALLENGE",
+      "verify": "node --test src/background/mcp-bridge.test.mjs",
+      "requiresDecision": [],
+      "evidence": "docs/ai-workflow/evidence/T023-2026-10-21.log",
+      "notes": "两处：①handleOffscreenRequest 入口补 setSessionConnected({clientId,sessionId}, true)；②detectChallenge 从 page.read 抽公共辅助，扩展 page.snapshot/page.view/cdp_dom.query"
+    },
+    {
+      "id": "T024",
+      "title": "llm-client 多模态 image_url 映射",
+      "milestone": "M8",
+      "wave": 1,
+      "status": "ready_for_review",
+      "blockedBy": [],
+      "owner": "agent",
+      "files": [
+        "src/ai/llm-client.ts"
+      ],
+      "writeScopes": [
+        "src/ai/llm-client.ts",
+        "src/ai/llm-client.test.mjs"
+      ],
+      "acceptance": "Given chat_completions 模式的 input 含 input_image，Then 转换为 chat content 的 image_url 数组（text + image_url 混合）而非丢弃",
+      "verify": "node --test src/ai/llm-client.test.mjs",
+      "requiresDecision": [],
+      "evidence": "docs/ai-workflow/evidence/T024-2026-10-21.log",
+      "notes": "T022 残留 W3-R1；contentToString 丢弃 input_image，改为 toChatContent 返回 string 或多模态数组"
+    },
+    {
+      "id": "T025",
+      "title": "agent 层 tab_navigate 租约统一",
+      "milestone": "M8",
+      "wave": 1,
+      "status": "ready_for_review",
+      "blockedBy": [],
+      "owner": "agent",
+      "files": [
+        "src/functions/tab-navigate.ts",
+        "src/functions/tab-navigate-lease.test.mjs"
+      ],
+      "writeScopes": [
+        "src/ai/tool-executor.ts",
+        "src/functions/tab-navigate.ts",
+        "src/background/session-manager.ts"
+      ],
+      "acceptance": "Given agent 层 tab_navigate 显式 tab_id 操作非主 tab，Then 走租约校验（未拥有则 E_TAB_OWNERSHIP）；Given 操作主 tab，Then 不破坏现有行为",
+      "verify": "node --test src/ai/core-loop.test.mjs",
+      "requiresDecision": [
+        "D015"
+      ],
+      "evidence": "docs/ai-workflow/evidence/T025-2026-10-21.log",
+      "notes": "架构问题：tool-executor（ai 层）不 import tabLeaseManager，而 MCP 层走租约，两条路径未统一。需 D015 设计注入方案"
+    },
+    {
+      "id": "T026",
+      "title": "死代码清理（UI 死组件 + 双循环 + 死模块）",
+      "milestone": "M8",
+      "wave": 1,
+      "status": "ready_for_review",
+      "blockedBy": [],
+      "owner": "agent",
+      "files": [],
+      "writeScopes": [],
+      "acceptance": "Given 审计列出的死代码清单，When 删除，Then 全量测试/typecheck/build 仍绿且无引用断裂",
+      "verify": "npm test && npm run typecheck",
+      "requiresDecision": [
+        "D016"
+      ],
+      "evidence": "docs/ai-workflow/evidence/T026-2026-10-21.log",
+      "notes": "审计完成：确认死 3072(UI)+45(模块)+81(导出)=3291 行；protocol-version.ts 疑似死待确认；双循环非冗余保留。删除执行见 T027"
+    },
+    {
+      "id": "T027",
+      "title": "删除确认死代码（UI 死组件 + 死模块）",
+      "milestone": "M8",
+      "wave": 1,
+      "status": "ready_for_review",
+      "blockedBy": [],
+      "owner": "agent",
+      "files": [
+        "src/content/float-ball/components/SearchPanel.tsx",
+        "src/options/components/FloatingChat.tsx",
+        "src/utils/index.ts",
+        "src/lib/url.ts"
+      ],
+      "writeScopes": [],
+      "acceptance": "删除 8 死文件(3117 行) + 连带清理(2 常量/3 export 关键字/record_modal 状态)，typecheck exit 0 无残留 import",
+      "verify": "npx tsc -b --noEmit",
+      "requiresDecision": [],
+      "evidence": "docs/ai-workflow/evidence/T027-2026-10-21.log",
+      "notes": "未删 protocol-version.ts（疑似死）与 storage.ts/text-utils.ts 死导出（留人工确认）"
     }
   ]
 }

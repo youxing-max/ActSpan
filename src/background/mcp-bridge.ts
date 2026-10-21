@@ -113,6 +113,11 @@ export const handleOffscreenRequest = async (frame: BridgeRequestFrame): Promise
         sendOffscreen({ type: runtimeResponseType, frame: { id: frame.id, ...frame.context, ok: false, error: '请求 tabId 与认证上下文不一致' } });
         return;
     }
+    // 有效请求帧已通过认证，即证明该会话在线：清掉断线标记，
+    // 否则重连后残留的 disconnected 记录会让其他会话抢占仍然存活的标签页。
+    if (validBridgeIdentity(frame.context.clientId) && validBridgeIdentity(frame.context.sessionId)) {
+        tabLeaseManager.setSessionConnected({ clientId: frame.context.clientId, sessionId: frame.context.sessionId }, true);
+    }
     const controller = new AbortController();
     inFlightBridgeRequests.set(frame.id, controller);
     try {
@@ -288,6 +293,11 @@ export const registerWorkflowPlanHandlers = () => {
             } else if (requiresTabLease && permission !== 'read' && !implicitOpen) {
                 throw new PolicyError(`工作流步骤 ${action} 必须指定已租约的 tab_id`, 'E_TAB_OWNERSHIP');
             }
+            // 计划里的 page.view/snapshot/skeleton、cdp_dom 白名单子动作与只读 cdp_frame.evaluate
+            // 都只读页面内容，与桥接读动作共用同一道验证页闸门，避免换条路径就把验证页当普通内容读走。
+            const readPagePlanAction = action === 'cdp_dom' || action === 'cdp_frame'
+                || (action === 'page' && ['view', 'snapshot', 'skeleton'].includes(tabAction));
+            if (readPagePlanAction && typeof targetTabId === 'number') await assertNoChallenge(context, targetTabId);
             const result = await resolved.definition.execute(normalizedInput, { ...context, tabId: targetTabId });
             if (!result.success) throw new Error(result.error || `工作流步骤执行失败: ${action}`);
             return result.data;
@@ -762,6 +772,18 @@ async function execInTab<T>(
     return raw as T;
 }
 
+/** 读页面内容前的统一闸门：命中人机验证页即交给用户确认并终止，绝不把验证页当普通内容返回。 */
+const assertNoChallenge = async (context: TaskContext, tabId: number): Promise<void> => {
+    const evidence = await execInTab<ChallengeEvidence>(tabId, (() => ({
+        frames: Array.from(document.querySelectorAll('iframe')).map((frame) => (frame as HTMLIFrameElement).src),
+        overlays: Array.from(document.querySelectorAll('[role="dialog"], [aria-modal="true"]')).map((node) => (node as HTMLElement).innerText || ''),
+    })) as never, [], 'ISOLATED', context.signal);
+    if (detectChallenge(evidence).detected) {
+        await requestConfirmationFunction.execute({ message: CHALLENGE_MESSAGE }, { signal: context.signal });
+        throw new PolicyError(CHALLENGE_MESSAGE, 'E_CHALLENGE');
+    }
+};
+
 async function withDebugger<T>(context: TaskContext, tabId: number, fn: () => Promise<T>): Promise<T> {
     assertSignalActive(context.signal);
     // 一个标签页只允许一个调试器。attach/detach 必须统一走 CDPSessionManager，
@@ -904,14 +926,7 @@ export async function dispatch(method: string, params: Record<string, unknown>, 
             const maxChars = Number(params.maxChars) || 20000;
             const currentUrl = tab.url || '';
             if (!readDriftTracker.hasBaseline(context.sessionId)) readDriftTracker.setBaseline(context.sessionId, currentUrl);
-            const evidence = await execInTab<ChallengeEvidence>(tab.id!, (() => ({
-                frames: Array.from(document.querySelectorAll('iframe')).map((frame) => (frame as HTMLIFrameElement).src),
-                overlays: Array.from(document.querySelectorAll('[role="dialog"], [aria-modal="true"]')).map((node) => (node as HTMLElement).innerText || ''),
-            })) as never, [], 'ISOLATED', context.signal);
-            if (detectChallenge(evidence).detected) {
-                await requestConfirmationFunction.execute({ message: CHALLENGE_MESSAGE }, { signal: context.signal });
-                throw new PolicyError(CHALLENGE_MESSAGE, 'E_CHALLENGE');
-            }
+            await assertNoChallenge(context, tab.id!);
             // 条件探针：把 DOM 状态折算成布尔证据，原始 value 与页面文本绝不回传。
             if (params.attr !== undefined) {
                 const attr = String(params.attr);
@@ -961,6 +976,7 @@ export async function dispatch(method: string, params: Record<string, unknown>, 
 
         case 'page.snapshot': {
             const tab = await resolveTab(context, params.tabId as number | undefined, 'read');
+            await assertNoChallenge(context, tab.id!);
             const tabSnapshotId = `snap-${crypto.randomUUID()}`;
             const limit = Math.min(Math.max(Number(params.limit) || 20, 1), 60);
             const frameParams = {
@@ -1002,7 +1018,9 @@ export async function dispatch(method: string, params: Record<string, unknown>, 
                     index,
                 };
             })).sort((left, right) => right.score - left.score || left.frameId - right.frameId || left.index - right.index);
-            const merged = ranked.slice(0, limit).map((entry) => entry.descriptor);
+            // 元素描述符里的 value 是输入框明文，text 也可能夹带手机号/凭据；出口必须统一脱敏，
+            // 定位字段（element_id/snapshot_id/rect/selector）由 redactSensitive 保留。
+            const merged = ranked.slice(0, limit).map((entry) => redactSensitive(entry.descriptor));
             return {
                 snapshot_id: tabSnapshotId,
                 url: redactSensitive({ url: tab.url || '' }).url,

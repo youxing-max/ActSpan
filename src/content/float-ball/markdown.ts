@@ -3,7 +3,7 @@
  */
 
 /** 转义 HTML 特殊字符 */
-export const escapeHtml = (text: string): string => {
+const escapeHtml = (text: string): string => {
   return text
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')

@@ -4,6 +4,29 @@
  */
 
 import type { FunctionDefinition, ToolExecutionContext } from './types';
+import { tabLeaseManager } from '../background/tab-lease-manager';
+import { taskManager } from '../background/task-manager';
+import type { TaskContext } from '../background/task-types';
+
+/** 操作已有标签页的写动作：必须通过任务租约授权，避免跨任务操作他人标签页。 */
+const TAB_WRITE_ACTIONS: Record<string, true> = {
+  navigate: true, close: true, switch: true, reload: true, duplicate: true,
+  pin: true, mute: true, move: true, go_back: true, go_forward: true,
+};
+
+/** 只有携带完整任务租约上下文的调用方才做租约校验；workflow/隔离调试只传 tabId。 */
+const ownedContext = (context?: ToolExecutionContext): TaskContext | null => {
+  if (!context?.clientId || !context.requestId || !context.taskId || !context.sessionId || !context.owner) return null;
+  return {
+    clientId: context.clientId,
+    requestId: context.requestId,
+    taskId: context.taskId,
+    sessionId: context.sessionId,
+    owner: context.owner,
+    tabId: context.tabId,
+    signal: context.signal,
+  };
+};
 
 export const tabNavigateFunction: FunctionDefinition = {
   name: 'tab_navigate',
@@ -85,6 +108,13 @@ export const tabNavigateFunction: FunctionDefinition = {
   ) => {
     const { action, url, tab_id, active = false, bypass_cache = false, pinned = true, muted = true, index } = params;
 
+    const taskContext = ownedContext(context);
+    if (TAB_WRITE_ACTIONS[action] && taskContext) {
+      // workflow、隔离调试等只传 tabId 的调用方没有租约上下文，保持原有行为。
+      const targetId = action === 'switch' ? tab_id : tab_id || context?.tabId;
+      if (typeof targetId === 'number') tabLeaseManager.authorize(taskContext, targetId);
+    }
+
     switch (action) {
       case 'open': {
         if (!url) {
@@ -100,6 +130,15 @@ export const tabNavigateFunction: FunctionDefinition = {
           active,
           ...debugPlacement,
         });
+        // 新标签页必须挂到当前任务租约，否则后续 tab_navigate 写动作会被自己的租约校验拒绝。
+        if (taskContext && typeof tab.id === 'number') {
+          const task = taskManager.get(taskContext.taskId);
+          if (task) {
+            try {
+              tabLeaseManager.acquire(task, tab.id, taskContext.clientId);
+            } catch { /* 标签页已创建，租约失败不应回滚打开结果 */ }
+          }
+        }
         return {
           success: true,
           data: {

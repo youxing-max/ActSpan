@@ -173,11 +173,13 @@ export interface AIErrorPayload {
   retriable?: boolean;
 }
 
-/** AI 配置（不变） */
+/** AI 配置 */
 export interface AISettings {
   apiKey: string;
   endpoint: string;
   model: string;
+  /** API 协议模式：Responses（默认）或 Chat Completions（Ollama/LM Studio 等兼容端点） */
+  apiMode?: 'responses' | 'chat_completions';
   /** 是否开启结果一致性严格模式（行为与结论必须一致） */
   strictResultMode: boolean;
   /** 模型是否支持并行工具调用（未配置时按内置模型表自动判断，未知模型默认 false） */

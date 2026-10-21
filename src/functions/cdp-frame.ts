@@ -65,16 +65,35 @@ const wrapExpressionIfNeeded = (code: string): string => {
   return trimmed;
 };
 
+/** V8 throwOnSideEffect 拒绝后的下一步不能靠 agent 猜：错误文案直接给出只读替代工具。 */
+const SIDE_EFFECT_REJECTION_HINT = '该表达式无法被证明无副作用，cdp_frame.evaluate 只放行只读表达式。'
+  + '读取页面状态请改用 page 的 view/snapshot，或 cdp_dom 的只读查询（query_selector/get_text/get_attributes）；'
+  + '页面写入请改用 cdp_input 的 click/click_text/fill/key_press，或 page.click/page.type。';
+
+interface EvaluationExceptionDetails {
+  text?: string;
+  exception?: { description?: string };
+}
+
+const describeEvaluationFailure = (exceptionDetails?: EvaluationExceptionDetails): string => {
+  const detail = exceptionDetails?.exception?.description || exceptionDetails?.text || 'JS 执行异常';
+  return /side.?effect|副作用/i.test(detail) ? `${detail}：${SIDE_EFFECT_REJECTION_HINT}` : detail;
+};
+
 export const cdpFrameFunction: FunctionDefinition = {
   name: 'cdp_frame',
   description: [
     'Execute JavaScript code in the page and return the result. Code runs in the page context with access to the DOM and global variables.',
+    'Evaluation is side-effect-free only: Runtime.evaluate runs with V8 throwOnSideEffect, so DOM writes and other observable mutations are rejected. Use cdp_input (click/click_text/fill/key_press) for page writes.',
     'Supports return statements and async/await.',
     'When frame_id is provided, executes in the specified iframe (cross-origin penetration).',
     'Other operations: list=list all frames, snapshot=get frame text content.',
   ].join(' ') + '\n\n⚠️ Do NOT use this tool for:\n- Reading localStorage / sessionStorage (use cdp_dom storage_get_items)\n- Reading or manipulating Cookies (use cdp_network get_cookies / set_cookie)\n- Simple DOM queries (use cdp_dom query_selector)\n- Click or input operations (use cdp_input)\n- Do not bypass dedicated tools for sensitive data by executing JS; those tools have user authorization flows\n- Only use when custom JavaScript execution is truly needed and no dedicated tool is available',
   supportsParallel: true,
   permissionLevel: 'interact',
+  // evaluate 固定走 Runtime.evaluate + throwOnSideEffect：V8 拒绝任何副作用，因此按只读动作计权；
+  // list/snapshot 不在 plan 白名单内，继续沿用 permissionLevel。
+  actionPermissions: { evaluate: 'read' },
   parameters: {
     type: 'object',
     properties: {
@@ -212,6 +231,8 @@ export const cdpFrameFunction: FunctionDefinition = {
             returnByValue: true,
             awaitPromise: true,
             timeout: 10_000,
+            // 与 page.eval 同一套 V8 副作用拦截：任何写副作用都会让整次求值被拒。
+            throwOnSideEffect: true,
           });
 
           if (!evalResult.success) {
@@ -225,10 +246,7 @@ export const cdpFrameFunction: FunctionDefinition = {
 
           const exceptionDetails = evalResult.result?.exceptionDetails;
           if (exceptionDetails) {
-            return {
-              success: false,
-              error: exceptionDetails.text || exceptionDetails.exception?.description || 'JS 执行异常',
-            };
+            return { success: false, error: describeEvaluationFailure(exceptionDetails) };
           }
 
           return {
@@ -247,6 +265,8 @@ export const cdpFrameFunction: FunctionDefinition = {
             returnByValue: true,
             awaitPromise: true,
             timeout: 10_000,
+            // 与 page.eval 同一套 V8 副作用拦截：任何写副作用都会让整次求值被拒。
+            throwOnSideEffect: true,
           });
 
           if (!evalResult.success) {
@@ -260,10 +280,7 @@ export const cdpFrameFunction: FunctionDefinition = {
 
           const exceptionDetails = evalResult.result?.exceptionDetails;
           if (exceptionDetails) {
-            return {
-              success: false,
-              error: exceptionDetails.text || exceptionDetails.exception?.description || 'JS 执行异常',
-            };
+            return { success: false, error: describeEvaluationFailure(exceptionDetails) };
           }
 
           return {

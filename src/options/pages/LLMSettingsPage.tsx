@@ -5,13 +5,18 @@
  */
 
 import { useEffect, useState } from 'react';
-import { Button, Form, Input, Modal, Space, Typography, App } from 'antd';
+import { Button, Form, Input, Modal, Space, Typography, App, Select } from 'antd';
 import { CheckCircleOutlined } from '@ant-design/icons';
 import { getAISettings, saveAISettings } from '../../ai/llm-client';
 import { AI_CONFIG } from '../../config';
 import { OptionsPageLayout, OptionsSectionCard } from '../components/PageLayout';
 
 const { Title, Text, Paragraph } = Typography;
+
+const API_MODE_OPTIONS = [
+  { value: 'responses', label: 'OpenAI Responses' },
+  { value: 'chat_completions', label: 'Chat Completions' },
+];
 
 /** 检查设置是否已配置（至少有 endpoint 和 apiKey） */
 const isConfigured = (s: { endpoint?: string; apiKey?: string }): boolean =>
@@ -36,12 +41,14 @@ export function LLMSettingsPage() {
         endpoint: settings.endpoint || AI_CONFIG.DEFAULT_ENDPOINT,
         apiKey: settings.apiKey || '',
         model: settings.model || AI_CONFIG.DEFAULT_MODEL,
+        apiMode: settings.apiMode || 'responses',
       });
       if (!isConfigured(settings)) {
         setupForm.setFieldsValue({
           endpoint: AI_CONFIG.DEFAULT_ENDPOINT,
           apiKey: '',
           model: AI_CONFIG.DEFAULT_MODEL,
+          apiMode: settings.apiMode || 'responses',
         });
         setShowSetup(true);
       }
@@ -58,6 +65,7 @@ export function LLMSettingsPage() {
         endpoint: String(values.endpoint || AI_CONFIG.DEFAULT_ENDPOINT).trim(),
         apiKey: String(values.apiKey || '').trim(),
         model: String(values.model || AI_CONFIG.DEFAULT_MODEL).trim(),
+        apiMode: values.apiMode || 'responses',
       });
       if (fromSetup) {
         setShowSetup(false);
@@ -65,6 +73,7 @@ export function LLMSettingsPage() {
           endpoint: values.endpoint || AI_CONFIG.DEFAULT_ENDPOINT,
           apiKey: values.apiKey,
           model: values.model || AI_CONFIG.DEFAULT_MODEL,
+          apiMode: values.apiMode || 'responses',
         });
       }
       void message.success('设置已保存，Actspan 准备就绪');
@@ -157,6 +166,13 @@ export function LLMSettingsPage() {
             >
               <Input placeholder={AI_CONFIG.DEFAULT_MODEL} />
             </Form.Item>
+            <Form.Item
+              label="API 模式"
+              name="apiMode"
+              extra="Responses 或 Chat Completions；本地模型（Ollama/LM Studio）选 Chat Completions"
+            >
+              <Select options={API_MODE_OPTIONS} />
+            </Form.Item>
             <Form.Item style={{ marginBottom: 0 }}>
               <Button type="primary" loading={saving} onClick={() => void handleSave()}>
                 保存设置
@@ -211,6 +227,13 @@ export function LLMSettingsPage() {
           </Form.Item>
           <Form.Item label={<span style={{ fontWeight: 500 }}>模型</span>} name="model">
             <Input placeholder={AI_CONFIG.DEFAULT_MODEL} />
+          </Form.Item>
+          <Form.Item
+            label={<span style={{ fontWeight: 500 }}>API 模式</span>}
+            name="apiMode"
+            extra="本地模型（Ollama/LM Studio）请选择 Chat Completions"
+          >
+            <Select options={API_MODE_OPTIONS} />
           </Form.Item>
 
           <Button

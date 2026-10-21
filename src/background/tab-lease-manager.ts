@@ -1,6 +1,7 @@
 import type { BrowserTask, SessionTabRecord, TabLease, TaskContext } from './task-types';
 
 const L2_IDLE_MS = 5000;
+const LEASE_TTL_MS = 10 * 60_000;
 
 interface DebuggerLease {
   taskId: string;
@@ -136,7 +137,7 @@ export class TabLeaseManager {
     for (const record of records) this.ownTabs.set(record.tabId, { ...record });
   }
 
-  acquire(task: BrowserTask, tabId: number, clientId = task.clientId || task.owner, ttlMs = 10 * 60_000): TabLease {
+  acquire(task: BrowserTask, tabId: number, clientId = task.clientId || task.owner, ttlMs = LEASE_TTL_MS): TabLease {
     if (task.clientId && task.clientId !== clientId) throw this.ownershipError(tabId);
     const now = Date.now();
     const current = this.leases.get(tabId);
@@ -175,6 +176,7 @@ export class TabLeaseManager {
       throw new TabLeaseError('用户任务不能写入其他创建者的标签页', 'E_TAB_OWNERSHIP');
     }
     this.disconnected.delete(this.sessionKey(context));
+    lease.expiresAt = Date.now() + LEASE_TTL_MS;
     return lease;
   }
 

@@ -103,10 +103,17 @@ export class PolicyExecutor {
     const approvalKey = this.approvalKey(context.requestId, context.clientId, context.taskId, tabId);
     if (decision.requiresApproval && !this.approvals.delete(approvalKey)) throw new PolicyError('该能力需要绑定请求的明确确认', 'E_APPROVAL_REQUIRED');
     let task = this.tasks.get(context.taskId);
-    const taskCreation = capability === 'task.submit' || capability === 'workflow.run' || capability === 'tab.open' || capability === 'page.read' || capability === 'feishu.push';
+    // 取消后的唯一观测入口是 task.status / task.result / task.cancel：它们不产生页副作用，
+    // 必须能读到终态，也必须能重复调用。
+    const cancellationExempt = capability === 'task.cancel' || capability === 'task.status' || capability === 'task.result';
+    // 单动作能力在没有任务时自建任务；只有这种「本次调用自建」的任务才由执行器收尾。
+    const selfTaskCapability = capability === 'tab.open' || capability === 'page.read'
+      || capability === 'data.fetch' || capability === 'data.paginate' || capability === 'data.download';
+    const taskCreation = capability === 'task.submit' || capability === 'workflow.run' || capability === 'feishu.push' || selfTaskCapability;
     const readOnly = decision.level === 'read';
     const noTaskRead = capability === 'ping' || capability === 'tabs.list' || capability === 'registry.list' || capability === 'registry.detail';
-    if (!task && (capability === 'tab.open' || capability === 'page.read')) {
+    const taskCreatedHere = !task && selfTaskCapability;
+    if (taskCreatedHere) {
       task = this.tasks.create({ taskId: context.taskId, sessionId: context.sessionId, owner: context.owner, clientId: context.clientId });
     }
     if (!task && !taskCreation && (!readOnly || !noTaskRead)) {
@@ -117,7 +124,7 @@ export class PolicyExecutor {
     }
     if (task && task.sessionId !== context.sessionId) throw new PolicyError('任务不属于当前 session', 'E_TASK_OWNERSHIP');
     if (task && task.clientId && task.clientId !== context.clientId) throw new PolicyError('任务不属于当前 client', 'E_TASK_OWNERSHIP');
-    if (task) this.tasks.assertNotCancelled(context.taskId);
+    if (task && !cancellationExempt) this.tasks.assertNotCancelled(context.taskId);
     // tabs.select only updates our session's default slot; foreign IDs return a warning without touching the tab.
     if (tabId !== undefined && task && capability !== 'tabs.select') {
       this.leases.authorize(context, tabId, !readOnly);
@@ -137,7 +144,6 @@ export class PolicyExecutor {
         throw new PolicyError('任务已取消，未执行后续副作用', 'E_TASK_CANCELLED');
       }
     };
-    const cancellationExempt = capability === 'task.cancel' || capability === 'task.status' || capability === 'task.result';
     const invoke = async () => {
       if (task && !cancellationExempt) {
         assertActive();
@@ -153,7 +159,8 @@ export class PolicyExecutor {
         this.leases.release(context.taskId, tabId, context.clientId);
         this.tasks.releaseOwnedTab(context.taskId, tabId);
       }
-      if (task && capability !== 'task.cancel' && capability !== 'task.submit' && capability !== 'task.status' && capability !== 'task.result' && context.workflowStep !== true && context.finalize !== false) {
+      // 只有本次调用自建的单动作任务由执行器收尾；已有任务的 state 归 runner / workflow 执行器。
+      if (task && taskCreatedHere && context.workflowStep !== true && context.finalize !== false) {
         this.tasks.assertNotCancelled(context.taskId);
         this.tasks.markSucceeded(context.taskId, result);
       }

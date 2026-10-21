@@ -99,7 +99,6 @@ export interface ActspanState {
   isRecording: boolean;
   isRecorderAuditing: boolean;
   recorderStepCount: number;
-  showRecordModal: boolean;
 
   // 截图预览
   screenshotPreviewList: string[];
@@ -139,7 +138,6 @@ export type ActspanAction =
   | { type: 'SAVE_ROUND' }
   | { type: 'SET_RECORDING'; payload: { isRecording: boolean; stepCount?: number } }
   | { type: 'SET_RECORDER_AUDITING'; payload: boolean }
-  | { type: 'SET_RECORD_MODAL'; payload: boolean }
   | { type: 'SET_SCREENSHOT_PREVIEW'; payload: { list: string[]; index: number } }
   | { type: 'SET_CLOSE_MENU'; payload: boolean }
   | { type: 'SET_USER_DISMISSED'; payload: boolean }
@@ -174,7 +172,6 @@ export const initialActspanState: ActspanState = {
   isRecording: false,
   isRecorderAuditing: false,
   recorderStepCount: 0,
-  showRecordModal: false,
   screenshotPreviewList: [],
   screenshotPreviewIndex: 0,
   closeMenuVisible: false,

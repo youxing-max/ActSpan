@@ -7,8 +7,20 @@
       "status": "planned",
       "demo": "check-tool-docs.mjs 对 MCP-BRIDGE.md/README 退出码 0；全仓用户文档无 stale「18 个工具」",
       "waves": [
-        { "wave": 1, "tasks": ["T001"] },
-        { "wave": 2, "tasks": ["T002", "T003", "T004"] }
+        {
+          "wave": 1,
+          "tasks": [
+            "T001"
+          ]
+        },
+        {
+          "wave": 2,
+          "tasks": [
+            "T002",
+            "T003",
+            "T004"
+          ]
+        }
       ]
     },
     {
@@ -16,21 +28,113 @@
       "title": "可测性",
       "status": "planned",
       "demo": "悬浮球确认卡片 Playwright 可达；npm test 覆盖 scenarios；pending 请求超时驱逐有测试",
-      "waves": [ { "wave": 1, "tasks": ["T005", "T006", "T007", "T008"] } ]
+      "waves": [
+        {
+          "wave": 1,
+          "tasks": [
+            "T005",
+            "T006",
+            "T007",
+            "T008"
+          ]
+        }
+      ]
     },
     {
       "id": "M3",
       "title": "状态基础设施",
       "status": "planned",
       "demo": "validate_state.py 全绿；gap-matrix 契约证据行有对应 evidence",
-      "waves": [ { "wave": 1, "tasks": ["T009", "T010"] } ]
+      "waves": [
+        {
+          "wave": 1,
+          "tasks": [
+            "T009",
+            "T010"
+          ]
+        }
+      ]
     },
     {
       "id": "M4",
       "title": "部分实现清尾",
       "status": "planned",
       "demo": "D10/D11/D12 各有回归测试；其余 partial 已补齐或归档",
-      "waves": [ { "wave": 1, "tasks": ["T011", "T012", "T013", "T014"] } ]
+      "waves": [
+        {
+          "wave": 1,
+          "tasks": [
+            "T011",
+            "T012",
+            "T013",
+            "T014"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "M5",
+      "title": "功能断链修复 Wave 1",
+      "status": "active",
+      "demo": "后台任务取消后可读且幂等；MCP 重启后任务可查；内置 6 技能 workflow_run 可跑；data.* 首调不报错",
+      "waves": [
+        {
+          "wave": 1,
+          "tasks": [
+            "T015",
+            "T016",
+            "T017",
+            "T018"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "M6",
+      "title": "功能断链修复 Wave 2",
+      "status": "active",
+      "demo": "screenshot element_id 可截元素；page.snapshot 无明文 value 泄漏；长任务租约续租不断链",
+      "waves": [
+        {
+          "wave": 1,
+          "tasks": [
+            "T019",
+            "T020",
+            "T021"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "M7",
+      "title": "LLM 端点兼容",
+      "status": "active",
+      "demo": "apiMode=chat_completions 时 chatComplete/chatStream 发 messages 并正确解析；Ollama/LM Studio 端点可用",
+      "waves": [
+        {
+          "wave": 1,
+          "tasks": [
+            "T022"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "M8",
+      "title": "安全加固与清理",
+      "status": "active",
+      "demo": "断线重连不残留标记；验证页检测覆盖读操作；chat 多模态不丢图；agent 层 tab 操作受租约约束",
+      "waves": [
+        {
+          "wave": 1,
+          "tasks": [
+            "T023",
+            "T024",
+            "T025",
+            "T026"
+          ]
+        }
+      ]
     }
   ]
 }

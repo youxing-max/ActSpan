@@ -26,9 +26,15 @@ const resolveElementRect = async (
   tabId: number,
   elementId: string,
   signal?: AbortSignal,
+  snapshotId?: string,
 ): Promise<{ x: number; y: number; width: number; height: number } | null> => {
   try {
-    const resp = await sendToTabWithRetry(tabId, '__get_element_rect', { element_id: elementId }, { signal });
+    const resp = await sendToTabWithRetry(
+      tabId,
+      '__get_element_rect',
+      { element_id: elementId, ...(snapshotId ? { snapshot_id: snapshotId } : {}) },
+      { signal },
+    );
     if (resp?.success && resp.rect) {
       return resp.rect;
     }
@@ -94,6 +100,10 @@ export const screenshotFunction: FunctionDefinition = {
         type: 'string',
         description: 'Element handle returned by page_snapshot, automatically captures that element region. Uses CDP.',
       },
+      snapshot_id: {
+        type: 'string',
+        description: 'The snapshot_id returned by page_snapshot, used together with element_id.',
+      },
       annotate: {
         type: 'boolean',
         description: 'Whether to annotate interactive elements with numbered labels on the screenshot. When enabled, element number markers are displayed on the screenshot and a mapping from numbers to element_id is returned. Useful when first entering a complex page to precisely locate elements. Only effective for visible area screenshots. Default false.',
@@ -113,6 +123,7 @@ export const screenshotFunction: FunctionDefinition = {
       clip?: { x: number; y: number; width: number; height: number };
       full_page?: boolean;
       element_id?: string;
+      snapshot_id?: string;
       annotate?: boolean;
     },
     context?: ToolExecutionContext,
@@ -128,6 +139,7 @@ export const screenshotFunction: FunctionDefinition = {
       clip,
       full_page = false,
       element_id,
+      snapshot_id,
       annotate = false,
     } = params;
     const normalizedWaitMs = Math.max(3_000, Math.floor(wait_ms));
@@ -224,7 +236,7 @@ export const screenshotFunction: FunctionDefinition = {
         // element_id → 查询元素 rect → 转为 clip
         let resolvedClip = validClip;
         if (element_id && !resolvedClip) {
-          const rect = await resolveElementRect(targetTabId, element_id, signal);
+          const rect = await resolveElementRect(targetTabId, element_id, signal, snapshot_id);
           if (!rect) {
             return { success: false, error: `无法获取元素 ${element_id} 的位置信息，元素可能已不存在` };
           }
