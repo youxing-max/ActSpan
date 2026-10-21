@@ -36,7 +36,7 @@ test('active context graph no longer exposes Mole symbols', () => {
 
 test('active DOM producers and consumers share Actspan contracts', () => {
   const contracts = {
-    'src/content/float-ball.ts': ['actspan-root'],
+    'src/content/float-ball-react.tsx': ['actspan-root'],
     'src/content/recorder-overlay.ts': ['actspan-recorder-overlay', 'data-actspan-step'],
     'src/content/float-ball/hooks/useGlobalEvents.ts': ['actspan-escape', 'actspan-click-outside'],
     'src/content/float-ball/hooks/useRecorder.ts': ['#actspan-root', '#actspan-recorder-overlay'],

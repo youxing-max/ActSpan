@@ -158,6 +158,7 @@ const buildSkeletonTree = (
   if (counter.visited >= MAX_VISIT_COUNT) return null;
   if (depth > maxDepth) return null;
 
+  if (root.id === 'actspan-root') return null;  // ActSpan 自身 UI（悬浮球宿主）不进页面骨架
   const tag = root.tagName;
   if (SKIP_TAGS.has(tag)) return null;
   if (!includeHidden && !isElementVisible(root)) return null;

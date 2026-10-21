@@ -14,6 +14,29 @@ const storageArea = {
   set: (items: Record<string, unknown>) => new Promise<void>((resolve) => chrome.storage.local.set(items, resolve)),
 };
 
+/**
+ * 创建悬浮球 Shadow DOM 宿主与 React 挂载容器。
+ * 使用 open 模式，使宿主侧脚本（CDP 注入、页面解析）可以通过 host.shadowRoot 访问确认卡片。
+ */
+export const createFloatBallShadowHost = () => {
+  const host = document.createElement('div');
+  host.id = 'actspan-root';
+  host.style.cssText = 'position: fixed; top: 0; left: 0; width: 0; height: 0; overflow: visible; z-index: 2147483647; pointer-events: none;';
+  const shadow = host.attachShadow({ mode: 'open' });
+
+  // 注入样式
+  const styleEl = document.createElement('style');
+  styleEl.textContent = getStyles();
+  shadow.appendChild(styleEl);
+
+  // React 挂载容器
+  const reactRoot = document.createElement('div');
+  reactRoot.id = 'actspan-react-root';
+  shadow.appendChild(reactRoot);
+
+  return { host, shadow, reactRoot };
+};
+
 export const initFloatBallReact = async () => {
   if (!document.body) return;
   if (window.location.protocol === 'chrome:' || window.location.protocol === 'chrome-extension:') return;
@@ -37,20 +60,7 @@ export const initFloatBallReact = async () => {
   }
 
   // 创建 Shadow DOM 宿主
-  const host = document.createElement('div');
-  host.id = 'actspan-root';
-  host.style.cssText = 'position: fixed; top: 0; left: 0; width: 0; height: 0; overflow: visible; z-index: 2147483647; pointer-events: none;';
-  const shadow = host.attachShadow({ mode: 'closed' });
-
-  // 注入样式
-  const styleEl = document.createElement('style');
-  styleEl.textContent = getStyles();
-  shadow.appendChild(styleEl);
-
-  // React 挂载容器
-  const reactRoot = document.createElement('div');
-  reactRoot.id = 'actspan-react-root';
-  shadow.appendChild(reactRoot);
+  const { host, reactRoot } = createFloatBallShadowHost();
 
   // 插入页面
   document.body.appendChild(host);
@@ -100,7 +110,7 @@ export const initFloatBallReact = async () => {
   });
 
   // ---- 宿主文档上的全局事件监听 ----
-  // 通过 window 上的自定义事件桥接给 React（closed Shadow DOM 内组件无法访问外部 DOM）
+  // 通过 window 上的自定义事件桥接给 React（Shadow DOM 内组件无法直接访问外部 DOM 事件）
 
 
   // ESC 键（宿主文档）

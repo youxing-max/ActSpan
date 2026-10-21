@@ -118,7 +118,7 @@ Expected: active naming checks pass and legacy migration checks remain green.
 
 - [x] **Step 1: Update active docs and URLs**
 
-Use `https://github.com/youxing-max/ActSpan`, `actspan-extension`, `actspan-mcp`, and the 18-tool stable inventory. Document `actspan_feishu_push` parameters and local-mode configuration.
+Use `https://github.com/youxing-max/ActSpan`, `actspan-extension`, `actspan-mcp`, and the 34-tool stable inventory. Document `actspan_feishu_push` parameters and local-mode configuration.
 
 - [x] **Step 2: Mark stale findings resolved**
 

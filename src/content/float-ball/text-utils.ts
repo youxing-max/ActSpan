@@ -1,7 +1,7 @@
 /**
  * 悬浮胶囊 — 文本处理纯函数
  *
- * 从 initFloatBall 闭包中提取的纯函数，不依赖任何闭包状态变量。
+ * 从悬浮球旧闭包中提取的纯函数，不依赖任何闭包状态变量。
  */
 
 import type { RuntimeTextMode } from './constants';
@@ -22,6 +22,40 @@ export const replaceInternalToolTerms = (raw: string): string => {
     .replace(/repair/gi, '修复问题')
     .replace(/extract/gi, '提取信息')
     .replace(/finalize/gi, '整理结果');
+};
+
+/** 用户输入内容的脱敏掩码：只保留「已隐藏」这一事实，不带原值、长度或类型 */
+export const USER_INPUT_MASK = '[已隐藏用户输入]';
+
+/** 只有单字符的声明值不动（会把文案打成一片掩码）；两字中文姓名必须过滤 */
+const MIN_USER_INPUT_LENGTH = 2;
+
+/** 无声明输入时的兜底：凭据赋值片段一律掩码（定位信息不算，文案里本就不该有） */
+const CREDENTIAL_COPY_HINT =
+  /(?<![A-Za-z0-9_-])((?:(?:new|新)\s*)?(?:password|passwd|passcode|密码|口令|token|api[-_]?key|secret|验证码|authorization)(?:\s*[=:：]\s*|\s+))[^\s,;，。；]+/gi;
+
+const BEARER_COPY_HINT = /(\bbearer\s+)\S+/gi;
+
+/** 掩码与标点清掉后是否还剩可读文案；只剩掩码时展示中性描述更有用 */
+const MASK_ONLY_HINT = /\[已隐藏用户输入\]|[\s,，、;；:：.。!！?？"'()（）[\]-]/g;
+
+/**
+ * D11：面向用户文案（时间线/状态/动作）不带用户输入内容。
+ * 声明的输入值按字面整段掩码（忽略大小写）；凭据赋值与 Bearer 片段无条件掩码。
+ */
+export const redactUserInputFromCopy = (raw: unknown, userInputs?: Iterable<unknown>): string => {
+  let text = String(raw ?? '');
+  if (userInputs) {
+    for (const value of userInputs) {
+      const needle = typeof value === 'string' ? value.trim() : '';
+      if (needle.length < MIN_USER_INPUT_LENGTH) continue;
+      text = text.replace(new RegExp(needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), USER_INPUT_MASK);
+    }
+  }
+  return text
+    .replace(BEARER_COPY_HINT, `$1${USER_INPUT_MASK}`)
+    .replace(CREDENTIAL_COPY_HINT, `$1${USER_INPUT_MASK}`)
+    .replace(/(\[已隐藏用户输入\])(?:[\s,，、;；/]*\1)+/g, '$1');
 };
 
 /** 根据原始文本和模式推断用户友好的运行时描述 */
@@ -60,8 +94,13 @@ export const inferFriendlyRuntimeText = (raw: string, mode: RuntimeTextMode): st
   return choose('我正在继续处理，请稍候...', '接下来我会继续推进', '我已完成一个关键步骤', '当前遇到一点问题，我正在继续处理', '暂时不需要你补充信息');
 };
 
-/** 清理并转换面向用户的运行时文本，过滤内部术语 */
-export const sanitizeUserFacingRuntimeText = (raw: unknown, mode: RuntimeTextMode, fallback?: string): string => {
+/** 清理并转换面向用户的运行时文本，过滤内部术语与用户输入内容 */
+export const sanitizeUserFacingRuntimeText = (
+  raw: unknown,
+  mode: RuntimeTextMode,
+  fallback?: string,
+  userInputs?: Iterable<unknown>,
+): string => {
   const baseFallback = fallback || inferFriendlyRuntimeText('', mode);
   const text = String(raw ?? '').replace(/\s+/g, ' ').trim();
   if (!text) return baseFallback;
@@ -102,17 +141,20 @@ export const sanitizeUserFacingRuntimeText = (raw: unknown, mode: RuntimeTextMod
     return inferFriendlyRuntimeText(text, mode);
   }
 
+  const safe = redactUserInputFromCopy(cleaned, userInputs);
+  if (!safe.replace(MASK_ONLY_HINT, '')) return inferFriendlyRuntimeText(text, mode);
+
   if (mode === 'plan') {
-    return cleaned
+    return safe
       .replace(/^我正在/, '接下来我会')
       .replace(/^正在/, '接下来会');
   }
   if (mode === 'done') {
-    if (/^(我已|已)/.test(cleaned)) return cleaned;
-    if (/^(找到|确认|提取|整理|定位|查看|执行|完成)/.test(cleaned)) return `已${cleaned}`;
-    return `我已完成：${cleaned}`;
+    if (/^(我已|已)/.test(safe)) return safe;
+    if (/^(找到|确认|提取|整理|定位|查看|执行|完成)/.test(safe)) return `已${safe}`;
+    return `我已完成：${safe}`;
   }
-  return cleaned;
+  return safe;
 };
 
 /** 将规划文本转换为友好的用户可见文本 */
@@ -271,20 +313,25 @@ const clipStatusText = (text: string): string => {
   return `${text.slice(0, STATUS_MAX_LENGTH - suffix.length).trimEnd()}${suffix}`;
 };
 
-/** Normalize an explicit status without inferring one from a tool name. */
-export const normalizeStatusText = (raw: unknown, language?: string): string => {
+/** Normalize an explicit status without inferring one from a tool name, and never echo user input. */
+export const normalizeStatusText = (raw: unknown, language?: string, userInputs?: Iterable<unknown>): string => {
   const text = String(raw ?? '').replace(/\s+/g, ' ').trim();
-  if (!text) return language?.toLowerCase().startsWith('zh') ? '我正在继续处理，请稍候。' : 'I am continuing to work.';
+  const neutral = language?.toLowerCase().startsWith('zh') ? '我正在继续处理，请稍候。' : 'I am continuing to work.';
+  if (!text) return neutral;
   const hasInternalDetails = /(post_tool_|page_snapshot|page_viewer|fetch_url|cdp_input|ec-[a-z0-9-]+|tool_choice|function_call)/i.test(text);
-  if (!hasInternalDetails) return clipStatusText(text);
+  if (!hasInternalDetails) {
+    const safe = redactUserInputFromCopy(text, userInputs);
+    return clipStatusText(safe.replace(MASK_ONLY_HINT, '') ? safe : neutral);
+  }
   const english = language?.toLowerCase().startsWith('en');
   const sanitized = /(?:verify|assert|确认结果|核验)/i.test(text)
     ? (english ? 'I am verifying the action.' : '我正在确认刚才的操作是否成功')
-    : english ? 'I am continuing the task.' : sanitizeUserFacingRuntimeText(text, 'current');
-  return clipStatusText((sanitized || text).replace(/\s+/g, ' ').trim());
+    : english ? 'I am continuing the task.' : sanitizeUserFacingRuntimeText(text, 'current', undefined, userInputs);
+  const safe = redactUserInputFromCopy((sanitized || text).replace(/\s+/g, ' ').trim(), userInputs);
+  return clipStatusText(safe.replace(MASK_ONLY_HINT, '') ? safe : neutral);
 };
 
-/** Parse the status channel payload; malformed/empty updates are ignored. */
+/** Parse the status channel payload; malformed/empty updates are ignored, declared user input is masked out of the copy. */
 export const parseStatusUpdate = (raw: unknown): StatusUpdatePayload | null => {
   if (!raw || typeof raw !== 'object') return null;
   const data = raw as Record<string, unknown>;
@@ -293,7 +340,10 @@ export const parseStatusUpdate = (raw: unknown): StatusUpdatePayload | null => {
   const language = typeof data.language === 'string' && data.language.trim()
     ? data.language.trim().slice(0, 16)
     : undefined;
-  return { text: normalizeStatusText(text, language), ...(language ? { language } : {}) };
+  const userInputs = Array.isArray(data.userInputs)
+    ? data.userInputs.filter((value): value is string => typeof value === 'string')
+    : undefined;
+  return { text: normalizeStatusText(text, language, userInputs), ...(language ? { language } : {}) };
 };
 
 /** 构建任务标题，超长截断 */

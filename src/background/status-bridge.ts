@@ -42,7 +42,7 @@ export function resolveStatusTabId(context: StatusContext, requestedTabId?: numb
     return tabId;
 }
 
-export function sendStatusEvent(tabId: number, payload: { text: string; language?: string; active: boolean }): void {
+export function sendStatusEvent(tabId: number, payload: { text: string; language?: string; active: boolean; userInputs?: string[] }): void {
     Channel.sendToTab(tabId, '__status_update', payload);
 }
 
@@ -51,7 +51,15 @@ export async function updateStatus(input: Record<string, unknown>, context: Stat
     const text = validateStatusText(input.text);
     const tabId = resolveStatusTabId(context, typeof input.tabId === 'number' ? input.tabId : undefined);
     const language = typeof input.language === 'string' && input.language.trim() ? input.language : undefined;
-    sendStatusEvent(tabId, { text, ...(language ? { language } : {}), active: true });
+    const userInputs = Array.isArray(input.userInputs)
+        ? input.userInputs.filter((value): value is string => typeof value === 'string')
+        : [];
+    sendStatusEvent(tabId, {
+        text,
+        ...(language ? { language } : {}),
+        active: true,
+        ...(userInputs.length ? { userInputs } : {}),
+    });
     return { acknowledged: true, tabId };
 }
 

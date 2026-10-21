@@ -1,0 +1,327 @@
+{
+  "version": 1,
+  "tasks": [
+    {
+      "id": "T001",
+      "title": "新增工具清单一致性校验脚本（单一事实源）",
+      "milestone": "M1",
+      "wave": 1,
+      "status": "ready_for_review",
+      "blockedBy": [],
+      "owner": "agent",
+      "files": [
+        "mcp-server/check-tool-docs.mjs",
+        "mcp-server/package.json"
+      ],
+      "writeScopes": [
+        "mcp-server/check-tool-docs.mjs",
+        "mcp-server/package.json"
+      ],
+      "acceptance": "Given catalog.js TOOL_NAMES 是唯一事实源，When 运行脚本，Then 输出「TOOL_NAMES 有而文档无」与「文档有而 TOOL_NAMES 无」两份清单；漂移时 exit 1、一致时 exit 0；支持传文件路径参数指定检查对象",
+      "verify": "node mcp-server/check-tool-docs.mjs MCP-BRIDGE.md README.md; test $? -eq 1",
+      "requiresDecision": [],
+      "evidence": "docs/ai-workflow/evidence/T001-2026-10-21.log",
+      "notes": "prefactoring：先有 detector 再修文档；当前漂移存在故 exit 1 即通过；挂 mcp-server/package.json scripts 便于 CI"
+    },
+    {
+      "id": "T002",
+      "title": "MCP-BRIDGE 工具清单 18→34 并补三路径与网络边界",
+      "milestone": "M1",
+      "wave": 2,
+      "status": "ready_for_review",
+      "blockedBy": [
+        "T001"
+      ],
+      "owner": "agent",
+      "files": [
+        "MCP-BRIDGE.md"
+      ],
+      "writeScopes": [
+        "MCP-BRIDGE.md"
+      ],
+      "acceptance": "Given TOOL_NAMES=34，When 修正 MCP-BRIDGE.md，Then 工具清单写 34 个、表格含 actspan_act / actspan_network_* / actspan_data_* 三组、新增「执行语义边界」节（原子工具/act 脚本/agent_submit 内置循环）与 network 工具可见性边界，且 check-tool-docs 对 MCP-BRIDGE.md 退出码 0",
+      "verify": "node mcp-server/check-tool-docs.mjs MCP-BRIDGE.md",
+      "requiresDecision": [],
+      "evidence": "docs/ai-workflow/evidence/T002-2026-10-21.log",
+      "notes": "关 FR-1/FR-2/FR-3 文档部分"
+    },
+    {
+      "id": "T003",
+      "title": "README MCP 能力段补 act/network/data 三组",
+      "milestone": "M1",
+      "wave": 2,
+      "status": "ready_for_review",
+      "blockedBy": [
+        "T001"
+      ],
+      "owner": "agent",
+      "files": [
+        "README.md"
+      ],
+      "writeScopes": [
+        "README.md"
+      ],
+      "acceptance": "Given README「MCP 与外部工具」节，When 修正，Then 提及 actspan_act、actspan_network_*、actspan_data_* 三组，且 check-tool-docs 对 README.md 退出码 0",
+      "verify": "node mcp-server/check-tool-docs.mjs README.md",
+      "requiresDecision": [],
+      "evidence": "docs/ai-workflow/evidence/T003-2026-10-21.log",
+      "notes": "关 FR-1"
+    },
+    {
+      "id": "T004",
+      "title": "guide/plan 两份 spec 与 rename 计划 18→34",
+      "milestone": "M1",
+      "wave": 2,
+      "status": "ready_for_review",
+      "blockedBy": [
+        "T001"
+      ],
+      "owner": "agent",
+      "files": [
+        "docs/guide/actspan-repair-spec.md",
+        "docs/guide/actspan-workflow-architecture-spec.md",
+        "docs/superpowers/plans/2026-10-18-actspan-rename-and-repair-spec.md"
+      ],
+      "writeScopes": [
+        "docs/guide/actspan-repair-spec.md",
+        "docs/guide/actspan-workflow-architecture-spec.md",
+        "docs/superpowers/plans/2026-10-18-actspan-rename-and-repair-spec.md"
+      ],
+      "acceptance": "Given 三份文档写 18，When 更正，Then 全部写 34 或动态引用 TOOL_NAMES，grep 无 stale「18 个稳定工具/共 18 个工具/18-tool stable」",
+      "verify": "! grep -rn '18 个稳定工具\\|共 18 个工具\\|18-tool stable' docs/guide docs/superpowers",
+      "requiresDecision": [],
+      "evidence": "docs/ai-workflow/evidence/T004-2026-10-21.log",
+      "notes": "关 FR-1"
+    },
+    {
+      "id": "T005",
+      "title": "悬浮球活动实现 shadow closed→open",
+      "milestone": "M2",
+      "wave": 1,
+      "status": "ready_for_review",
+      "blockedBy": [],
+      "owner": "agent",
+      "files": [
+        "src/content/float-ball-react.tsx",
+        "src/content/float-ball-shadow.test.mjs"
+      ],
+      "writeScopes": [
+        "src/content/float-ball-react.tsx",
+        "src/content/float-ball-shadow.test.mjs"
+      ],
+      "acceptance": "Given 悬浮球确认卡片渲染，When 新建测试访问其 shadowRoot，Then mode 为 open 且卡片可被查询/交互，行为不变",
+      "verify": "node --test src/content/float-ball-shadow.test.mjs",
+      "requiresDecision": [],
+      "evidence": "docs/ai-workflow/evidence/T005-2026-10-21.log",
+      "notes": "关 FR-4；测试文件当前不存在，本任务新建"
+    },
+    {
+      "id": "T006",
+      "title": "删除 legacy float-ball 死代码及连带测试",
+      "milestone": "M2",
+      "wave": 1,
+      "status": "ready_for_review",
+      "blockedBy": [],
+      "owner": "agent",
+      "files": [
+        "src/content/float-ball.ts",
+        "src/content/float-ball/",
+        "src/content/float-ball-focus.test.mjs",
+        "src/content.ts"
+      ],
+      "writeScopes": [
+        "src/content/float-ball.ts",
+        "src/content/float-ball/",
+        "src/content/float-ball-focus.test.mjs",
+        "src/content.ts"
+      ],
+      "acceptance": "Given float-ball.ts 已被 content.ts 注释，When 删除 legacy float-ball.ts 与 import 它的 float-ball-focus.test.mjs 并清 content.ts 注释（float-ball/ 子目录为活代码保留），Then npm run build 通过且全仓无 initFloatBall（非 React）残留引用",
+      "verify": "npm run build && ! grep -rnE \"content/float-ball'|initFloatBall([^R]|$)\" src/content.ts",
+      "requiresDecision": [],
+      "evidence": "docs/ai-workflow/evidence/T006-2026-10-21.log",
+      "notes": "关 FR-4；scope 纠正：float-ball/ 子目录是活代码（被 float-ball-react/sidepanel/options 复用），仅删 float-ball.ts + float-ball-focus.test.mjs；连带修 actspan-branding.test.mjs contracts 映射"
+    },
+    {
+      "id": "T007",
+      "title": "networkPendingRequests 加 per-request 超时驱逐",
+      "milestone": "M2",
+      "wave": 1,
+      "status": "ready_for_review",
+      "blockedBy": [],
+      "owner": "agent",
+      "files": [
+        "src/lib/cdp-session.ts",
+        "src/lib/cdp-session.test.mjs"
+      ],
+      "writeScopes": [
+        "src/lib/cdp-session.ts",
+        "src/lib/cdp-session.test.mjs"
+      ],
+      "acceptance": "Given 监听会话内请求永不 finished，When 超过超时上限，Then 请求被驱逐、map 不增长，且有回归测试断言驱逐行为",
+      "verify": "node --test src/lib/cdp-session.test.mjs",
+      "requiresDecision": [],
+      "evidence": "docs/ai-workflow/evidence/T007-2026-10-21.log",
+      "notes": "关 FR-3 代码部分；改 pending map 契约须更新 cdp-session.test.mjs"
+    },
+    {
+      "id": "T008",
+      "title": "scenarios 靶场改造并纳入 npm test",
+      "milestone": "M2",
+      "wave": 1,
+      "status": "ready_for_review",
+      "blockedBy": [],
+      "owner": "agent",
+      "files": [
+        "package.json",
+        "test/scenarios.test.mjs"
+      ],
+      "writeScopes": [
+        "package.json",
+        "test/scenarios.test.mjs"
+      ],
+      "acceptance": "Given 运行改造后场景套件，When 完成，Then 覆盖 scenarios.test.mjs 且不依赖 Chrome DevTools /json/version HTTP 端点，且 npm test 纳入该套件",
+      "verify": "node --test test/scenarios.test.mjs",
+      "requiresDecision": [],
+      "evidence": "docs/ai-workflow/evidence/T008-2026-10-21.log",
+      "notes": "关 FR-5；test:acceptance/test:simuser 位于 mcp-server/package.json，保持独立不进根 npm test"
+    },
+    {
+      "id": "T009",
+      "title": "接入 ai-workflow-state 套件（state.json/decisions.md/risks.md）",
+      "milestone": "M3",
+      "wave": 1,
+      "status": "ready_for_review",
+      "blockedBy": [],
+      "owner": "agent",
+      "files": [
+        "docs/ai-workflow/state.json",
+        "docs/ai-workflow/decisions.md",
+        "docs/ai-workflow/risks.md"
+      ],
+      "writeScopes": [
+        "docs/ai-workflow/state.json",
+        "docs/ai-workflow/decisions.md",
+        "docs/ai-workflow/risks.md"
+      ],
+      "acceptance": "Given validate_state.py，When 对项目根运行，Then 退出码 0",
+      "verify": "python3 <套件根>/ai-workflow-state/tools/validate_state.py .",
+      "requiresDecision": [],
+      "evidence": "docs/ai-workflow/evidence/T009-2026-10-21.log",
+      "notes": "关 FR-6；套件根见 ai-workflow SKILL.md 安装与定位节"
+    },
+    {
+      "id": "T010",
+      "title": "gap-matrix 契约证据外化到行级",
+      "milestone": "M3",
+      "wave": 1,
+      "status": "ready_for_review",
+      "blockedBy": [],
+      "owner": "agent",
+      "files": [
+        "docs/spec/actspan-gap-matrix.md",
+        "docs/ai-workflow/evidence/"
+      ],
+      "writeScopes": [
+        "docs/spec/actspan-gap-matrix.md",
+        "docs/ai-workflow/evidence/"
+      ],
+      "acceptance": "Given gap-matrix 35 行契约证据，When 收口，Then 每行标注「契约证据」或指向 evidence/ 下实跑日志，无未标注行",
+      "verify": "grep -c '契约证据' docs/spec/actspan-gap-matrix.md",
+      "requiresDecision": [],
+      "evidence": "docs/ai-workflow/evidence/T010-2026-10-21.log",
+      "notes": "关 FR-6；保持诚实分级，不伪装跑通"
+    },
+    {
+      "id": "T011",
+      "title": "补齐 D11：错误文案脱敏用户输入",
+      "milestone": "M4",
+      "wave": 1,
+      "status": "ready_for_review",
+      "blockedBy": [],
+      "owner": "agent",
+      "files": [
+        "src/content/float-ball/text-utils.ts",
+        "src/content/status-virtual-cursor.test.mjs"
+      ],
+      "writeScopes": [
+        "src/content/float-ball/text-utils.ts",
+        "src/content/status-virtual-cursor.test.mjs"
+      ],
+      "acceptance": "Given D11 错误文案未脱敏用户输入，When 补齐，Then 错误文案中用户输入被脱敏且 redact.test.mjs 有回归用例",
+      "verify": "node --test src/functions/redact.test.mjs",
+      "requiresDecision": [],
+      "evidence": "docs/ai-workflow/evidence/T011-2026-10-21.log",
+      "notes": "关 FR-7 D11；落点修正：D11 是 text-utils.ts 文案过滤用户输入（gap-matrix 落点），非 redact.ts"
+    },
+    {
+      "id": "T012",
+      "title": "补齐 D10：tab_open focus:true 逃生口",
+      "milestone": "M4",
+      "wave": 1,
+      "status": "ready_for_review",
+      "blockedBy": [],
+      "owner": "agent",
+      "files": [
+        "mcp-server/index.js",
+        "mcp-server/test/e2e.mjs"
+      ],
+      "writeScopes": [
+        "mcp-server/index.js",
+        "mcp-server/test/e2e.mjs"
+      ],
+      "acceptance": "Given D10 eval 无 focus:true 逃生口，When 补齐，Then 逃生口存在且拦截策略回归测试通过",
+      "verify": "node --test src/background/policy-executor.test.mjs",
+      "requiresDecision": [],
+      "evidence": "docs/ai-workflow/evidence/T012-2026-10-21.log",
+      "notes": "关 FR-7 D10；落点修正：D10 是 actspan_tab_open 的 focus:true 逃生口（mcp-server/index.js:166），非 policy-executor.ts"
+    },
+    {
+      "id": "T013",
+      "title": "补齐 D12：握手 role 双向校验",
+      "milestone": "M4",
+      "wave": 1,
+      "status": "ready_for_review",
+      "blockedBy": [],
+      "owner": "agent",
+      "files": [
+        "mcp-server/bridge.js",
+        "mcp-server/bridge-daemon.js",
+        "src/offscreen/mcp-transport.ts",
+        "mcp-server/test/security.mjs"
+      ],
+      "writeScopes": [
+        "mcp-server/bridge.js",
+        "mcp-server/bridge-daemon.js",
+        "src/offscreen/mcp-transport.ts",
+        "mcp-server/test/security.mjs"
+      ],
+      "acceptance": "Given D12 role 未双向校验，When 补齐，Then role 双向校验生效且 page-grounding.test.mjs 有回归用例",
+      "verify": "node --test src/content/page-grounding.test.mjs",
+      "requiresDecision": [],
+      "evidence": "docs/ai-workflow/evidence/T013-2026-10-21.log",
+      "notes": "关 FR-7 D12；落点修正：D12 是握手身份 role 校验（bridge.js/bridge-daemon.js/mcp-transport.ts），非 page-grounding.ts（那是 HTML 元素 role）"
+    },
+    {
+      "id": "T014",
+      "title": "其余 partial 分诊归档",
+      "milestone": "M4",
+      "wave": 1,
+      "status": "ready_for_review",
+      "blockedBy": [
+        "T009"
+      ],
+      "owner": "agent",
+      "files": [
+        "docs/ai-workflow/decisions.md"
+      ],
+      "writeScopes": [
+        "docs/ai-workflow/decisions.md"
+      ],
+      "acceptance": "Given 30+ partial 项，When 分诊，Then 每条标注补齐或归档并记入 decisions.md，无静默消失",
+      "verify": "grep -c '^## D0' docs/ai-workflow/decisions.md",
+      "requiresDecision": [],
+      "evidence": "docs/ai-workflow/evidence/T014-2026-10-21.log",
+      "notes": "关 FR-7 其余部分；依赖 T009 建立 decisions.md"
+    }
+  ]
+}

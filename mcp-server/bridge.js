@@ -250,6 +250,15 @@ export class ExtensionHub extends EventEmitter {
             try { msg = JSON.parse(raw.toString()); } catch { ws.close(4000, 'bad frame'); return; }
             if (!ready) {
                 if (msg.type === 'hello' && msg.token === this.token) {
+                    // D12：Origin 白名单只证明「来自已配对的扩展」。hello 一旦自报 role 就必须自认
+                    // extension；报 agent/operator 的扩展是冒充，直接断开。未声明 role 的存量帧
+                    // 靠 Origin + token 兜底，按 extension 兼容放行。
+                    if (msg.role !== undefined && msg.role !== 'extension') {
+                        this.lastError = `extension handshake declared role=${String(msg.role)}; expected extension`;
+                        log(`extension handshake rejected origin=${origin} role=${String(msg.role)}`);
+                        ws.close(4001, 'extension role required');
+                        return;
+                    }
                     if (this.client && this.client.readyState === this.client.OPEN && this.client !== ws) {
                         this.lastReplacementReason = 'rejected duplicate extension; active owner retained';
                         ws.close(4003, 'extension already connected');

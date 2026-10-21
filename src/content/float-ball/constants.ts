@@ -37,7 +37,7 @@ export interface SavedPosition {
   side: Side;
 }
 
-// ============ initFloatBall 闭包内常量 ============
+// ============ 悬浮球内核常量 ============
 
 export const AGENT_PHASE_LABELS: Record<string, string> = {
   idle: '待机',

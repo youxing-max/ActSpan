@@ -5,10 +5,8 @@
 import _console from './lib/console';
 import Channel from './lib/channel';
 import { claimContentScript, type ContentScriptScope } from './content/content-script-guard';
-// React 版悬浮球（重构中）
+// React 版悬浮球
 import { initFloatBallReact } from './content/float-ball-react';
-// 旧版保留，待迁移完成后删除
-// import { initFloatBall } from './content/float-ball';
 import { initPageParser } from './content/page-parser';
 import { initActionExecutor } from './content/action-executor';
 import { initPageGrounding } from './content/page-grounding';

@@ -59,6 +59,16 @@ await wait(100);
 const tools = await client.listTools();
 check('MCP tools/list matches the fixed Actspan catalog',
     tools.tools.length === TOOL_NAMES.length && TOOL_NAMES.every(name => tools.tools.some(tool => tool.name === name)));
+const tabOpenTool = tools.tools.find(tool => tool.name === 'actspan_tab_open');
+// D10: the foreground escape hatch must be explicit and its cost stated in the description.
+check('tab open exposes focus as the only foreground escape hatch',
+    tabOpenTool?.inputSchema?.properties?.focus?.type === 'boolean'
+    && tabOpenTool.inputSchema.properties.focus.default === false
+    && tabOpenTool.inputSchema.properties.active === undefined);
+check('tab open description says the default is a background tab that interrupts nothing',
+    /background/i.test(tabOpenTool?.description || '') && /foreground/i.test(tabOpenTool?.description || ''));
+check('tab open description warns that focus:true interrupts the user',
+    /interrupt/i.test(tabOpenTool?.description || '') && /interrupt/i.test(tabOpenTool?.inputSchema?.properties?.focus?.description || ''));
 const call = (name, args = {}) => client.callTool({ name, arguments: args });
 const statusText = async () => (await call('actspan_status')).content[0].text;
 const before = JSON.parse(await statusText());
@@ -85,6 +95,7 @@ let revision = 1;
 let feishuRequest;
 let taskSubmitRequest;
 let pingRequest;
+let tabOpenRequest;
 let statusContext;
 socket.on('message', raw => {
     const message = JSON.parse(raw.toString());
@@ -104,6 +115,7 @@ socket.on('message', raw => {
         result = { taskId: message.context.taskId, sessionId: message.context.sessionId, registryRevision: 1, state: 'queued' };
     }
     if (message.method === 'tab.open') {
+        tabOpenRequest = message;
         result = { tabId: 4242, url: message.params.url, title: 'Example', taskId: message.context.taskId, sessionId: message.context.sessionId };
     }
     if (message.method === 'task.status') {
@@ -150,6 +162,13 @@ check('agent submit forwards nested query to task runner',
     agentHandle.state === 'queued' && taskSubmitRequest?.params?.query === '读取当前页面标题');
 const opened = JSON.parse((await call('actspan_tab_open', { url: 'https://example.test/docs' })).content[0].text);
 check('tab open reports the session-owned task handle', opened.sessionId !== opened.taskId);
+// D10: omitting focus must still reach the extension as a background tab.
+check('tab open defaults to a background tab', tabOpenRequest?.params?.active === false);
+const focused = JSON.parse((await call('actspan_tab_open', { url: 'https://example.test/seen', focus: true })).content[0].text);
+check('focus:true forwards the foreground request without leaking the MCP-only param',
+    focused.tabId === 4242 && tabOpenRequest?.params?.active === true && tabOpenRequest?.params?.focus === undefined);
+const unfocused = JSON.parse((await call('actspan_tab_open', { url: 'https://example.test/later', focus: false })).content[0].text);
+check('focus:false stays in the background', unfocused.tabId === 4242 && tabOpenRequest?.params?.active === false);
 await call('actspan_agent_status', { taskId: opened.taskId });
 check('task lookup inherits the current session for a tab-owned task id',
     statusContext?.taskId === opened.taskId && statusContext?.sessionId === opened.sessionId);

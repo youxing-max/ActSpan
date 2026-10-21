@@ -57,7 +57,7 @@ export const useGlobalEvents = () => {
     };
 
     // 监听来自入口文件桥接的 CustomEvent
-    // 注意：这些事件分发在 reactRoot 上，但在 closed Shadow DOM 中
+    // 注意：这些事件分发在 reactRoot 上，但在 open Shadow DOM 中
     // 我们无法从组件内拿到 reactRoot 引用，改为使用 window 上的自定义事件
     window.addEventListener('actspan-escape' as any, handleEscape);
     window.addEventListener('actspan-click-outside' as any, handleClickOutside);

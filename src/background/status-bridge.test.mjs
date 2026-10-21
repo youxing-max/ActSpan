@@ -37,6 +37,27 @@ test('status update emits exact event to the matching leased session tab', async
   assert.deepEqual(sent.at(-1), { tabId: 101, message: { type: '__status_update', data: { text: '准备读取结果', language: 'zh-CN', active: true } } });
 });
 
+test('declared user inputs reach the content layer through the status event', async () => {
+  sent.length = 0;
+  const task = taskManager.create({ taskId: 'status-task-f', sessionId: 'status-session-f', owner: 'ide-agent', clientId: 'status-client-f' });
+  tabLeaseManager.acquire(task, 107, 'status-client-f');
+  await updateStatus({ text: '正在填写表单', userInputs: ['Alice-Chen', '#checkout-form'] }, context(task, 107));
+  assert.deepEqual(sent.at(-1).message.data, { text: '正在填写表单', active: true, userInputs: ['Alice-Chen', '#checkout-form'] });
+
+  await updateStatus({ text: '正在填写表单', userInputs: ['Alice-Chen', 42, null] }, context(task, 107));
+  assert.deepEqual(sent.at(-1).message.data.userInputs, ['Alice-Chen']);
+});
+
+test('status event omits userInputs when the caller declares none', async () => {
+  sent.length = 0;
+  const task = taskManager.create({ taskId: 'status-task-g', sessionId: 'status-session-g', owner: 'ide-agent', clientId: 'status-client-g' });
+  tabLeaseManager.acquire(task, 108, 'status-client-g');
+  for (const extra of [{}, { userInputs: [] }, { userInputs: 'Alice-Chen' }, { userInputs: [1, null] }]) {
+    await updateStatus({ text: '正在整理结果', ...extra }, context(task, 108));
+    assert.equal('userInputs' in sent.at(-1).message.data, false);
+  }
+});
+
 test('status update never targets another session and enforces 80 characters', async () => {
   const taskA = taskManager.create({ taskId: 'status-task-b', sessionId: 'status-session-b', owner: 'ide-agent', clientId: 'status-client-b' });
   const taskB = taskManager.create({ taskId: 'status-task-c', sessionId: 'status-session-c', owner: 'ide-agent', clientId: 'status-client-c' });

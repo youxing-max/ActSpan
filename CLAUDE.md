@@ -313,7 +313,6 @@ Keep this managed block so 'openspec update' can refresh the instructions.
 - 快捷键：⌘M (Mac) / Ctrl+M (Windows)
 - 搜索框接入 AI 对话，支持流式响应和函数调用状态展示
 - 组件文件：`src/content/float-ball/`（包含 ActspanRoot、components、context、hooks、styles、constants 等）
-- 旧版 `src/content/float-ball.ts` 保留但未使用，待迁移完成后删除
 
 ### 页面内容解析器 (`src/content/page-parser.ts`)
 

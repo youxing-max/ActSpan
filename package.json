@@ -23,7 +23,7 @@
     "build:offscreen": "vite build --config vite.config.offscreen.ts",
     "build": "npm run build:popup && npm run build:content && npm run build:sidepanel && npm run build:background && npm run build:offscreen && echo 'Build completed!'",
     "typecheck": "tsc -b --noEmit",
-    "test": "node --test src/*.test.mjs src/**/*.test.mjs test/fixtures.test.mjs test/manifest-recorder.test.mjs",
+    "test": "node --test src/*.test.mjs src/**/*.test.mjs test/fixtures.test.mjs test/manifest-recorder.test.mjs test/scenarios.test.mjs",
     "test:omp-compat": "node mcp-server/test/omp-compat.mjs",
     "lint": "eslint . --report-unused-disable-directives",
     "preview": "vite preview",

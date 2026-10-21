@@ -92,6 +92,8 @@ const collectDeepElements = (root: ParentNode, selector: string): Element[] => {
   const collected: Element[] = [];
   const visit = (scope: ParentNode): void => {
     for (const el of Array.from(scope.querySelectorAll('*'))) {
+      // ActSpan 自身 UI（悬浮球宿主 #actspan-root）不属页面语义，不进快照候选
+      if (el.id === 'actspan-root') continue;
       if (selector === '*' || el.matches(selector)) collected.push(el);
       const shadow = el.shadowRoot;
       if (shadow) visit(shadow);

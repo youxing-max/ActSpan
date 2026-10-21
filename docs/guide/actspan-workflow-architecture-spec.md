@@ -18,7 +18,7 @@
 - Options 控制台只写旧注册表：`src/options/pages/WorkflowsPage.tsx:30-63,86-270`。
 - Options 的失效通知只重载旧注册表：`src/background/workflow-handlers.ts:144-154`。
 - 历史记录（已解决）：Skill API 现在通过 `registryService.listAll()` 读取 canonical snapshot 和 revision。
-- 历史记录（已解决）：MCP 已提供 Skill/workflow catalog 与异步执行能力；当前稳定工具清单另包含 `actspan_feishu_push`，共 18 个工具。
+- 历史记录（已解决）：MCP 已提供 Skill/workflow catalog 与异步执行能力；当前稳定工具清单另包含 `actspan_feishu_push`，共 34 个工具。
 - 历史记录（已解决）：远端同步删除现在通过 Registry Service 原子提交 source removal 和 revision，见 `src/functions/skill-registry.ts` 与 `src/functions/registry-service.ts`。
 - 历史记录（已解决）：Popup 现在通过 `registryService.listAll().skills` 读取 canonical snapshot，并监听 `actspan_skills` 变化；不再假设旧 registry 是数组。
 
@@ -89,7 +89,7 @@
 
 - 扩展身份与图标：`public/manifest.json`、`public/actspan-logo.svg` 以及由构建生成的 manifest/icon 资源；`build_version` 只能由源码构建产物生成，不手工维护旧品牌副本。
 - Popup/Sidepanel/Options：`src/App.tsx`、`src/options/OptionsApp.tsx`、`src/options/routes.tsx`、`src/options/pages/WorkflowsPage.tsx`；包括品牌标题、logo、`alt`/`title`、菜单、空状态、按钮和错误提示。
-- 浏览器运行时：`src/content/float-ball.ts`、`src/background/channel-handlers.ts`、`src/ai/system-prompt.ts`；包括悬浮助手名称、通知图标、徽章文本和 Agent 自我介绍。
+- 浏览器运行时：`src/content/float-ball-react.tsx`、`src/background/channel-handlers.ts`、`src/ai/system-prompt.ts`；包括悬浮助手名称、通知图标、徽章文本和 Agent 自我介绍。
 - 文档与发布页：`README.md`、`README.en.md`、`docs/.vitepress/config.ts`、`docs/index.md`、`docs/en/index.md`、下载页和配置指南；名称、favicon、主题 logo、hero 文案和安装说明必须一致。
 - 旧 `logo.png`、旧品牌 SVG 元数据和构建目录中的残留资源必须在切换后删除或由 Actspan 资源替换，不能继续作为运行时入口。
 

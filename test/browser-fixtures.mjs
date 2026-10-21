@@ -8,7 +8,6 @@ import { setTimeout as delay } from 'node:timers/promises';
 // SDK 的 exports 映射指向 dist/esm，深路径必须落到那里；写 client/index.js 会直接找不到模块。
 import { Client } from '../mcp-server/node_modules/@modelcontextprotocol/sdk/dist/esm/client/index.js';
 import { StdioClientTransport, getDefaultEnvironment } from '../mcp-server/node_modules/@modelcontextprotocol/sdk/dist/esm/client/stdio.js';
-import WebSocket from '../mcp-server/node_modules/ws/index.js';
 
 const root = resolve(fileURLToPath(new URL('.', import.meta.url)));
 const fixtureRoot = resolve(root, 'fixtures');
@@ -48,73 +47,6 @@ export async function startFixtureHost() {
       server.close((error) => error ? reject(error) : resolvePromise());
     }),
   };
-}
-
-function connectSocket(url) {
-  return new Promise((resolvePromise, reject) => {
-    const socket = new WebSocket(url); const pending = new Map(); let sequence = 0; let opened = false;
-    const openTimer = setTimeout(() => { socket.terminate(); reject(new Error(`CDP websocket did not open: ${url}`)); }, 5000);
-    socket.once('open', () => {
-      clearTimeout(openTimer); opened = true;
-      resolvePromise({
-        socket,
-        send(method, params = {}) {
-          if (!opened || socket.readyState !== WebSocket.OPEN) return Promise.reject(new Error('CDP websocket is closed'));
-          const id = ++sequence;
-          return new Promise((resolveCommand, rejectCommand) => {
-            const timer = setTimeout(() => { pending.delete(id); rejectCommand(new Error(`CDP command timed out: ${method}`)); }, 15000);
-            pending.set(id, { resolve: resolveCommand, reject: rejectCommand, timer, method }); socket.send(JSON.stringify({ id, method, params }));
-          });
-        },
-        close() { opened = false; for (const entry of pending.values()) { clearTimeout(entry.timer); entry.reject(new Error('CDP connection closed')); } pending.clear(); socket.close(); },
-      });
-    });
-    socket.on('message', (raw) => {
-      let message; try { message = JSON.parse(raw.toString()); } catch { return; }
-      if (!message.id || !pending.has(message.id)) return;
-      const entry = pending.get(message.id); pending.delete(message.id); clearTimeout(entry.timer);
-      if (message.error) entry.reject(new Error(`${entry.method}: ${message.error.message || JSON.stringify(message.error)}`)); else entry.resolve(message.result);
-    });
-    socket.once('error', (error) => { if (!opened) { clearTimeout(openTimer); reject(new Error(`Unable to connect to existing Chrome CDP at ${url}: ${error.message}`)); } });
-    socket.once('close', () => { opened = false; for (const entry of pending.values()) { clearTimeout(entry.timer); entry.reject(new Error('CDP websocket closed')); } pending.clear(); });
-  });
-}
-
-async function cdpJson(base, endpoint) {
-  let response;
-  try { response = await fetch(`${base.replace(/\/$/, '')}${endpoint}`); } catch (error) {
-    throw new Error(`Existing Chrome CDP is unavailable at ${base}: ${error.message}. Start Chrome with remote debugging; this suite never launches Chrome.`);
-  }
-  if (!response.ok) throw new Error(`Chrome CDP ${endpoint} returned HTTP ${response.status}`);
-  return response.json();
-}
-
-/** Attach to an already-running Chrome only. This helper never launches Chrome. */
-export async function connectOverCDP(base = process.env.ACTSPAN_CDP_URL || 'http://127.0.0.1:9222') {
-  const version = await cdpJson(base, '/json/version');
-  if (!version.webSocketDebuggerUrl) throw new Error(`Chrome CDP at ${base} did not expose webSocketDebuggerUrl`);
-  const browser = await connectSocket(version.webSocketDebuggerUrl);
-  return {
-    ...browser,
-    base,
-    async targets() { return cdpJson(base, '/json/list'); },
-    async target(predicate, timeoutMs = 10000) {
-      const deadline = Date.now() + timeoutMs;
-      while (Date.now() < deadline) {
-        const targets = await this.targets();
-        const found = targets.find(typeof predicate === 'function' ? predicate : (target) => target.url?.includes(predicate));
-        if (found?.webSocketDebuggerUrl) return connectSocket(found.webSocketDebuggerUrl);
-        await delay(100);
-      }
-      throw new Error(`Chrome CDP target not found before timeout: ${String(predicate)}`);
-    },
-  };
-}
-
-export async function evaluateTarget(target, expression) {
-  const result = await target.send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true });
-  if (result?.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description || result.exceptionDetails.text || 'Runtime.evaluate failed');
-  return result?.result?.value;
 }
 
 function parseMcpText(result) {

@@ -60,7 +60,7 @@ src/
 │   ├── tool-executor.ts   # 工具执行器
 │   └── types.ts           # AI 类型定义
 ├── content/               # Content Script 模块
-│   ├── float-ball.ts      # 悬浮球 UI
+│   ├── float-ball-react.tsx # 悬浮球 UI（React 版）
 │   ├── page-grounding.ts  # 页面语义快照
 │   ├── action-executor.ts # 动作执行器
 │   ├── search-parser.ts   # 搜索引擎解析
@@ -192,7 +192,7 @@ mcpServer.registerTool(myTool)
 
 3. **添加图标和中文名**（必须）
 
-在 `src/content/float-ball.ts` 中添加：
+在 `src/content/float-ball/icons.ts` 中添加：
 
 ```typescript
 // FUNCTION_ICONS 中添加 SVG 图标

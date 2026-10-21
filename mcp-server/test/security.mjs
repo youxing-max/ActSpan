@@ -26,7 +26,7 @@ async function frame(ws) {
 async function authenticated(url, token) {
     const ws = await open(url);
     const reply = frame(ws);
-    ws.send(JSON.stringify({ type: 'hello', token }));
+    ws.send(JSON.stringify({ type: 'hello', token, role: 'extension' }));
     assert.equal((await reply).type, 'hello_ok');
     return ws;
 }
@@ -49,6 +49,36 @@ test('unknown extension and web origins never receive pairing token, even with k
         known.send(JSON.stringify({ type: 'hello', token: 'test-secret' }));
         assert.equal((await denied)[0], 4001);
     }
+});
+
+test('extension handshake rejects an explicitly agent/operator role but stays compatible without one', async (t) => {
+    const { hub, url } = await hubTest(t);
+    // D12：Origin 白名单只证明「来自某个已配对的扩展」；hello 自报 role 时必须自认 extension。
+    // 有 Origin 却报 role:'agent'/'operator' 的扩展按冒充处理，连接直接断开。
+    for (const role of ['agent', 'operator']) {
+        const ws = await open(url);
+        const closed = once(ws, 'close');
+        ws.send(JSON.stringify({ type: 'hello', token: 'test-secret', role }));
+        const outcome = await Promise.race([
+            closed.then(([code]) => code),
+            new Promise((resolve) => setTimeout(() => resolve('still open'), 300)),
+        ]);
+        assert.equal(outcome, 4001, `hello role=${role} must be rejected`);
+        assert.equal(hub.isConnected(), false);
+        assert.equal(hub.clientOrigin, null);
+        assert.match(hub.lastError, /role/);
+    }
+    // 未声明 role 是老客户端的存量帧：Origin + token 已经成立，按 extension 兼容放行。
+    const legacy = await open(url);
+    const legacyReply = frame(legacy);
+    legacy.send(JSON.stringify({ type: 'hello', token: 'test-secret' }));
+    assert.equal((await legacyReply).type, 'hello_ok');
+    legacy.terminate();
+    // 显式声明 role:'extension' 是唯一被推荐的姿态。
+    const legit = await authenticated(url, hub.token);
+    assert.equal(hub.isConnected(), true);
+    assert.equal(hub.clientOrigin, origin);
+    legit.terminate();
 });
 
 test('second extension connection cannot replace owner or consume its response', async (t) => {

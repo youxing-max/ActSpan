@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "milestones": [
+    {
+      "id": "M1",
+      "title": "文档一致性闭环",
+      "status": "planned",
+      "demo": "check-tool-docs.mjs 对 MCP-BRIDGE.md/README 退出码 0；全仓用户文档无 stale「18 个工具」",
+      "waves": [
+        { "wave": 1, "tasks": ["T001"] },
+        { "wave": 2, "tasks": ["T002", "T003", "T004"] }
+      ]
+    },
+    {
+      "id": "M2",
+      "title": "可测性",
+      "status": "planned",
+      "demo": "悬浮球确认卡片 Playwright 可达；npm test 覆盖 scenarios；pending 请求超时驱逐有测试",
+      "waves": [ { "wave": 1, "tasks": ["T005", "T006", "T007", "T008"] } ]
+    },
+    {
+      "id": "M3",
+      "title": "状态基础设施",
+      "status": "planned",
+      "demo": "validate_state.py 全绿；gap-matrix 契约证据行有对应 evidence",
+      "waves": [ { "wave": 1, "tasks": ["T009", "T010"] } ]
+    },
+    {
+      "id": "M4",
+      "title": "部分实现清尾",
+      "status": "planned",
+      "demo": "D10/D11/D12 各有回归测试；其余 partial 已补齐或归档",
+      "waves": [ { "wave": 1, "tasks": ["T011", "T012", "T013", "T014"] } ]
+    }
+  ]
+}

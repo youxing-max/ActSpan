@@ -60,7 +60,7 @@ src/
 │   ├── tool-executor.ts   # Tool executor
 │   └── types.ts           # AI type definitions
 ├── content/               # Content Script modules
-│   ├── float-ball.ts      # Floating ball UI
+│   ├── float-ball-react.tsx # Floating ball UI
 │   ├── page-grounding.ts  # Page semantic snapshots
 │   ├── action-executor.ts # Action executor
 │   ├── search-parser.ts   # Search engine parser
@@ -192,7 +192,7 @@ mcpServer.registerTool(myTool)
 
 3. **Add icon and label** (required)
 
-Add to `src/content/float-ball.ts`:
+Add to `src/content/float-ball/icons.ts`:
 
 ```typescript
 // Add SVG icon in FUNCTION_ICONS

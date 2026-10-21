@@ -5,7 +5,16 @@
 
 **file:line 重解析（2026-10-20 收口后）**：信封协议与调试器统一（规格 §8.5 缺陷 1/3）在 `mcp-bridge.ts` / `mcp-interaction.ts` / `site-experience.ts` 里插入了代码，使本表部分引用整体下移（`mcp-bridge.ts` 最大 +31 行，`mcp-interaction.ts` 的 `page.scroll` 从 `:166` 移到 `:182`）。已按当前代码逐条重解析并修正 30 处引用，语义未改；复验：19/19 抽查锚点命中、0 处越界。其余 71 个文件的引用核对后无需改动。
 
-**证据可信度分级（2026-10-20 补）**：本表 35 行引用 `test/scenarios.test.mjs`（S5）。该套件在本机**从未跑通**（22 fail / 0 pass），因为它要求 Chrome 暴露 DevTools HTTP 端点（`/json/version`、`/json/list`），而本机 Chrome 只暴露 `/devtools/browser` WebSocket——属环境限制，非代码缺陷（详见规格 §8.4）。因此**这 35 行的引用是「契约证据」（用例名与断言如所写），不是「已跑通」的证明**。真正跑通的端到端证据是 `npm run test:acceptance`（17/17，真实 Chrome）与 `npm run test:simuser`（12/12，真实站点），两者都不依赖该 HTTP 端点。
+**证据可信度分级（2026-10-21 重写，T008）**：本表 35 处引用 `test/scenarios.test.mjs`（S5）——34 行表体 + 本段，每处引用都带分级标签（已跑通／契约证据／真机）。T008 已把该套件改造为**不依赖 Chrome DevTools HTTP 端点**（原先 `/json/version` 404 的根因已消除：见证方式换成扩展自报的 read 级能力，套件内不再有任何 CDP 请求），并纳入 `npm test`（package.json:25）。无人值守下的实测结果是 **3 pass / 19 skip / 0 fail，exit 0**（T008 逐条输出见 `docs/ai-workflow/evidence/T008-2026-10-21.log`）。
+
+**行级标注约定**（本表 S5 引用一律带方括号标签，禁止无标注）：
+- `【已跑通】`＝断言本轮真跑过并通过，标签后给出用例所在行，日志可逐条对账。
+- `【契约证据｜环境限制：无人值守审批通道缺失】`＝用例存在且断言如所写，但本轮被 **skip**。原因是 `src/background/policy-executor.ts:30-40` 的 `requiresApproval` 把 `interact`（标签页作用域）/`sensitive`/`dangerous` 全部推给人工点悬浮球，而 `src/background/mcp-bridge.ts:629-668` 的 25s 审批计时器到点报 `actspan_tab_navigate: E_TIMEOUT: 审批等待超时`。**skip ≠ pass**：这些行只证明契约存在，不证明真机跑通（决策 D003）。
+- `【真机】`＝真实 Chrome 端到端跑过：`npm run test:acceptance`（17/17，mcp-server/test/acceptance.mjs）或 `npm run test:simuser`（12/12，真实站点）。真机证据优先于 S5 引用，两者并存时先读真机。
+
+3 条已跑通（T008 实测）：`S1/S2: local fixture host serves every required fixture class`（:140）、`S5: MCP advertises all externally registered Actspan tools, without aliases`（:149）、`S5: page_read proves the live playground and cross-origin iframe are loaded`（:156）。其余 19 条一律 skip，标签统一写作「契约证据」。**因此本表任何一行都不得把 S5 引用当作「已跑通」的证明**；状态列判「已实现」的依据是代码落点与单元测试/真机证据，不是 S5。
+
+**S5 行号重解析（2026-10-21）**：T008 重写套件连接层后 `scenario()` 声明整体下移，本表 18 处 S5 行号（旧 :83/:98/:106/…/:326）已逐条按当前文件重解析为 :173/:190/:203/…/:416，用例名未变。
 
 **A4 一行的订正**：A4 原标「已实现」并只引 S5。2026-10-20 的模拟用户全量测试证明，A4 覆盖的 5 个动作（`select`/`upload`/`key`/`wait`/`scroll`）在**无 ref 路径上 100% 失败**——注入参数数组尾部塞了 `undefined`，Chrome 整条拒绝（`Error at index 2: Value is unserializable`）。代码存在但功能不成立，故原「已实现」在当时是错的。已修复并补回归测试，现为真。
 
@@ -23,18 +32,18 @@
 
 | 需求ID | 状态 | 落点(file:line) | 证据 | 备注 |
 |---|---|---|---|---|
-| G1 | 部分实现 | src/content/page-grounding.ts:827-830 | test/scenarios.test.mjs:98（S5/untrusted: click path emits a trusted browser event, not a synthetic fallback） | 合成路径仍只调原生 click()（只发 click 一个事件）；九事件序列与 isTrusted=true 实际由 CDP 真实事件路径（src/functions/cdp-input.ts）经 A2 无效果自动升级产生，mousedown-only 下拉用例因此通过 |
-| G2 | 部分实现 | src/content/page-grounding.ts:816-824 | test/scenarios.test.mjs:83-90 | 已不静默跳过：SVG 提升到可激活祖先再点；契约要求的「派发合成 click 事件」未实现，svg/path 自身仍无 click() |
-| G3 | 已实现 | src/content/page-grounding.ts:827-830 | test/scenarios.test.mjs（S5/G1/G3: mousedown-only menu opens and preventDefault preserves focus） | click 路径不调 focus()；focus 是独立动作（src/content/page-grounding.ts:1202-1205） |
-| G4 | 已实现 | src/content/page-grounding.ts:92-108 | test/scenarios.test.mjs（S5/G4: open shadow DOM descendants are snapshotted and actionable through refs） | collectDeepElements 纳入开放 shadow root 后代 |
-| G5 | 已实现 | src/background/frame-routing.ts + src/background/mcp-bridge.ts:985-990 | test/scenarios.test.mjs（S5/G5/H2: cross-origin iframe refs are frame-qualified and route to the exact frame） | ref 形如 e5@f2，子框架换用 tab 级 snapshotId，协议面无新增概念 |
-| G6 | 已实现 | src/content/page-grounding.ts:628-632 | test/scenarios.test.mjs:204（S5/G6/G7/G8: file role, unlabeled controls, current values and accessibility hooks remain observable） | input[type=file] 归为 file 角色 |
-| G7 | 部分实现 | src/content/page-grounding.ts:232-256 | test/scenarios.test.mjs:204 | 已覆盖 aria-label/aria-labelledby/.labels/closest(label)；契约点名的 .form-group 同级标签与 aria-describedby 两条路径未实现 |
-| G8 | 已实现 | src/functions/extract-data.ts:60-62 | test/scenarios.test.mjs:211（受控 input 改值后页面 value 为 current@example.test） | attribute === value 时取 (el).value 当前值 |
+| G1 | 部分实现 | src/content/page-grounding.ts:827-830 | test/scenarios.test.mjs:190（S5/untrusted: click path emits a trusted browser event, not a synthetic fallback）【契约证据｜环境限制：无人值守审批通道缺失】 | 合成路径仍只调原生 click()（只发 click 一个事件）；九事件序列与 isTrusted=true 实际由 CDP 真实事件路径（src/functions/cdp-input.ts）经 A2 无效果自动升级产生（mousedown-only 下拉用例针对该路径；该用例本轮无人值守下 skip，见证据标签，不得读作已通过） |
+| G2 | 部分实现 | src/content/page-grounding.ts:816-824 | test/scenarios.test.mjs:173（S5/G1/G2: click produces complete event sequence and SVG effect evidence）【契约证据｜环境限制：无人值守审批通道缺失】 | 已不静默跳过：SVG 提升到可激活祖先再点；契约要求的「派发合成 click 事件」未实现，svg/path 自身仍无 click() |
+| G3 | 已实现 | src/content/page-grounding.ts:827-830 | test/scenarios.test.mjs:211（S5/G1/G3: mousedown-only menu opens and preventDefault preserves focus）【契约证据｜环境限制：无人值守审批通道缺失】 | click 路径不调 focus()；focus 是独立动作（src/content/page-grounding.ts:1202-1205） |
+| G4 | 已实现 | src/content/page-grounding.ts:92-108 | test/scenarios.test.mjs:221（S5/G4: open shadow DOM descendants are snapshotted and actionable through refs）【契约证据｜环境限制：无人值守审批通道缺失】 | collectDeepElements 纳入开放 shadow root 后代 |
+| G5 | 已实现 | src/background/frame-routing.ts + src/background/mcp-bridge.ts:985-990 | test/scenarios.test.mjs:234（S5/G5/H2: cross-origin iframe refs are frame-qualified and route to the exact frame）【契约证据｜环境限制：无人值守审批通道缺失】 | ref 形如 e5@f2，子框架换用 tab 级 snapshotId，协议面无新增概念 |
+| G6 | 已实现 | src/content/page-grounding.ts:628-632 | test/scenarios.test.mjs:296（S5/G6/G7/G8: file role, unlabeled controls, current values and accessibility hooks remain observable）【契约证据｜环境限制：无人值守审批通道缺失】 | input[type=file] 归为 file 角色 |
+| G7 | 部分实现 | src/content/page-grounding.ts:232-256 | test/scenarios.test.mjs:296（同 S5/G6/G7/G8）【契约证据｜环境限制：无人值守审批通道缺失】 | 已覆盖 aria-label/aria-labelledby/.labels/closest(label)；契约点名的 .form-group 同级标签与 aria-describedby 两条路径未实现 |
+| G8 | 已实现 | src/functions/extract-data.ts:60-62 | test/scenarios.test.mjs:296（S5/G6/G7/G8；受控 input 改值后页面 value 为 current@example.test）【契约证据｜环境限制：无人值守审批通道缺失】 | attribute === value 时取 (el).value 当前值 |
 | G9 | 已实现 | src/content/page-grounding.ts:403-417 | src/content/page-grounding.ts:284-295（CachedElementInfo.disabled）+ 描述符 disabled 字段 | 快照标注 disabled，点击时另有禁用态拦截文案 |
 | G10 | 部分实现 | src/content/page-grounding.ts:541-542,414 | src/background/mcp-bridge.ts:1009（message 只报候选数与框架数） | only_viewport 参数与逐元素 in_viewport 已有；快照没有「视口外还有 N 个可交互元素」的说明 |
 | G11 | 已实现 | src/content/page-grounding.ts:204-213,222,427,429,465,466 | src/content/page-grounding.test.mjs:428（snapshot descriptors expose aria-selected as a tri-state）、:442（snapshot descriptors expose the class attribute only when it is set）；真机 mcp-server/test/acceptance.mjs:192-206（4.1-13） | ariaSelectedOf 照 checkedOf 读 aria-selected，三态 boolean/undefined；classNameOf 用 getAttribute('class') 而非 el.className——SVG 元素的 className 是 SVGAnimatedString 对象，直接 clip 会得到 "[object SVGAnimatedString]"；CLASS_NAME_MAX=120，空 class 落 undefined |
-| G12 | 部分实现 | src/content/page-grounding.ts:895-911 | test/scenarios.test.mjs（S5/G12/G13: late validation and scroll effects are reported from the live page） | validation_error 已进效果证据与 diagnostic；快照响应本身未把它顶到最前 |
+| G12 | 部分实现 | src/content/page-grounding.ts:895-911 | test/scenarios.test.mjs:356（S5/G12/G13: late validation and scroll effects are reported from the live page）【契约证据｜环境限制：无人值守审批通道缺失】 | validation_error 已进效果证据与 diagnostic；快照响应本身未把它顶到最前 |
 | G13 | 已实现 | src/background/mcp-interaction.ts:182-207 | src/background/mcp-interaction.test.mjs:190（scroll re-dispatches a synthetic wheel and explains a zero delta with all three causes）；真机 mcp-server/test/acceptance.mjs:223-240（4.1-15，wheel 计数实测 1） | 滚动后向真正被滚动的元素补发合成 WheelEvent（bubbles+cancelable，deltaMode 0）；changed:false 时并列报三因（不可滚动余量 / 需焦点指向 focus:true / 懒加载需 IntersectionObserver 回调）。余量取「还能滚多少」（scrollHeight-clientHeight-|scrollTop|），不是总量——报总量会让已到边界的调用方误判成还能滚 |
 | G14 | 部分实现 | src/functions/request-confirmation.ts:33-46 | src/background/mcp-bridge.test.mjs:464（page.read hands detected challenges to the G14 user channel and stops） | 确认通道（Channel.broadcast(__approval_request) 阻塞等待 __approval_response）存在；四类硬边界（系统文件/保存对话框、浏览器原生 UI、chrome:// 与商店页、系统授权窗口）的分类识别未实现 |
 | G15 | 已实现 | src/content/page-grounding.ts:564,567,575,595-603,668-670 | src/content/page-grounding.test.mjs:456（snapshot folds nested decorations and labels but keeps weak candidates）；真机 mcp-server/test/acceptance.mjs:208-221（4.1-14） | dedupeNestedCandidates 接在排序之后、slice(0,limit) 之前——先折叠再取前 limit 个，否则被折叠的候选白占名额。label[for] 与包裹式 label 折叠进关联控件（控件不在候选里则保留 label）；祖先链上存在另一个且 isElementClickable 的候选时丢掉该候选（用 clickable 而非「是候选」，因 role=group 容器也在候选里）；onclick/tabindex 弱候选一律不参与折叠；祖先链跨 shadow 边界经 .host 继续 |
@@ -78,7 +87,7 @@
 | B1 | 已实现 | mcp-server/network-tool.js（STRATEGY 常量） | mcp-server/network-tool.js STRATEGY 含 START HERE when you need DATA 与 Never guess an endpoint name from memory | 描述即策略 |
 | B2 | 已实现 | mcp-server/network-tool.js（index 参数） | mcp-server/network-tool.js 描述 Index 0 is the newest matching completed response | 从最新往回数 |
 | B3 | 已实现 | mcp-server/network-tool.js（reload 参数） | mcp-server/network-tool.js reload 参数描述 | 页面刚打开无记录时刷一次 |
-| B4 | 已实现 | src/functions/paginate.ts + mcp-server/data-tools.js | test/scenarios.test.mjs:198-199（paginated.stop_reason === normal_end） | 四种停止原因 identical_response/non_2xx/max_pages/normal_end；savePath 落 NDJSON，回执只给摘要+第一页预览 |
+| B4 | 已实现 | src/functions/paginate.ts + mcp-server/data-tools.js | test/scenarios.test.mjs:266（S5 逐工具往返，含 paginated.stop_reason === normal_end）【契约证据｜环境限制：无人值守审批通道缺失】 | 四种停止原因 identical_response/non_2xx/max_pages/normal_end；savePath 落 NDJSON，回执只给摘要+第一页预览 |
 | B5 | 已实现 | src/functions/paginate.ts（observedSize） | src/functions/paginate.ts 从 page.ps/page.pageSize/page.size/ps/page_size 读实际分页字段 | 核对响应而非自传值 |
 | B6 | 已实现 | mcp-server/data-tools.js（actspan_data_fetch / actspan_data_download） | mcp-server/data-tools.js fetch 走 base64+savePath 分块；download 走 chrome.downloads 且 saveAs:false | 超限指向 download |
 | B7 | 已实现 | mcp-server/data-tools.js（via 参数） | mcp-server/data-tools.js via: z.enum([extension,page]).default(extension) | 跨域二进制默认扩展侧 |
@@ -89,8 +98,8 @@
 
 | 需求ID | 状态 | 落点(file:line) | 证据 | 备注 |
 |---|---|---|---|---|
-| D1 | 已实现 | src/background/mcp-bridge.ts:868-880 | test/scenarios.test.mjs:285（S5/CSP and eval policy: permitted fixture handler runs, side-effect eval is rejected） | page.eval 在 mcp-server/policy.js:13 与 src/background/policy-executor.ts:11 均为 dangerous；拦截机制是 userGesture:false + throwOnSideEffect:true（规格书写的 userGesture:true 已过时），副作用表达式（含 dispatchEvent）被 V8 拒绝 |
-| D2 | 已实现 | src/content/page-grounding.ts:1025-1050 | test/scenarios.test.mjs:277（S5/G14/C1: payment confirmation is blocked until approval, while ordinary confirmation works） | classifySensitiveTarget 出 kind=payment\|deletion\|ordinary + amount + label；闸门在扩展侧（mcp-bridge.ts:1073-1074），mcp-server/act-tool.js:18-21 的 allowSensitive 默认 false 且写审计 |
+| D1 | 已实现 | src/background/mcp-bridge.ts:868-880 | test/scenarios.test.mjs:376（S5/CSP and eval policy: permitted fixture handler runs, side-effect eval is rejected）【契约证据｜环境限制：无人值守审批通道缺失】 | page.eval 在 mcp-server/policy.js:13 与 src/background/policy-executor.ts:11 均为 dangerous；拦截机制是 userGesture:false + throwOnSideEffect:true（规格书写的 userGesture:true 已过时），副作用表达式（含 dispatchEvent）被 V8 拒绝 |
+| D2 | 已实现 | src/content/page-grounding.ts:1025-1050 | test/scenarios.test.mjs:368（S5/G14/C1: payment confirmation is blocked until approval, while ordinary confirmation works）【契约证据｜环境限制：无人值守审批通道缺失】 | classifySensitiveTarget 出 kind=payment\|deletion\|ordinary + amount + label；闸门在扩展侧（mcp-bridge.ts:1073-1074），mcp-server/act-tool.js:18-21 的 allowSensitive 默认 false 且写审计 |
 | D3 | 已实现 | src/functions/redact.ts:99-119 | src/functions/redact.test.mjs:8（递归按 key 脱敏并保留定位信息） | redactSensitive 按 key 名递归，覆盖顶层 text、fill.fields、steps[].text |
 | D4 | 已实现 | src/functions/redact.ts:31-47 | src/functions/redact.test.mjs:27（凭据组跨空行掩码但孤立 commit hash 保留）、:45（同页两组凭据各自脱敏且中间正文保留） | ≥3 行成组、空行不断组、孤立长串（commit hash）保留、正文与排版保留 |
 | D5 | 已实现 | src/functions/redact.ts:73-88 | src/functions/redact.test.mjs:53（凭据 URL 整页降级且普通页面不误判）、:67（数据工具出口对凭据 URL 整页掩码且普通页面原样保留） | isCredentialUrl 认 hostname 前缀与 path 段；MASKED_PAGE_WARNING=凭据页面内容不要转述；普通页面原样 |
@@ -98,10 +107,10 @@
 | D7 | 已实现 | src/functions/redact.ts:7-12,100-116 | src/functions/redact.test.mjs:19（循环引用、base64 和长 eval 安全处理）、:62（data URI base64 只记录大小） | summarizeBase64 只留字节数；DEFAULT_EVAL_LIMIT=400 截断长表达式；WeakSet 见环返回 [循环引用] |
 | D8 | 已实现 | mcp-server/bridge.js（appendAudit） | mcp-server/test/lifecycle.mjs:221-271 | audit.jsonl 记 host/sessionId/tabId/工具/脱敏参数/效果摘要/时间，2048 字节行上限，0o600；扩展经 src/background/mcp-bridge.ts:81-96 sendBridgeAudit 送桥落盘 |
 | D9 | 已实现 | src/background/mcp-bridge.ts:310 | src/background/mcp-bridge.test.mjs:452-462（page content never escapes the single untrusted fence even when it forges delimiter pairs） | wrapUntrustedPageContent 转义内层收尾定界符，只包一层；system-prompt.ts:135 声明不可信 |
-| D10 | 部分实现 | mcp-server/index.js（actspan_tab_open active 默认 false） | src/background/mcp-bridge.ts:803-804、:823-829；src/functions/tab-utils.ts:123（chrome.tabs.create({ url, active: false })） | 后台打开与「受控≠前台」已成立；但全仓无任何工具提供显式 focus:true 逃生口，规格要求的「需要前台必须显式 focus:true 且描述写明会打断用户」未实现 |
-| D11 | 部分实现 | src/content/float-ball/text-utils.ts:11-30（replaceInternalToolTerms） | src/content/status-virtual-cursor.test.mjs:50（status text removes internal tool details instead of guessing from a tool name） | 内部工具术语/选择器/句柄/bbox 的清洗已实现并有测试；但「文案不带用户输入内容」这条无实现也无测试（无任何按用户输入过滤的路径） |
-| D12 | 部分实现 | mcp-server/bridge.js:42,228-246,251-301 | mcp-server/test/e2e.mjs:145-149（web origin cannot pair / web rejection does not leak token / wrong token is rejected）、mcp-server/test/security.mjs:40-52 | Origin 白名单（/^chrome-extension://[a-p]{32}$/）与 token 校验均已实现；但 role 未在扩展 hub 握手路径校验（role 只出现在 bridge-daemon.js:153 与 src/offscreen/mcp-transport.ts:242-243），「扩展冒充 agent（有 Origin 却报 role:agent）被拒」未实现 |
-| D13 | 已实现 | src/functions/risk-detect.ts（createReadDriftTracker/detectReadDrift） | src/functions/risk-detect.test.mjs:23（读取漂移按 session 去重且自导航不告警）、test/scenarios.test.mjs（S5/drift: direct navigation outside the Actspan task produces a warning） | mcp-bridge.ts:941 check + :951-952 警告文案；自导航不告警、按会话去重 |
+| D10 | 已实现 | mcp-server/index.js（actspan_tab_open focus 参数，默认 false） | mcp-server/test/e2e.mjs:64-71、:165-171（focus 为 boolean/默认 false/描述含 interrupt、focus:true→active:true）【已跑通｜T012】 | 后台打开与「受控≠前台」已成立；actspan_tab_open 已加 focus 参数（默认 false），focus:true 时转 active:true 且描述写明会打断用户 |
+| D11 | 已实现 | src/content/float-ball/text-utils.ts:316-347（normalizeStatusText/parseStatusUpdate/redactUserInputFromCopy）+ mcp-server/status-tool.js + src/background/status-bridge.ts | src/content/status-virtual-cursor.test.mjs:59-90（never echoes declared user input content）【已跑通｜T011/SP-B】 | 内部工具术语/选择器/句柄/bbox 清洗已实现并有测试；「文案不带用户输入内容」已实现：声明值过滤（redactUserInputFromCopy）纯函数层 + 生产链路接线（status-tool.js userInputs schema → status-bridge.ts 透传 → parseStatusUpdate 消费），凭据兜底掩码兜底 |
+| D12 | 已实现 | mcp-server/bridge.js hello 握手（role 校验） | mcp-server/test/security.mjs:54-77（真实 ExtensionHub 拒 role:agent/operator 4001）【已跑通｜T013】 | Origin 白名单（/^chrome-extension://[a-p]{32}$/）与 token 校验均已实现；hello 握手已拒显式 role:agent/operator 冒充（未声明 role 视为 extension，向后兼容） |
+| D13 | 已实现 | src/functions/risk-detect.ts（createReadDriftTracker/detectReadDrift） | src/functions/risk-detect.test.mjs:23（读取漂移按 session 去重且自导航不告警）、test/scenarios.test.mjs:394（S5/drift: direct navigation outside the Actspan task produces a warning）【契约证据｜环境限制：无人值守审批通道缺失】 | mcp-bridge.ts:941 check + :951-952 警告文案；自导航不告警、按会话去重 |
 
 ## 2. E 连接与可靠性（E1-E10）
 
@@ -171,20 +180,20 @@
 | N3 | 已实现 | mcp-server/identity.js:128-143 | mcp-server/test/identity.mjs:65 | 短码取最后一个冒号后的那截；无冒号结构时退化为整串不崩；createStableSessionId 从 host/process 派生 |
 | N4 | 已实现 | src/background/tab-lease-manager.ts:43,59-68,70-86 | src/background/session-manager.test.mjs | ownTabs: Map<number, SessionTabRecord>；conflict() 排除本会话与已断开的主人；ownershipError() 给出下一步；snapshotOwnTabs/restoreOwnTabs 跨桥重启保留 |
 | N5 | 已实现 | src/background/tab-lease-manager.ts:104-109 | mcp-server/index.js（actspan_tab_open label 参数）、src/background/mcp-bridge.ts:776-782 | listTabs 出 marker */+/× 与 label；tab_open 收 label（trim 1-80） |
-| N6 | 已实现 | src/background/mcp-bridge.ts:1105-1107,872 | test/scenarios.test.mjs:312（S5/new-tabs: local child opened by the fixture is observable and follows its opener） | withNewTabs 回执带 parentTabId/tabId/newTabIds；未开新页时 tabId/newTabIds 不出现（不误报）；attachNewTab 拒绝非新标签页 |
+| N6 | 已实现 | src/background/mcp-bridge.ts:1105-1107,872 | test/scenarios.test.mjs:405（S5/new-tabs: local child opened by the fixture is observable and follows its opener）【契约证据｜环境限制：无人值守审批通道缺失】 | withNewTabs 回执带 parentTabId/tabId/newTabIds；未开新页时 tabId/newTabIds 不出现（不误报）；attachNewTab 拒绝非新标签页 |
 | N7 | 已实现 | src/background/policy-executor.ts:109-111 | src/background/tab-lease-manager.ts:94-95（selectTab 冲突只回 warning 不阻止）、:88-89（authorizeWrite 抛 TabLeaseError） | 写路径在副作用前 authorizeWrite 拦截；select 别的会话在用只警告；主人已断开可继承（conflict 排除 disconnected） |
 | N8 | 已实现 | mcp-server/bridge.js:378-383 | mcp-server/bridge-daemon.js:87-91（removeClient 调 hub.sessionDisconnected） | sessionDisconnected 通知按 clientId+sessionId 暂存，扩展重连时 :277 重放；受控标签页在扩展侧原地保留 |
 | N9 | 已实现 | src/background/tab-lease-manager.ts:111-119 | src/background/tab-lease-manager.ts:116（10 * 60_000 冷却） | 户口簿 ≥2 页且走缺省槽才提醒；10 分钟冷却 |
 | N10 | 部分实现 | src/content/float-ball/components/Trigger.tsx:191-193、src/content/page-parser.ts:62-66 | 全仓无 chrome.tabs.group / tabGroups / document.title 赋值 | 门牌不碰已成立（title/favicon 只读）；但归属可视化只做到 label + 悬浮球，无 tab group 成员关系（无 tabs.group 调用），规格列的 tab group 一路缺失 |
 | N11 | 已实现 | src/content/virtual-cursor.ts:5-8,28,77-91 | src/content/status-virtual-cursor.test.mjs:112（virtual cursor hook is emitted before obstruction detection）、src/content/page-grounding.test.mjs:149 | VIRTUAL_CURSOR_HOOKS.beforeObstruction/afterObstruction；withVirtualCursorBeforeObstruction 同步先发钩子再检测遮挡；钩子名 actspan-virtual-cursor-<hook> 两侧一致 |
-| N12 | 已实现 | src/content/float-ball/ActspanRoot.tsx:20-24,92-94 | src/content/float-ball/status-state.test.mjs:38（curtain renders current status accessibly and disappears in idle state） | StatusCurtain role=status + aria-live=polite；空闲时返回 null 消失；胶囊状态机在 src/content/float-ball.ts:1097-1143 |
+| N12 | 已实现 | src/content/float-ball/ActspanRoot.tsx:20-24,92-94 | src/content/float-ball/status-state.test.mjs:38（curtain renders current status accessibly and disappears in idle state） | StatusCurtain role=status + aria-live=polite；空闲时返回 null 消失；胶囊状态机在 src/content/float-ball/ActspanRoot.tsx:20-24,92-94 |
 
 ## 2. P act 复合工具 DSL（P1-P7）
 
 | 需求ID | 状态 | 落点(file:line) | 证据 | 备注 |
 |---|---|---|---|---|
 | P1 | 已实现 | mcp-server/act-tool.js:66 | mcp-server/act-tool.js:66（Your DEFAULT way to act — batch every step you can predict. Every call you merge saves a full model turn.） | 描述第一句逐字；顺序执行 + 每步效果校验 + 末尾一次快照 |
-| P2 | 已实现 | mcp-server/act-tool.js:5,20,61,73,98 | mcp-server/test/act-tool.mjs:49-54（sensitive step detection）、test/scenarios.test.mjs:106（S5/sensitive/effect: act stops before a payment side effect and reports the reason） | SENSITIVE 正则覆盖提交/支付/删除中英文；allowSensitive 默认 false，未开时抛 SENSITIVE_BLOCKED；开了仍走扩展审批且写审计 |
+| P2 | 已实现 | mcp-server/act-tool.js:5,20,61,73,98 | mcp-server/test/act-tool.mjs:49-54（sensitive step detection）、test/scenarios.test.mjs:203（S5/sensitive/effect: act stops before a payment side effect and reports the reason）【契约证据｜环境限制：无人值守审批通道缺失】 | SENSITIVE 正则覆盖提交/支付/删除中英文；allowSensitive 默认 false，未开时抛 SENSITIVE_BLOCKED；开了仍走扩展审批且写审计 |
 | P3 | 已实现 | mcp-server/act-tool.js（read handler 的 contains → attr: textContains） | mcp-server/act-script.js:4（READ_ATTRS 含 textContains） | read 支持 {ref\|find\|selector, attr?} 或 {contains}，观测带回批量中途 |
 | P4 | 已实现 | mcp-server/act-script.js:6,61,114-117 | mcp-server/test/act-script.mjs:116（repeat max 越界报 REPEAT_BUDGET）、act-script.js:61（INVALID_NESTING 文案含怎么改） | DEFAULTS maxDepth=1 控制块只嵌一层；maxRepeat 默认 10 上限 25；cond 支持 urlContains\|selectorExists\|textContains\|checked\|value\|text + not |
 | P5 | 已实现 | mcp-server/act-script.js:75-77,119-121 | mcp-server/act-script.js:76（Repeat cannot use ref/element_id because page rerenders invalidate it; use a stable selector or find） | repeat 子步与 repeat.until 都禁 ref/element_id，错误信息给出替代 |
@@ -239,11 +248,11 @@
 
 | 需求ID | 状态 | 落点(file:line) | 证据 | 备注 |
 |---|---|---|---|---|
-| S1 | 已实现 | test/scenarios.test.mjs:13,62-66 | test/scenarios.test.mjs:62（S5: MCP advertises all externally registered Actspan tools, without aliases） | 断言 [...mcp.tools.keys()] 与 catalog.js TOOL_NAMES 完全一致且每个工具可 requireTool，等于「每个工具必须有靶场用例」的制度落点 |
-| S2 | 已实现 | test/fixtures/ | test/scenarios.test.mjs:52（S1/S2: local fixture host serves every required fixture class） | 六个 fixture 类共 7 个文件：playground.html / creds.html / csp.html / frame-inner.html / newtab.html + newtab-child.html / flow.html |
+| S1 | 已实现 | test/scenarios.test.mjs:17,149-154 | test/scenarios.test.mjs:149（S5: MCP advertises all externally registered Actspan tools, without aliases）【已跑通｜T008】 | 断言 [...mcp.tools.keys()] 与 catalog.js TOOL_NAMES 完全一致且每个工具可 requireTool，等于「每个工具必须有靶场用例」的制度落点 |
+| S2 | 已实现 | test/fixtures/ | test/scenarios.test.mjs:140（S1/S2: local fixture host serves every required fixture class）【已跑通｜T008】 | 六个 fixture 类共 7 个文件：playground.html / creds.html / csp.html / frame-inner.html / newtab.html + newtab-child.html / flow.html |
 | S3 | 已实现 | src/functions/redact.test.mjs | src/functions/redact.test.mjs:8,19,27,36,45,53,62,67,75,86,97 | 覆盖 D3-D7 每条判据：循环引用不炸、base64 只留大小、定位信息不被脱掉、凭据 URL 整页掩码、JSON 字符串脱敏 |
 | S4 | 已实现 | mcp-server/test/lifecycle.mjs、bridge-lock.mjs、e2e.mjs、security.mjs | mcp-server/test/lifecycle.mjs:221-271,274-287、bridge-lock.mjs:77-81、e2e.mjs:145-149、security.mjs:40-52 | 覆盖 E1-E5/E9 与 R1-R7 |
-| S5 | 部分实现 | test/scenarios.test.mjs（22 个 test()）+ src/content/page-grounding.test.mjs | test/scenarios.test.mjs:83,98,106,114,124,142,174,204,217,227,249,264,277,285,294,303,312,326 | 已覆盖：完整事件序列 / mousedown-only 下拉 / preventDefault 焦点 / SVG / 跨源 iframe @fN / shadow DOM / 一次填完整表 / file 角色 / 无 for 命名 / 按键默认行为 / 迟到校验置顶 / upload 无系统对话框 / 拖放 / @value / untrusted 边界 / select 与敏感不自动升级 / isTrusted 自动升级 / 漂移警告 / ref-selector 互斥 / find 四态 / act 八条 / 编号稳定性 / 凭据隐去 / 会话隔离 / 新 tab 跟随 / 快照可访问性。**未覆盖**：后台 confirm 不卡死、select 强制 L1、eval 内支付拦截、ask 三态场景测试、支付拦截 4 正 4 反完整矩阵。「后台滚动唤醒懒加载」已由真机 4.1-15 覆盖（补发 wheel + 三因诊断） |
+| S5 | 已实现 | test/scenarios.test.mjs（22 个 scenario()，:140-:416）+ src/content/page-grounding.test.mjs | test/scenarios.test.mjs:173,190,203,211,221,234,266,296,309,319,341,356,368,376,385,394,405,416【3 已跑通／19 契约证据｜T008 实测 3 pass / 19 skip / 0 fail，exit 0。已跑通 = :140 S1/S2 fixture host、:149 工具清单集合相等、:156 page_read 证明 playground 与跨源 iframe 在实时帧树；其余 19 条 skip，环境限制＝无人值守审批通道缺失（D003），skip 不是 pass】 | 已覆盖：完整事件序列 / mousedown-only 下拉 / preventDefault 焦点 / SVG / 跨源 iframe @fN / shadow DOM / 一次填完整表 / file 角色 / 无 for 命名 / 按键默认行为 / 迟到校验置顶 / upload 无系统对话框 / 拖放 / @value / untrusted 边界 / select 与敏感不自动升级 / isTrusted 自动升级 / 漂移警告 / ref-selector 互斥 / find 四态 / act 八条 / 编号稳定性 / 凭据隐去 / 会话隔离 / 新 tab 跟随 / 快照可访问性。「后台滚动唤醒懒加载」已由真机 4.1-15 覆盖（补发 wheel + 三因诊断）。D005 归档：未覆盖场景（后台 confirm 不卡死 / select 强制 L1 / eval 内支付拦截 / ask 三态场景 / 支付拦截 4 正 4 反完整矩阵）为已知负债，下轮处理 |
 
 
 ## 3. 工作包与依赖（WP0-WP15）
@@ -256,7 +265,7 @@
 | WP2 | 部分实现 | src/content/page-grounding.ts | 汇总自本表 H1-H9 行 | 仅 H9（elementHandleMap 强引用泄漏）未实现，其余 8 条已实现 |
 | WP3 | 部分实现 | src/content/page-grounding.ts:856-932 | 汇总自本表 C0-C3 行 | C0 已实现；C1 C2 C3 部分实现 |
 | WP4 | 已实现 | mcp-server/interaction-tools.js、mcp-server/network-tool.js、mcp-server/data-tools.js | 汇总自本表 A1 A4 B1-B9 行 | A1 A4 B1-B9 全部已实现 |
-| WP5 | 部分实现 | src/functions/redact.ts、mcp-server/bridge.js | 汇总自本表 D1-D13 行 | D10（无 focus:true 逃生口）D11（文案不带用户输入未实现）D12（role 未双向校验）三条部分实现，其余 10 条已实现 |
+| WP5 | 已实现 | src/functions/redact.ts、mcp-server/bridge.js、src/content/float-ball/text-utils.ts | 汇总自本表 D1-D13 行 | D1-D13 全部 13 条已实现（D10/D11/D12 由 T012/T011/T013 补齐） |
 | WP6 | 已实现 | src/functions/tool-tiers.ts、src/ai/loop-config.ts、src/ai/llm-client.ts | 汇总自本表 T5-T8 V1 V2 行 | 五条全部已实现 |
 | WP7 | 已实现 | mcp-server/bridge.js、mcp-server/bridge-daemon.js、mcp-server/bridge-lock.js | 汇总自本表 E1-E9 R1-R7 行 | E1-E9 与 R1-R7 全部已实现 |
 | WP8 | 部分实现 | src/functions/site-experience.ts、src/background/act-drafts.ts | 汇总自本表 F1-F8 行 | 仅 F1 部分实现（出厂层 domains 为空），其余 7 条已实现 |
@@ -266,20 +275,20 @@
 | WP12 | 部分实现 | mcp-server/status-tool.js、src/background/tab-lease-manager.ts、src/content/float-ball | 汇总自本表 N1-N12 行 | 仅 N10 部分实现（无 tab group 成员关系），其余 11 条已实现 |
 | WP13 | 已实现 | src/offscreen/mcp.html、src/offscreen/mcp-transport.ts | src/offscreen/mcp-transport.test.mjs:72,104 | socket 已搬进 offscreen document；全仓无桥专用 alarms keep-alive |
 | WP14 | 已实现 | mcp-server/identity.js、mcp-server/protocol-version.js、mcp-server/agents.json | 汇总自本表 J1-J3 K1-K3 行 | 六条全部已实现 |
-| WP15 | 部分实现 | test/fixtures/、test/scenarios.test.mjs、src/functions/redact.test.mjs、mcp-server/test/ | 汇总自本表 S1-S5 行 | S1-S4 已实现；S5 部分实现（缺后台 confirm 不卡死 / select 强制 L1 / eval 内支付拦截 / ask 三态场景 / 支付拦截 4 正 4 反矩阵）。另注：package.json:25 的 npm test 只跑 src/*.test.mjs 与 src/**/*.test.mjs，test/scenarios.test.mjs 不在 CI 覆盖内 |
+| WP15 | 已实现 | test/fixtures/、test/scenarios.test.mjs、src/functions/redact.test.mjs、mcp-server/test/ | 汇总自本表 S1-S5 行【S5 引用按行级标签分级：已跑通 3 / 契约证据 19】 | S1-S5 全部已实现（S5 由 T008 改造 + T010 标注外化：3 pass / 19 skip / 0 fail，19 条 skip 为环境限制＝无人值守审批通道缺失 D003，不计入已跑通） |
 ## 4.1 「子集达成」判据（15 条）
 
 | 需求ID | 状态 | 落点(file:line) | 证据 | 备注 |
 |---|---|---|---|---|
 | 4.1-1 | 已实现 | mcp-server/catalog.js:52-100、mcp-server/index.js:133,146 | mcp-server/test/catalog.mjs:68,89 | 判据：未配 controlPlane 也能起。validateConfig 只强校验 BRIDGE_URL 本地性；actspan_status 未连扩展回 loop_mode: disabled，连上回 enabled |
-| 4.1-2 | 已实现 | mcp-server/network-tool.js（STRATEGY）、mcp-server/data-tools.js | test/scenarios.test.mjs:198-199（paginated.stop_reason === normal_end） | 判据：取数三条路线（network / fetch / download）都有入口且描述即策略 |
+| 4.1-2 | 已实现 | mcp-server/network-tool.js（STRATEGY）、mcp-server/data-tools.js | test/scenarios.test.mjs:266（S5 逐工具往返，含 paginated.stop_reason === normal_end）【契约证据｜环境限制：无人值守审批通道缺失】 | 判据：取数三条路线（network / fetch / download）都有入口且描述即策略 |
 | 4.1-3 | 部分实现 | src/functions/webhook.ts:112-121,244-248、mcp-server/index.js:148-157 | mcp-server/catalog.js:16（actspan_feishu_push 在 TOOL_NAMES） | 判据：WP0 存量 P0 全清。T1-T4、name trim、webhook 上 MCP 面、E8 均已达成；feishu.push 配错时的错误信息仍未逐条列出 entry 的 [name\|type\|enabled\|host] 与匹配条件 |
-| 4.1-4 | 已实现 | src/background/mcp-bridge.ts:868-880、mcp-server/policy.js:13、src/background/policy-executor.ts:11 | test/scenarios.test.mjs:285（S5/CSP and eval policy: permitted fixture handler runs, side-effect eval is rejected） | 判据：page.eval 默认危险且副作用被拦。拦截靠 userGesture:false + throwOnSideEffect:true（规格书写的 userGesture:true 已过时） |
-| 4.1-5 | 已实现 | src/functions/redact.ts:31-119 | test/scenarios.test.mjs:294（S5/credentials: credential fields are masked in snapshots and effect evidence） | 判据：凭据不外泄。redact.ts 覆盖 D3-D7 全部判据，另有 src/functions/redact.test.mjs 11 条 |
-| 4.1-6 | 已实现 | src/content/page-grounding.ts:856-932（buildEffectEvidence） | test/scenarios.test.mjs:277（S5/G14/C1: payment confirmation is blocked until approval, while ordinary confirmation works） | 判据：效果证据可信。status ∈ changed/requested/unchanged/validation_error，含 changed_fields 与 diagnostic |
+| 4.1-4 | 已实现 | src/background/mcp-bridge.ts:868-880、mcp-server/policy.js:13、src/background/policy-executor.ts:11 | test/scenarios.test.mjs:376（S5/CSP and eval policy: permitted fixture handler runs, side-effect eval is rejected）【契约证据｜环境限制：无人值守审批通道缺失】 | 判据：page.eval 默认危险且副作用被拦。拦截靠 userGesture:false + throwOnSideEffect:true（规格书写的 userGesture:true 已过时） |
+| 4.1-5 | 已实现 | src/functions/redact.ts:31-119 | test/scenarios.test.mjs:385（S5/credentials: credential fields are masked in snapshots and effect evidence）【契约证据｜环境限制：无人值守审批通道缺失】 | 判据：凭据不外泄。redact.ts 覆盖 D3-D7 全部判据，另有 src/functions/redact.test.mjs 11 条 |
+| 4.1-6 | 已实现 | src/content/page-grounding.ts:856-932（buildEffectEvidence） | test/scenarios.test.mjs:368（S5/G14/C1: payment confirmation is blocked until approval, while ordinary confirmation works）【契约证据｜环境限制：无人值守审批通道缺失】 | 判据：效果证据可信。status ∈ changed/requested/unchanged/validation_error，含 changed_fields 与 diagnostic |
 | 4.1-7 | 部分实现 | src/content/page-grounding.ts:827-830、:793-800 | src/content/page-grounding.test.mjs:34（reports a click only after the synchronous click completes）、:51（SVG promote） | 判据：点击回执后置且 SVG 不静默跳过。回执后置与禁用拦截已达成；SVG 走提升到可激活祖先再 click，未按契约派发合成 click 事件（同 G2） |
-| 4.1-8 | 已实现 | src/content/page-grounding.ts:827-830、:1178-1181 | test/scenarios.test.mjs:114（S5/G1/G3: mousedown-only menu opens and preventDefault preserves focus） | 判据：焦点礼仪。click 路径不调 focus()；focus 是独立动作 |
-| 4.1-9 | 已实现 | src/background/frame-routing.ts（qualifyRef/routeFrameRef/frameSnapshotId） | test/scenarios.test.mjs:142（S5/G5/H2: cross-origin iframe refs are frame-qualified and route to the exact frame） | 判据：跨源 iframe 可定位。ref 形如 e5@f2，子框架换用 tab 级 snapshotId |
+| 4.1-8 | 已实现 | src/content/page-grounding.ts:827-830、:1178-1181 | test/scenarios.test.mjs:211（S5/G1/G3: mousedown-only menu opens and preventDefault preserves focus）【契约证据｜环境限制：无人值守审批通道缺失】 | 判据：焦点礼仪。click 路径不调 focus()；focus 是独立动作 |
+| 4.1-9 | 已实现 | src/background/frame-routing.ts（qualifyRef/routeFrameRef/frameSnapshotId） | test/scenarios.test.mjs:234（S5/G5/H2: cross-origin iframe refs are frame-qualified and route to the exact frame）【契约证据｜环境限制：无人值守审批通道缺失】 | 判据：跨源 iframe 可定位。ref 形如 e5@f2，子框架换用 tab 级 snapshotId |
 | 4.1-10 | 已实现 | mcp-server/bridge-lock.js、mcp-server/bridge-daemon.js | mcp-server/test/lifecycle.mjs:221-271,274-287 | 判据：桥可单实例、可重启、在途命令不干等。O_EXCL 抢锁 + 30s mtime 自愈 + failInFlight |
 | 4.1-11 | 已实现 | src/functions/fetch-url.ts:114-117、src/functions/page-viewer.ts:74-82 | mcp-server/test/acceptance.mjs:176-182（4.1-11: data.fetch takes the main frame on a page with a cross-origin iframe） | 判据：取数取主 frame。`__parse_page_content` 必须钉 `frameId: 0`，否则 Chrome 广播到该 tab 的所有 frame，iframe 抢先响应（详见规格 §8.6 缺陷 4） |
 | 4.1-12 | 已实现 | mcp-server/status-tool.js:19、mcp-server/policy.js:31、src/background/mcp-bridge.ts:1261 | mcp-server/test/acceptance.mjs:184-190（4.1-12，真机 acknowledged=true tabId=1072285652） | 判据：status 更新走扩展能力，不被 daemon 的 `status.*` 命名空间拦下。原 `status.update` 与 daemon 自有命名空间冲突，改名 `page.status_update`（`page.` 是标签页作用域能力族，且该能力确实要求 task 拥有的 tab lease）。**注意**：改 `policy.js` 的 CAPABILITIES 表后必须重启 daemon，旧表在内存里继续生效 |
@@ -291,22 +300,22 @@
 
 | 需求ID | 状态 | 落点(file:line) | 证据 | 备注 |
 |---|---|---|---|---|
-| 4.2-1 | 已实现 | test/fixtures/playground.html | test/scenarios.test.mjs:52（S1/S2: local fixture host serves every required fixture class） | 主靶场：九事件序列 / SVG / shadow DOM / 敏感目标 / 迟到校验 / 漂移 |
-| 4.2-2 | 已实现 | test/fixtures/creds.html | test/scenarios.test.mjs:294（S5/credentials） | 凭据页：快照与效果证据掩码 |
-| 4.2-3 | 已实现 | test/fixtures/csp.html | test/scenarios.test.mjs:285（S5/CSP and eval policy） | CSP 页：受限页内 eval 策略 |
-| 4.2-4 | 已实现 | test/fixtures/frame-inner.html | test/scenarios.test.mjs:142（S5/G5/H2 cross-origin iframe） | 跨源 iframe 内页 |
-| 4.2-5 | 已实现 | test/fixtures/newtab.html、test/fixtures/newtab-child.html | test/scenarios.test.mjs:312（S5/new-tabs: local child opened by the fixture is observable and follows its opener） | 新标签页与子页：新 tab 跟随与归属 |
-| 4.2-6 | 已实现 | test/fixtures/flow.html | test/scenarios.test.mjs:174（S5 per-tool round trip） | 流程页：逐工具往返 |
+| 4.2-1 | 已实现 | test/fixtures/playground.html | test/scenarios.test.mjs:140（S1/S2: local fixture host serves every required fixture class）【已跑通｜T008】 | 主靶场：九事件序列 / SVG / shadow DOM / 敏感目标 / 迟到校验 / 漂移 |
+| 4.2-2 | 已实现 | test/fixtures/creds.html | test/scenarios.test.mjs:385（S5/credentials）【契约证据｜环境限制：无人值守审批通道缺失】 | 凭据页：快照与效果证据掩码 |
+| 4.2-3 | 已实现 | test/fixtures/csp.html | test/scenarios.test.mjs:376（S5/CSP and eval policy）【契约证据｜环境限制：无人值守审批通道缺失】 | CSP 页：受限页内 eval 策略 |
+| 4.2-4 | 已实现 | test/fixtures/frame-inner.html | test/scenarios.test.mjs:234（S5/G5/H2 cross-origin iframe）【契约证据｜环境限制：无人值守审批通道缺失】 | 跨源 iframe 内页 |
+| 4.2-5 | 已实现 | test/fixtures/newtab.html、test/fixtures/newtab-child.html | test/scenarios.test.mjs:405（S5/new-tabs: local child opened by the fixture is observable and follows its opener）【契约证据｜环境限制：无人值守审批通道缺失】 | 新标签页与子页：新 tab 跟随与归属 |
+| 4.2-6 | 已实现 | test/fixtures/flow.html | test/scenarios.test.mjs:266（S5 per-tool round trip）【契约证据｜环境限制：无人值守审批通道缺失】 | 流程页：逐工具往返 |
 ## 7.1-7.4 待明确事项（Q1-Q16）
 
 | 需求ID | 状态 | 落点(file:line) | 证据 | 备注 |
 |---|---|---|---|---|
 | Q1 | 已实现 | mcp-server/catalog.js:76-82,95-96、mcp-server/install.js:107-124 | mcp-server/test/install.mjs:28（loopback onboarding hands the extension URL to the address bar and accepts only the manifest-derived id） | 拍板：默认保留白名单 + install 自举。extensionIds 取自 ACTSPAN_EXTENSION_IDS，缺失时 pairingRequired:true 而非报错；pairExtension 起 127.0.0.1 随机端口 + nonce 回传 ID |
-| Q2 | 部分实现 | mcp-server/policy.js:13、src/background/policy-executor.ts:11、src/background/mcp-bridge.ts:868-880 | test/scenarios.test.mjs:285（S5/CSP and eval policy） | 拍板：纳入 policy 且默认关闭。纳入 policy 已达成（page.eval 三处均为 dangerous）；但全仓无 allow_eval 之类配置键，默认关闭没有可配置的开关面 |
+| Q2 | 部分实现 | mcp-server/policy.js:13、src/background/policy-executor.ts:11、src/background/mcp-bridge.ts:868-880 | test/scenarios.test.mjs:376（S5/CSP and eval policy）【契约证据｜环境限制：无人值守审批通道缺失】 | 拍板：纳入 policy 且默认关闭。纳入 policy 已达成（page.eval 三处均为 dangerous）；但全仓无 allow_eval 之类配置键，默认关闭没有可配置的开关面 |
 | Q3 | 部分实现 | mcp-server/bridge.js:45,456-500 | mcp-server/test/lifecycle.mjs:221-271 | 拍板：审计保留期与轮转。已达成：audit.jsonl 记 host/sessionId/tabId/工具/脱敏参数/效果摘要/时间，2048 字节行上限，0o600，路径 ~/.actspan/audit.jsonl。未达成：不记 URL host+path，无 30 天 / 50MB 轮转，无 clear 命令 |
 | Q4 | 已实现 | src/functions/risk-detect.ts:1-56 | src/functions/risk-detect.test.mjs:23（读取漂移按 session 去重且自导航不告警） | 拍板：挑战信息默认纯本地。risk-detect 是纯本地纯函数，无任何上传路径 |
-| Q5 | 已实现 | test/browser-fixtures.mjs:88-118 | test/browser-fixtures.mjs:110（Attach to an already-running Chrome only. This helper never launches Chrome.） | 拍板：引入 Playwright 只用于 test/scenarios。已引入，且按仓库规则改为复用用户已开 Chrome 的 CDP（connectOverCDP），不自行起浏览器 |
-| Q6 | 已实现 | mcp-server/act-tool.js、mcp-server/act-script.js、mcp-server/catalog.js:29 | mcp-server/test/act-tool.mjs:49-54、mcp-server/test/act-script.mjs:112-116、test/scenarios.test.mjs:249 | 拍板：act DSL 不进本轮。实际已全部落地（actspan_act / actspan_adopt 已注册并有测试），规格的「不进本轮」已过时 |
+| Q5 | 已实现 | test/browser-fixtures.mjs:58-81 | test/browser-fixtures.mjs:79（This suite never fakes a bridge or launches Chrome.） | 拍板：引入 Playwright 只用于 test/scenarios。已引入，且按仓库规则改为通过 MCP harness（createMcpHarness）复用用户已开 Chrome 扩展环境，不自行起浏览器 |
+| Q6 | 已实现 | mcp-server/act-tool.js、mcp-server/act-script.js、mcp-server/catalog.js:29 | mcp-server/test/act-tool.mjs:49-54、mcp-server/test/act-script.mjs:112-116、test/scenarios.test.mjs:341【契约证据｜环境限制：无人值守审批通道缺失】 | 拍板：act DSL 不进本轮。实际已全部落地（actspan_act / actspan_adopt 已注册并有测试），规格的「不进本轮」已过时 |
 | Q7 | 已实现 | mcp-server/bridge-daemon.js、mcp-server/bridge-lock.js、src/offscreen/mcp.html、src/offscreen/mcp-transport.ts | src/offscreen/mcp-transport.test.mjs:72,104、mcp-server/test/bridge-lock.mjs:77-81 | 拍板：E1 先做，E10 排后。两者都已落地，E1 的锁与守护进程先于 E10 的 offscreen socket |
 | Q8 | 不适用 | docs/spec/actspan-superset-spec.md:447 | 无（人力与时间窗是人的决策，不产生代码落点） | 拍板：按本轮建议范围执行。属流程决策，本表不评代码状态 |
 | Q9 | 部分实现 | mcp-server/install.js:63 | mcp-server/test/install.mjs:121-123（discoverConfigs 去重与备份） | 拍板：npm 发布。双运行模式已实现（win32 走 npx.cmd，其余走 npx；本地走 process.execPath + index.js）；但仓库内无发布状态证据（package.json 无 publish 记录），发布与否无法从代码判定 |
@@ -316,13 +325,13 @@
 | Q13 | 已实现 | mcp-server/catalog.js:13-49 | mcp-server/test/catalog.mjs:68（MCP advertises all externally registered Actspan tools, without aliases） | 拍板：工具命名只增不改。TOOL_NAMES 全部 actspan_ 前缀，actspan_page_read 等旧名保留 |
 | Q14 | 未实现 | src/ai/llm-client.ts:20,106,185 | src/ai/llm-client.ts:20（strictResultMode: true，全仓仅 types.ts:178 声明，无读取方） | 拍板：模型路由。strictResultMode 已设但无人读；max_output_tokens 在 :106,185 硬编码 16384；User-Agent 在 :127,207 硬编码 claude-code/1.0.0。可配置路由面未实现 |
 | Q15 | 未实现 | src/functions/builtin-experience.ts:18-20,42-45 | src/functions/builtin-experience.ts:42-45（BUILTIN_SITE_EXPERIENCE = { version: 1, domains: {} }） | 拍板：取用 huashu 23 份站点笔记作出厂内容。出厂层 domains 为空对象；:18-20 BUILTIN_EXPERIENCE_SOURCE 已记录 upstream/license/requirement 出处字段，但无任何站点条目入库 |
-| Q16 | 未实现 | test/scenarios.test.mjs:13,62-66 | test/scenarios.test.mjs:62（S5: MCP advertises all externally registered Actspan tools, without aliases） | 拍板：每个工具必须有靶场用例才进工具表，并在 CI 加检查。已达成一半：:62-66 断言 [...mcp.tools.keys()] 与 TOOL_NAMES 完全一致且每个可 requireTool。未达成：无任何断言检查每个工具名在 test/scenarios 的用例体内出现至少一次；且 package.json:25 的 npm test 不含 test/scenarios.test.mjs |
+| Q16 | 未实现 | test/scenarios.test.mjs:17,149-154 | test/scenarios.test.mjs:149（S5: MCP advertises all externally registered Actspan tools, without aliases）【已跑通｜T008】 | 拍板：每个工具必须有靶场用例才进工具表，并在 CI 加检查。已达成一半：:149-154 断言 [...mcp.tools.keys()] 与 TOOL_NAMES 完全一致且每个可 requireTool。未达成：无任何断言检查每个工具名在 test/scenarios 的用例体内出现至少一次；且（2026-10-21 订正）package.json:25 的 npm test 已由 T008 纳入 test/scenarios.test.mjs，故「该文件不在 CI」这半句不再成立，剩余缺口只是「每个工具名须在用例体内出现」的断言 |
 
 ## 汇总
 
 - 总行数：189
-- 已实现：155
-- 部分实现：30
+- 已实现：161
+- 部分实现：24
 - 未实现：3
 - 不适用：1
 
@@ -338,6 +347,6 @@
 | Q15 | BUILTIN_SITE_EXPERIENCE.domains 为空，23 份站点笔记未入库 |
 | Q16 | 无「每个 TOOL_NAMES 项必须在 test/scenarios 用例体内出现」的 CI 检查 |
 
-### 部分实现（30 条）
+### 部分实现（24 条，D005 归档为已知负债）
 
-P0-3、G1、G2、G7、G10、G12、G14、C1、C2、C3、D10、D11、D12、F1、N10、S5、WP0、WP1、WP2、WP3、WP5、WP8、WP12、WP15、4.1-3、4.1-7、Q2、Q3、Q9、Q12
+P0-3、G1、G2、G7、G10、G12、G14、C1、C2、C3、F1、N10、WP0、WP1、WP2、WP3、WP8、WP12、4.1-3、4.1-7、Q2、Q3、Q9、Q12

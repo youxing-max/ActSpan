@@ -61,6 +61,8 @@ interface NetworkListeningState {
   urlPatterns: string[];
   maxEvents: number;
   startedAt: number;
+  /** pending 表中的单请求滞留上限（毫秒），超时即驱逐 */
+  pendingTimeoutMs: number;
 }
 
 /** 控制台消息 */
@@ -400,6 +402,12 @@ const clearFrameContexts = (tabId: number): void => {
 
 // ============ 网络监听方法 ============
 
+/** 单个请求允许在 pending 表中滞留的上限：SSE / 长轮询 / chunked 永远等不到
+ *  loadingFinished / loadingFailed，没有上限时 pending map 会随请求数无限累积。 */
+export const NETWORK_PENDING_TIMEOUT_MS = 60_000;
+/** 被驱逐请求写入事件队列时使用的标记，与真实网络错误区分 */
+const PENDING_TIMEOUT_ERROR = 'pending timeout';
+
 /** URL 通配符匹配 */
 const matchUrlPattern = (url: string, pattern: string): boolean => {
   // 将通配符模式转为正则
@@ -435,10 +443,27 @@ const pushNetworkEvent = (tabId: number, event: CDPNetworkEvent): void => {
   }
 };
 
+/** 驱逐滞留超时的 pending 请求：标记超时并落入事件队列，随后从 pending 中移除，
+ *  保证永不完成的请求不会无限占用内存。请求之后若真的完成，pending 已无该条目，不会重复记录。 */
+const evictStalePendingRequests = (tabId: number): void => {
+  const pending = networkPendingRequests.get(tabId);
+  if (!pending || pending.size === 0) return;
+  const timeoutMs = networkListening.get(tabId)?.pendingTimeoutMs ?? NETWORK_PENDING_TIMEOUT_MS;
+  const now = Date.now();
+  for (const [requestId, event] of pending) {
+    if (now - event.startTime <= timeoutMs) continue;
+    pending.delete(requestId);
+    event.endTime = now;
+    event.durationMs = now - event.startTime;
+    event.error = PENDING_TIMEOUT_ERROR;
+    pushNetworkEvent(tabId, event);
+  }
+};
+
 /** 开始网络监听（启用 Network 域） */
 const startNetworkListening = async (
   tabId: number,
-  options?: { urlPatterns?: string[]; maxEvents?: number },
+  options?: { urlPatterns?: string[]; maxEvents?: number; pendingTimeoutMs?: number },
 ): Promise<{ success: boolean; error?: string }> => {
   const attachResult = await attach(tabId);
   if (!attachResult.success) {
@@ -455,11 +480,13 @@ const startNetworkListening = async (
   }
 
   const maxEvents = Math.max(20, Math.min(5000, Math.floor(options?.maxEvents || 500)));
+  const pendingTimeoutMs = Math.max(50, Math.floor(options?.pendingTimeoutMs || NETWORK_PENDING_TIMEOUT_MS));
   networkListening.set(tabId, {
     active: true,
     urlPatterns: options?.urlPatterns || [],
     maxEvents,
     startedAt: Date.now(),
+    pendingTimeoutMs,
   });
   networkEvents.set(tabId, []);
   networkPendingRequests.set(tabId, new Map());
@@ -485,7 +512,13 @@ const ensureNetworkListening = async (tabId: number): Promise<{ success: boolean
   }
 
   if (!networkListening.has(tabId)) {
-    networkListening.set(tabId, { active: true, urlPatterns: [], maxEvents: 2000, startedAt: Date.now() });
+    networkListening.set(tabId, {
+      active: true,
+      urlPatterns: [],
+      maxEvents: 2000,
+      startedAt: Date.now(),
+      pendingTimeoutMs: NETWORK_PENDING_TIMEOUT_MS,
+    });
   }
   if (!networkEvents.has(tabId)) networkEvents.set(tabId, []);
   if (!networkPendingRequests.has(tabId)) networkPendingRequests.set(tabId, new Map());
@@ -516,6 +549,7 @@ const getNetworkEvents = (
   tabId: number,
   options?: { onlyErrors?: boolean; urlFilter?: string; limit?: number },
 ): CDPNetworkEvent[] => {
+  evictStalePendingRequests(tabId);
   let events = networkEvents.get(tabId) || [];
 
   if (options?.onlyErrors) {
@@ -850,6 +884,7 @@ if (isSupported() && chrome.debugger.onEvent) {
 
     // ---- 网络事件 ----
     if (method === 'Network.requestWillBeSent' && isNetworkListening(tabId)) {
+      evictStalePendingRequests(tabId);
       const request = params?.request;
       const url = request?.url || '';
       if (matchesNetworkFilter(tabId, url)) {
@@ -1034,6 +1069,7 @@ if (isSupported() && chrome.debugger.onEvent) {
 
 export const CDPSessionManager = {
   L2_IDLE_MS,
+  NETWORK_PENDING_TIMEOUT_MS,
   isSupported,
   attach,
   detach,

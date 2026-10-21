@@ -15,6 +15,7 @@ export function registerStatusTool({ registerTool, callBridge, run, tabIdParam, 
             tabId: tabIdParam || z.number().int().nonnegative().optional().describe('Optional session-owned tab id.'),
             text: z.string().trim().min(1).max(80).describe('One short sentence in the user\'s language.'),
             language: z.string().trim().min(1).max(32).optional().describe('Optional language tag, preserved as supplied.'),
+            userInputs: z.array(z.string().trim().min(1)).max(20).optional().describe('Optional declared user inputs to mask out of the status copy.'),
         },
     }, run((args) => callBridge('page.status_update', args, 5000, args)));
 }

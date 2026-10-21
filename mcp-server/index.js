@@ -164,14 +164,16 @@ async function main(config) {
     }, run((args) => callBridge('tabs.list', args, 10000, args)));
 
     registerTool('actspan_tab_open', {
-        title: 'Open tab', description: 'Open a browser tab for the current task.',
+        title: 'Open tab',
+        // D10：默认后台打开，受控≠前台。唯一的显式前台通道是 focus:true，且必须写明代价。
+        description: 'Open a browser tab for the current task. The tab opens in the background by default, so the user\'s current tab keeps the foreground and every other tool still works on it. Set focus:true only when the user asked to see the page: it brings the tab to the foreground and interrupts whatever the user is doing.',
         inputSchema: {
             ...taskParams,
             url: z.string().url(),
-            active: z.boolean().default(false),
+            focus: z.boolean().default(false).describe('Leave false (default) to open behind the user\'s current tab. true is the explicit foreground escape hatch: the tab is brought to the front and the user is interrupted.'),
             label: z.string().trim().min(1).max(80).optional(),
         },
-    }, run((args) => callBridge('tab.open', args, 30000, args)));
+    }, run(({ focus = false, ...args }) => callBridge('tab.open', { ...args, active: focus === true }, 30000, args)));
 
     registerTool('actspan_tabs_select', {
         title: 'Select active tab', description: 'Select a task-owned tab as the active browser tab.',

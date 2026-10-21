@@ -123,7 +123,44 @@ Actspan 使用 Chrome Extension Manifest V3 的分层架构：
 
 ## MCP 与外部工具
 
-项目包含本地 MCP Server，可把 Actspan 的浏览器能力暴露给支持 MCP 的客户端。稳定工具包括状态查询、标签页管理、页面读取与操作、工作流执行、任务查询，以及 `actspan_feishu_push` 通知工具。
+项目包含本地 MCP Server，可把 Actspan 的浏览器能力暴露给支持 MCP 的客户端。稳定工具共 34 个，统一使用 `actspan_` 前缀：
+
+| 分组 | 工具 | 说明 |
+|---|---|---|
+| **状态与通知** | `actspan_status` | 桥接连接状态，先调它排查连接 |
+| | `actspan_status_update` | 用一句话向用户播报即将执行的动作，即时返回 |
+| | `actspan_feishu_push` | 向已启用的飞书/Lark Webhook 推送通知 |
+| **标签页** | `actspan_tabs_list` | 列出当前任务 lease 内的标签页 |
+| | `actspan_tabs_select` | 把任务持有的标签页设为活动标签页 |
+| | `actspan_tab_open` | 后台打开标签页，默认不抢焦点 |
+| | `actspan_tab_close` | 关闭当前任务打开的标签页 |
+| | `actspan_tab_navigate` | 让任务持有的标签页跳转 URL |
+| **页面读取** | `actspan_page_snapshot` | 返回带 ref 的语义快照，覆盖 shadow DOM 与 iframe |
+| | `actspan_page_read` | 读取页面文本/HTML，可按 selector、ref 或 find 取单个元素 |
+| | `actspan_screenshot` | 通过 CDP 截图 |
+| **页面操作** | `actspan_page_click` | 按 selector/ref/find 点击，合成事件无效果时自动升级为真实 CDP 输入 |
+| | `actspan_page_type` | 输入文本，提交/支付类目标不自动升级 |
+| | `actspan_page_eval` | 执行可证明无副作用的 JS 表达式 |
+| | `actspan_page_select` | 选择原生 select 的值或精确选项文本 |
+| | `actspan_page_upload` | 用 base64 写入文件输入或派发拖放到 dropSelector |
+| | `actspan_page_key` | 按顺序按键（Tab 移焦、Enter 激活），不触达支付目标 |
+| | `actspan_page_wait` | 等待 selector、页面文本或 DOM 空闲稳定 |
+| | `actspan_page_scroll` | 按像素滚动，不激活也不聚焦标签页 |
+| **批量与复用** | `actspan_act` | 复合动作，一次调用批量执行可预测步骤（默认操作方式） |
+| | `actspan_adopt` | 把成功的 act 草稿沉淀为已保存工作流 |
+| **网络** | `actspan_network_list` | 列出最近完成的请求，不含响应体与凭证 |
+| | `actspan_network_detail` | 查看单个请求，可选读取 50 KB 响应体 |
+| | `actspan_network_query` | 读取匹配 URL 的最新响应体，按 index 回溯更早批次 |
+| **数据** | `actspan_data_fetch` | 抓取页面或二进制数据，可流式写入 savePath |
+| | `actspan_data_paginate` | 有界翻页抓 JSON，返回停止原因与摘要 |
+| | `actspan_data_download` | 经 `chrome.downloads` 下载 URL、文本或截图 |
+| **技能与工作流** | `actspan_skills_list` | 列出 skill 摘要与 registry 版本 |
+| | `actspan_skill_detail` | 读取 skill 全文与结构化工作流契约 |
+| | `actspan_workflow_run` | 启动结构化工作流，返回异步任务句柄 |
+| **Agent 任务** | `actspan_agent_submit` | 提交开放式浏览器任务，返回异步任务句柄 |
+| | `actspan_agent_status` | 按 taskId 查询任务状态 |
+| | `actspan_agent_result` | 读取任务保留的结果 |
+| | `actspan_agent_cancel` | 按 taskId 取消任务 |
 
 MCP 配置、鉴权、工具参数和端到端测试见 [MCP Bridge 文档](MCP-BRIDGE.md)。
 

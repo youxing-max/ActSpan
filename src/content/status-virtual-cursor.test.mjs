@@ -56,6 +56,39 @@ test('internal detail sanitization retains English for English status', () => {
   assert.equal(normalizeStatusText('post_tool_execution_verify page_snapshot ec-12', 'en'), 'I am verifying the action.');
 });
 
+test('user-facing status never echoes declared user input content', () => {
+  const text = normalizeStatusText('正在把 hunter2 填进密码框', 'zh', ['hunter2']);
+  assert.doesNotMatch(text, /hunter2/);
+  assert.match(text, /已隐藏用户输入/);
+
+  const payload = parseStatusUpdate({
+    text: 'Typing "Alice-Chen" into #checkout-form',
+    language: 'en',
+    userInputs: ['Alice-Chen', '#checkout-form'],
+  });
+  assert.ok(payload);
+  assert.doesNotMatch(payload.text, /Alice-Chen|#checkout-form/);
+  assert.match(payload.text, /已隐藏用户输入/);
+  assert.equal('userInputs' in payload, false);
+
+  // 两字中文姓名同样属于用户输入，不能因为短就放行
+  const zh = normalizeStatusText('正在输入 张三 的收货地址', 'zh', ['张三']);
+  assert.doesNotMatch(zh, /张三/);
+  assert.equal(zh, '正在输入 [已隐藏用户输入] 的收货地址');
+});
+
+test('credential fragments are masked even when no user input is declared', () => {
+  const text = normalizeStatusText('正在提交 password=R4ndom!Pass token: abc123', 'zh');
+  assert.doesNotMatch(text, /R4ndom!Pass|abc123/);
+  assert.match(text, /password=\[已隐藏用户输入\]/);
+  assert.match(text, /token: \[已隐藏用户输入\]/);
+});
+
+test('status that only repeats user input still yields user-facing copy without it', () => {
+  assert.doesNotMatch(normalizeStatusText('hunter2', 'zh', ['hunter2']), /hunter2/);
+  assert.doesNotMatch(normalizeStatusText('post_tool_execution_verify hunter2', 'zh', ['hunter2']), /hunter2/);
+});
+
 test('explicit Spanish status keeps its language and is clipped to eighty characters', () => {
   const text = normalizeStatusText('Voy a revisar los resultados y comparar los precios visibles. '.repeat(3), 'es');
   assert.ok(text.startsWith('Voy a revisar'));
