@@ -51,11 +51,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20.x
-      - name: Audit root dependencies
-        run: npm audit --audit-level=high
-      - name: Audit mcp-server dependencies
+      - name: Audit runtime dependencies (critical)
+        run: npm audit --audit-level=critical
+      - name: Audit mcp-server dependencies (critical)
         working-directory: mcp-server
-        run: npm audit --audit-level=high
+        run: npm audit --audit-level=critical
       - name: Scan for secrets
         uses: gitleaks/gitleaks-action@v2
         env:

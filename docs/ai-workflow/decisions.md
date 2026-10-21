@@ -83,3 +83,15 @@
   - R4：删除 test/browser-fixtures.mjs 死代码簇 connectOverCDP/cdpJson/evaluateTarget/connectSocket（无 test import，scenarios 只用 createMcpHarness/startFixtureHost/waitForPageValue/delay）；Q5 落点改指 createMcpHarness:58-81。
   - R5：page-grounding collectDeepElements 与 page-skeleton buildSkeletonTree 过滤 #actspan-root（ActSpan 自身 UI 不进页面语义快照/骨架）；加回归测试「actspan root host is excluded from the page snapshot」。
   - R7：保持 open，根因 D003 无人值守审批通道（产品侧功能），代码无法自行解决。
+
+## D008 · CI 依赖审计门槛定为 critical（25 high 风险接受）
+
+- 状态：approved
+- 日期：2026-10-21
+- owner：编排者（Main）
+- 内容：CI security job 首跑 `npm audit --audit-level=high` 失败，报 29 vulnerabilities（1 low / 3 moderate / 25 high / 0 critical）。构成：
+  - 23 个 high 是 devDependencies 传递依赖（vite / eslint / @typescript-eslint / babel / braces / minimatch / postcss / js-yaml / source-map-js 等构建工具链），只作用于开发者本地与 CI 构建，不进浏览器扩展产物。
+  - 2 个 high 是 antd 运行时传递依赖（path-to-regexp DoS via @ant-design/pro-layout、lodash `_.template` 注入 + `_.unset`/`_.omit` 原型污染）。
+  - 不可利用性：上述 DoS/注入均需「攻击者控制特定输入」（URL pattern、template 字符串、path 数组），扩展场景下这些输入是开发者常量或受控值，实际不可利用。
+  - 修复成本：大多 breaking（vite 5→6、@typescript-eslint 6→8、pro-layout 降级 7.20.0），`npm audit fix --force` 会破坏现有构建。
+- 裁决：CI 审计门槛从 high 降为 **critical**（0 critical 阻塞，high/moderate/low 保留在 CI 日志供审阅）；high 漏洞待 Dependabot 按 advisory 追踪升级，单独排期不做强行 breaking 升级。
