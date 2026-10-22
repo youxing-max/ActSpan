@@ -34,6 +34,7 @@ It is more than a chat window that answers questions. Actspan is an execution la
 - **Repetitive browser work** — Open sites, filter content, copy data, take screenshots, download files, or fill forms.
 - **Site automation** — Record a recurring task once and run it again with a natural-language request.
 - **Team notifications** — Push a completed investigation summary to configured Feishu / Lark or DingTalk bot webhooks.
+- **Two-way DingTalk group bot** — Receive @mentions over DingTalk Stream mode, run browser tasks, and reply in the same conversation without a public callback URL.
 - **Local and custom capabilities** — Connect the model service you choose, or extend Actspan through MCP and dynamic tools.
 
 ## Core Capabilities
@@ -56,6 +57,7 @@ Demonstrate a browser task once to record it. Actspan cleans up recording noise 
 - Standardized tool registration and invocation through MCP.
 - Dynamic HTTP tools and remote Manifests for connecting existing services.
 - Feishu / Lark and DingTalk bot webhooks for completed-task results and other notifications.
+- A DingTalk Stream-mode bot that accepts @mentions in group chats and replies with task results.
 
 ### Choose Your Model
 
