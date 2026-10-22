@@ -36,7 +36,6 @@ export default defineConfig({
                 { text: '工作流', link: '/guide/workflows' },
                 { text: '钉钉群机器人', link: '/guide/dingtalk-robot' },
                 { text: '飞书机器人', link: '/guide/feishu-bot' },
-                { text: 'Telegram 机器人', link: '/guide/telegram-bot' },
                 { text: '使用技巧', link: '/guide/tips' },
               ],
             },

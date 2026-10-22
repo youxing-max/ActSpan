@@ -11,7 +11,7 @@ ActSpan 提供一个独立的飞书连接器：在飞书里私聊机器人，或
   → 飞书回复消息
 ```
 
-连接器是单独的文件 `mcp-server/feishu-bot.js`，**不复用钉钉连接器或 Telegram 连接器的传输层**。三个连接器各自独立，方便单独修改和替换。
+连接器是单独的文件 `mcp-server/feishu-bot.js`，**不复用钉钉连接器的传输层**。两个连接器各自独立，方便单独修改和替换。
 
 ## 1. 创建飞书自建应用
 
@@ -164,7 +164,7 @@ node feishu-bot.js --config ~/.actspan/feishu.json --debug
 
 ## 独立适配器说明
 
-`feishu-bot.js` 不导入 `dingtalk-stream.js` 或 `telegram-bot.js`。飞书的长连接、消息解析和回复都封装在本文件内；任务执行部分（`ActspanSession`、`runTask`、`extractTaskText`、`splitReply`）保持独立，便于单独维护。
+`feishu-bot.js` 不导入 `dingtalk-stream.js`。飞书的长连接、消息解析和回复都封装在本文件内；任务执行部分（`ActspanSession`、`runTask`、`extractTaskText`、`splitReply`）保持独立，便于单独维护。
 
 需要新增其他 IM 时，可以复制这个文件，替换以下三处：
 

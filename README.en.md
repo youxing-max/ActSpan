@@ -36,7 +36,6 @@ It is more than a chat window that answers questions. Actspan is an execution la
 - **Team notifications** — Push a completed investigation summary to configured Feishu / Lark or DingTalk bot webhooks.
 - **Two-way DingTalk group bot** — Receive @mentions over DingTalk Stream mode, run browser tasks, and reply in the same conversation without a public callback URL.
 - **Two-way Feishu / Lark bot** — A standalone long-connection connector for private chats and group @mentions.
-- **Two-way Telegram bot** — Run browser tasks from private chats or group @mentions through a standalone connector.
 - **Local and custom capabilities** — Connect the model service you choose, or extend Actspan through MCP and dynamic tools.
 
 ## Core Capabilities
@@ -61,7 +60,6 @@ Demonstrate a browser task once to record it. Actspan cleans up recording noise 
 - Feishu / Lark and DingTalk bot webhooks for completed-task results and other notifications.
 - A DingTalk Stream-mode bot that accepts @mentions in group chats and replies with task results.
 - A standalone Feishu / Lark long-connection bot for private chats and group @mentions.
-- A standalone Telegram bot for private chats and group @mentions.
 
 ### Choose Your Model
 
