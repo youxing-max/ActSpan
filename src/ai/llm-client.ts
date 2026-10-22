@@ -197,6 +197,11 @@ export const validateEndpoint = (value: string): EndpointValidation => {
   return { ok: false, error: 'Endpoint 仅支持 https（或本机 http）' };
 };
 
+/** 运行 AI 请求所需的最小配置：合法 endpoint + 已填 apiKey（model 有内置默认值）。 */
+export const isAISettingsConfigured = (settings: Partial<AISettings>): boolean =>
+  typeof settings.apiKey === 'string' && settings.apiKey.trim().length > 0
+  && validateEndpoint(String(settings.endpoint || '')).ok;
+
 /**
  * 非流式调用 OpenAI Responses API（用于工具调用循环中拿完整响应）
  * @param input 输入项列表

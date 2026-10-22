@@ -63,6 +63,16 @@ test('录制审计 prompt 优先根据步骤自动补全并仅在无法推断时
   assert.match(prompt, /只有.*无法.*(?:推断|判断).*询问|无法.*才.*询问/s);
 });
 
+test('录制审计 prompt 把点击/输入映射到 cdp_input 并参数化输入', () => {
+  assert.match(prompt, /cdp_input/);
+  assert.match(prompt, /点击步骤一律映射成 cdp_input/);
+  assert.match(prompt, /输入步骤一律映射成 cdp_input 且 params\.action 为 fill/);
+  assert.match(prompt, /不要用 type/);
+  assert.match(prompt, /"action": "fill"/);
+  assert.match(prompt, /\{\{param_name\}\}/);
+  assert.doesNotMatch(prompt, /直接省略/);
+});
+
 test('录制审计 prompt 要求自动保存并输出完整 JSON', () => {
   assert.match(prompt, /自动(?:调用|保存)|直接调用 save_workflow/);
   assert.doesNotMatch(prompt, /(?:不得|禁止|不).*save_workflow/);

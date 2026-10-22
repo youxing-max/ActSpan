@@ -15,7 +15,7 @@ import { AskUserCard } from '../content/float-ball/components/AskUserCard';
 import { RecorderBar } from '../content/float-ball/components/RecorderBar';
 import { BgTasksPanel } from '../content/float-ball/components/BgTasksPanel';
 import { ImageViewer } from '../content/float-ball/components/ImageViewer';
-import Channel from '../lib/channel';
+import Channel, { EXTENSION_PAGE_RECONNECTED } from '../lib/channel';
 import { formatClock, formatDuration } from '../content/float-ball/text-utils';
 
 /** Tab 感知 hook：追踪当前活跃标签页，并同步到 ActspanContext.selfTabId */
@@ -73,6 +73,8 @@ const useSidePanelEvents = () => {
 /** Side Panel 内部组件 */
 const SidePanelInner: React.FC = () => {
     const { state, dispatch } = useActspan();
+    const stateRef = useRef(state);
+    stateRef.current = state;
     const resultRef = useRef<HTMLDivElement>(null);
     useActiveTab();
 
@@ -90,15 +92,30 @@ const SidePanelInner: React.FC = () => {
         dispatch({ type: 'TOGGLE_OPEN', payload: true });
     }, [dispatch]);
 
-    // 恢复活跃会话
-    useEffect(() => {
+    // 恢复活跃会话：首屏 + port 重连后都走这里，重连时靠回放补齐断线期间的事件
+    const resumeActiveSession = useCallback(() => {
         Channel.send('__session_get_active', {}, (response: { sessionId?: string; status?: string; summary?: string; startedAt?: number; endedAt?: number; durationMs?: number; lastError?: string; failureCode?: string; agentState?: { phase?: string; round?: number }; taskKind?: string }) => {
-            if (!response?.sessionId || (response.status !== 'running' && response.status !== 'done' && response.status !== 'error')) return;
+            const displayed = stateRef.current.currentTask;
+            if (!response?.sessionId || (response.status !== 'running' && response.status !== 'done' && response.status !== 'error')) {
+                // 活跃会话已被清理时，用回放拿到中断事件，避免侧栏停在 running
+                if (displayed?.status === 'running') {
+                    Channel.send('__session_replay_request', { sessionId: displayed.id, scope: 'latest_turn' });
+                }
+                return;
+            }
+            const sessionId = response.sessionId;
+
+            // 同一个会话：只补事件，不重建任务，避免清掉已渲染的回复
+            if (displayed?.id === sessionId) {
+                Channel.send('__session_replay_request', { sessionId, scope: 'latest_turn' });
+                return;
+            }
+
             const status = response.status === 'error' ? 'error' : response.status === 'done' ? 'done' : 'running';
             dispatch({
                 type: 'SET_TASK',
                 payload: {
-                    id: response.sessionId,
+                    id: sessionId,
                     query: response.summary || '',
                     title: response.summary || '',
                     status,
@@ -118,14 +135,19 @@ const SidePanelInner: React.FC = () => {
             });
 
             // extension page 没有 sender.tab，background 不会自动回放；等任务状态落地后主动请求。
-            window.setTimeout(() => {
-                Channel.send('__session_replay_request', {
-                    sessionId: response.sessionId,
-                    scope: 'latest_turn',
-                });
-            }, 0);
+            window.setTimeout(() => Channel.send('__session_replay_request', { sessionId, scope: 'latest_turn' }), 0);
         });
     }, [dispatch]);
+
+    useEffect(() => {
+        resumeActiveSession();
+    }, [resumeActiveSession]);
+
+    // background 被 MV3 回收会断开 port，期间广播的流事件全部丢失；重连后重新同步会话。
+    useEffect(() => {
+        Channel.on(EXTENSION_PAGE_RECONNECTED, resumeActiveSession);
+        return () => Channel.off(EXTENSION_PAGE_RECONNECTED, resumeActiveSession);
+    }, [resumeActiveSession]);
 
     // 搜索框状态 class
     const boxState = !task ? 'state-idle'

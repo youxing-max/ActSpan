@@ -1,16 +1,21 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import registerActTool from '../act-tool.js';
+import { createToolResult } from '../tool-result.js';
 
 const schemaParams = { taskId: {}, sessionId: {} };
+// index.js 用的真实信封，不是直通：行为断言必须跑真实包装语义，否则 run() 的降级永远测不出来。
+const real = createToolResult({ safeError: (error) => String(error?.message || error || 'unknown error') });
+const passThrough = (fn) => async (args) => fn(args);
 
-function setup(callBridge) {
+function setup(callBridge, runners = {}) {
     const handlers = new Map();
     const registrations = [];
     registerActTool({
         registerTool: (name, definition, fn) => { registrations.push({ name, definition }); handlers.set(name, fn); },
         callBridge,
-        run: (fn) => async (args) => fn(args),
+        run: runners.run || passThrough,
+        runStructured: runners.runStructured || passThrough,
         tabIdParam: {},
         taskParams: schemaParams,
     });
@@ -165,4 +170,40 @@ test('accepts a script whose listed steps fit the expanded budget', async () => 
     const result = await handler({ steps });
     assert.equal(result.success, true);
     assert.equal(calls.filter(({ method }) => method === 'page.click').length, 20);
+});
+
+// 回归：run() 会把 success:false 升级成 isError，客户端只剩一条文案，trace/reads 全丢。
+// 这里跑 index.js 用的真实信封，直通 run 掩盖不了这层降级。
+test('a step-level act failure stays content, not isError, and keeps trace and reads', async () => {
+    const { handler } = setup(async (method) => (method === 'page.read' ? { matched: true } : { changed: true }),
+        { runStructured: real.runStructured });
+    const envelope = await handler({ tabId: 3, steps: [
+        { action: 'read', selector: '#price' },
+        { action: 'click', selector: 'button.pay-now' },
+    ] });
+    assert.notEqual(envelope.isError, true);
+    const payload = JSON.parse(envelope.content[0].text);
+    assert.equal(payload.success, false);
+    assert.match(payload.error, /^SENSITIVE_BLOCKED: /);
+    assert.deepEqual(payload.trace.map(({ path, action, ok }) => ({ path, action, ok })), [
+        { path: 'steps[0]', action: 'read', ok: true },
+        { path: 'steps[1]', action: 'click', ok: false },
+    ]);
+    assert.equal(payload.trace[1].error.code, 'SENSITIVE_BLOCKED');
+    assert.deepEqual(payload.reads, [{ matched: true }]);
+});
+
+// 同一个包装下抛出的异常仍然是 MCP error：不提升结构化失败，不等于吞掉真异常。
+test('a thrown failure is still an MCP error under the same wrapper', async () => {
+    const envelope = await real.runStructured(async () => { throw new Error('bridge exploded'); })({});
+    assert.equal(envelope.isError, true);
+    assert.equal(envelope.content[0].text, 'Actspan error: bridge exploded');
+});
+
+// 另一侧同样要钉住：提升型 run() 还在给其余工具用，别把它一起改成不提升。
+test('run() still promotes a structured failure to isError', async () => {
+    const { handler } = setup(async () => ({ changed: true }), { runStructured: real.run });
+    const envelope = await handler({ steps: [{ action: 'click', selector: 'button.pay-now' }] });
+    assert.equal(envelope.isError, true);
+    assert.match(envelope.content[0].text, /^Actspan error: SENSITIVE_BLOCKED: /);
 });

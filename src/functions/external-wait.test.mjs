@@ -14,7 +14,7 @@ const bundle = await build({
 const { askUserFunction, requestConfirmationFunction, Channel, chatStream } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].contents).toString('base64')}`);
 
 globalThis.chrome = {
-  storage: { local: { get: async () => ({ actspan_ai_settings: { apiKey: 'test-key', endpoint: 'https://test.invalid/responses' }, actspan_migrated_actspan_ai_settings: true }), set: async () => {} } },
+  storage: { local: { get: async () => ({ actspan_ai_settings: { apiKey: 'test-key', endpoint: 'https://test.invalid/responses', model: 'test-model' }, actspan_migrated_actspan_ai_settings: true }), set: async () => {} } },
 };
 
 const withShortTimers = async (fn, delayFor = delay => Math.min(delay, 5)) => {

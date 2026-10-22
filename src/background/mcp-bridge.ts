@@ -327,6 +327,10 @@ export function wrapUntrustedPageContent(content: string): string {
     return `${PAGE_CONTENT_OPEN}\n${content.split(PAGE_CONTENT_CLOSE).join('<\\/page-content>')}\n${PAGE_CONTENT_CLOSE}`;
 }
 
+/** 凭据页出口的形状判定：redactPageContent 用 {content, warning} 表示整页掩码。 */
+const isMaskedPage = (value: unknown): value is { content: unknown; warning: string } =>
+    value !== null && typeof value === 'object' && 'content' in value && 'warning' in value;
+
 
 const approvedPaymentActions = new WeakMap<Record<string, unknown>, string>();
 /** MCP 审批的“本次会话内不再询问”记忆（按 session + tab 收敛，dangerous/支付始终确认） */
@@ -401,7 +405,7 @@ interface RealOutcome {
 }
 // Serialized by chrome.scripting.executeScript; keep this function self-contained.
 // `text` 参数在 'read' 动作下承载 maxChars（字符串形式），其余动作是输入文本。
-async function pageAction(action: 'inspect' | 'click' | 'type' | 'observe' | 'read', descriptor: ActionTarget, text: string, submit: boolean, approvedSignature?: string) {
+async function pageAction(action: 'inspect' | 'click' | 'type' | 'observe' | 'read' | 'focus', descriptor: ActionTarget, text: string, submit: boolean, approvedSignature?: string) {
     // 注入函数必须自包含：executeScript 把页面侧 throw 吞成 {result:null} 且不带 error 字段，
     // 桥侧无法分辨「返回 null」与「抛错」，所以动作体自己把结果装进信封，由调用方还原。
     const body = async (): Promise<Record<string, unknown>> => {
@@ -459,8 +463,18 @@ async function pageAction(action: 'inspect' | 'click' | 'type' | 'observe' | 're
                 || (el as HTMLElement).isContentEditable === true;
             return editable ? '' : normalize((el as HTMLElement).innerText || el.textContent);
         };
+        // 与 content script 的 promoteSvgActionTarget 同源：SVG 内部节点（path/rect…）自身没有动作语义，
+        // 点击落点、disabled 判定与真实事件坐标都必须落在承载动作的祖先控件上，否则 selector 与 ref 两条路径看到的目标不同。
+        const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
+        const ACTION_BEARING = 'button,a,[role="button"],[role="link"],[role="tab"],[role="menuitem"],[onclick]';
+        const promoteSvg = (el: Element | null): Element | null => {
+            if (!el) return el;
+            if (el.namespaceURI !== SVG_NAMESPACE && el.tagName.toLowerCase() !== 'svg') return el;
+            const ancestor = typeof el.closest === 'function' ? el.closest(ACTION_BEARING) : null;
+            return ancestor || el;
+        };
         // Resolution happens here, at action time, against the live DOM.
-        const resolve = (): Element | null => {
+        const resolveRaw = (): Element | null => {
             if (descriptor.find) {
                 const wantedRole = normalize(descriptor.find.role).toLowerCase();
                 const wantedName = normalize(descriptor.find.name).toLowerCase();
@@ -501,6 +515,8 @@ async function pageAction(action: 'inspect' | 'click' | 'type' | 'observe' | 're
             }
             return descriptor.selector ? document.querySelector(descriptor.selector) : null;
         };
+        // 提升只在解析出口做一次：selector 与 find 两条分支都走同一套目标，inspect/observe/click/type/read 看到同一个元素。
+        const resolve = (): Element | null => promoteSvg(resolveRaw());
         // 只回传稳定描述符；拿不到稳定名称时省略 find，让 act 草稿放弃该步骤而不是记录用户输入。
         const observed = (el: Element) => {
             const role = roleOf(el);
@@ -521,11 +537,13 @@ async function pageAction(action: 'inspect' | 'click' | 'type' | 'observe' | 're
             const htmlEl = el as HTMLElement;
             const style = typeof window !== 'undefined' && typeof window.getComputedStyle === 'function' ? window.getComputedStyle(htmlEl) : undefined;
             const rect = typeof htmlEl.getBoundingClientRect === 'function' ? htmlEl.getBoundingClientRect() : undefined;
-            const type = (el.getAttribute('type') || '').toLowerCase();
+            // 密码框只暴露「有没有内容」：value 参与比对但永不回传明文，否则填写成功会被判成 unchanged 而触发无谓的真实事件重放。
+            const raw = 'value' in el ? String((el as HTMLInputElement).value || '') : undefined;
+            const value = raw !== undefined && (el.getAttribute('type') || '').toLowerCase() === 'password' ? (raw ? '[set]' : '') : raw;
             return {
                 visible: !(style && (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0)) && (!rect || (rect.width > 0 && rect.height > 0)),
                 text: textOf(el),
-                value: type === 'password' ? undefined : ('value' in el ? String((el as HTMLInputElement).value || '') : undefined),
+                value,
                 ariaExpanded: el.getAttribute?.('aria-expanded') || undefined,
                 disabled: htmlEl.hasAttribute?.('disabled') === true || el.getAttribute?.('aria-disabled') === 'true' || (htmlEl as HTMLButtonElement).disabled === true,
                 className: typeof htmlEl.className === 'string' ? htmlEl.className : '',
@@ -587,6 +605,11 @@ async function pageAction(action: 'inspect' | 'click' | 'type' | 'observe' | 're
         const signature = JSON.stringify([kind, label, amount]);
         if (action === 'inspect') return { kind, amount, label, signature, find: stableFind, center: centerOf(target), tag: target.tagName.toLowerCase() };
         if (action === 'observe') return { state: observable(target), center: centerOf(target), kind, tag: target.tagName.toLowerCase(), find: stableFind };
+        // 聚焦是升级路径的前置动作：落在下面的填写分支里会用空串把已有值写空，必须单独短路。
+        if (action === 'focus') {
+            target.focus();
+            return { focused: true, tag: target.tagName.toLowerCase(), kind, find: stableFind, center: centerOf(target) };
+        }
         if ((action === 'click' || submit) && kind === 'payment' && approvedSignature !== signature) throw new Error(`支付动作未经确认${amount ? `：${amount}` : ''}`);
         if (approvedSignature && approvedSignature !== signature) throw new Error('确认后目标已变化，请重新确认');
         if (action === 'click') {
@@ -1037,13 +1060,18 @@ export async function dispatch(method: string, params: Record<string, unknown>, 
             }
             const driftWarning = readDriftTracker.check(context.sessionId, currentUrl);
             const redacted = redactPageContent(content, currentUrl);
-            const credentialPage = redacted !== null && typeof redacted === 'object' && 'content' in redacted;
-            const page = credentialPage ? redacted as { content: string; warning: string } : { content: redacted };
-            const credentialWarning = credentialPage ? (redacted as unknown as { warning: string }).warning : '';
+            const credentialPage = isMaskedPage(redacted);
+            // 非凭据 URL 也可能被成组规则掩码（脱敏组、手机号、token 键）；内容真被改动就要告诉调用方，
+            // 否则 agent 会把掩码后的文本当成页面原文转述。
+            const maskedContent = !credentialPage && typeof content === 'string' && typeof redacted === 'string' && redacted !== content;
+            const pageContent = credentialPage ? String(redacted.content) : wrapUntrustedPageContent(String(redacted));
+            const credentialWarning = credentialPage
+                ? redacted.warning
+                : (maskedContent ? '页面包含疑似凭据或敏感内容，已掩码' : '');
             // 掩码文案是扩展自己生成的，不是页面原文，不进不可信围栏；只有真实页面内容才降权。
             return { title: credentialPage ? '[凭据页面已掩码]' : redactSensitive(tab.title),
                 url: redactSensitive({ url: currentUrl }).url,
-                content: credentialPage ? page.content : wrapUntrustedPageContent(String(page.content)),
+                content: pageContent,
                 ...(hit ? { target: hit } : {}),
                 ...(credentialWarning || driftWarning ? { warning: [credentialWarning,
                     driftWarning ? '读取标签页发生漂移，请确认当前页面' : ''].filter(Boolean).join('；') } : {}) };
@@ -1545,7 +1573,9 @@ export function initMcpBridge() {
                             runtimeTabId = returnedTabId;
                             (planVars.context as Record<string, unknown>).tabId = returnedTabId;
                             const tabAction = String(params.action || '').toLowerCase();
-                            const createsTab = action === 'tab_navigate' && (tabAction === 'open' || tabAction === 'duplicate');
+                            const createsTab = action === 'tab_navigate'
+                                && (tabAction === 'open' || tabAction === 'duplicate')
+                                && (stepResult as Record<string, unknown> | null)?.reused !== true;
                             if (createsTab) {
                                 const createdTask = taskManager.get(task.taskId);
                                 const rollbackCreatedTab = async () => {

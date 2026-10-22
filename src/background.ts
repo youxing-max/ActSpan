@@ -13,7 +13,7 @@
  *   bg-tasks-manager.ts        — 后台任务管理
  */
 import { VERSION } from './config';
-import { LEGACY_STORAGE_KEY_AI_SETTINGS, STORAGE_KEY_AI_SETTINGS } from './ai/llm-client';
+import { LEGACY_STORAGE_KEY_AI_SETTINGS, STORAGE_KEY_AI_SETTINGS, isAISettingsConfigured } from './ai/llm-client';
 import { readMigratedStorage } from './lib/legacy-storage';
 import Channel from './lib/channel';
 // [!] registry 必须在 bg-tasks-manager 之前导入，否则循环依赖会导致 TDZ 错误
@@ -68,8 +68,7 @@ chrome.runtime.onInstalled.addListener((details) => {
         STORAGE_KEY_AI_SETTINGS,
         LEGACY_STORAGE_KEY_AI_SETTINGS,
     ).then((settings) => {
-        const hasConfig = !!(settings?.apiKey || settings?.endpoint);
-        if (!hasConfig) chrome.runtime.openOptionsPage();
+        if (!isAISettingsConfigured(settings || {})) chrome.runtime.openOptionsPage();
     });
 });
 

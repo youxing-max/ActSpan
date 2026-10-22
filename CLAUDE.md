@@ -331,8 +331,8 @@ Background、Content Script、Popup、Options 之间的双向消息传递系统�
 - `Channel.sendToTab(tabId, type, data, callback?)` - 发送消息到指定 tab
 - `Channel.listen(tabId?)` - 初始化监听器（content 传 tabId，background 不传）
 - `Channel.broadcast(type, data)` - 仅后台使用：向所有已注册标签页 + extension page 广播
-- `Channel.connectAsExtensionPage()` - extension page（options/popup）侧连接，接收 broadcast
-- `Channel.disconnectExtensionPage()` - extension page 侧断开连接
+- `Channel.connectAsExtensionPage()` - extension page（options/popup）侧连接，接收 broadcast；background 被 MV3 回收导致 port 断开时自动重连
+- `Channel.disconnectExtensionPage()` - extension page 侧断开连接（显式断开后不再自动重连）
 - `Channel.getRegisteredTabs()` - 获取所有已注册的 tabId
 - `Channel.unregisterTab(tabId)` - 注销 tab
 - `Channel.clearAllTabs()` - 清空所有已注册 tab
@@ -360,6 +360,9 @@ Background、Content Script、Popup、Options 之间的双向消息传递系统�
 - `__session_sync` - 会话状态同步
 - `__session_replay` - 会话事件回放
 - `__ai_stream` - AI 流式响应事件
+
+**本地事件（不出网）— `channel.ts`：**
+- `__channel_extension_reconnected` - extension page 的 port 重连成功后派发；订阅方需重新拉取会话（Side Panel 会重发 `__session_get_active` + `__session_replay_request` 补齐断线期间丢失的事件）
 
 **消息类型（工作流）— `workflow-handlers.ts`：**
 - `__site_workflows_match` - 站点工作流匹配

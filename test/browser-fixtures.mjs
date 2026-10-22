@@ -33,7 +33,7 @@ export async function startFixtureHost() {
       response.end(body);
     } catch (error) { response.writeHead(error?.code === 'ENOENT' ? 404 : 500).end(String(error?.message || error)); }
   });
-  await new Promise((resolvePromise, reject) => { server.once('error', reject); server.listen(0, '0.0.0.0', resolvePromise); });
+  await new Promise((resolvePromise, reject) => { server.once('error', reject); server.listen(Number(process.env.ACTSPAN_FIXTURE_PORT || 0), '127.0.0.1', resolvePromise); });
   const address = server.address();
   const port = typeof address === 'object' && address ? address.port : 0;
   if (!port) throw new Error('Fixture host failed to acquire a port');

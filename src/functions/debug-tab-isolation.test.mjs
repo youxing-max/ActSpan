@@ -334,7 +334,8 @@ test('isolated debug cleans a popup whose creation event arrives after the runne
     }, 0);
   });
 
-  assert.deepEqual(removed, [101, 102]);
+  assert.equal(removed.length, 2);
+  assert.deepEqual(new Set(removed), new Set([101, 102]));
 });
 
 test('isolated debug discovers and closes descendants even without an onCreated callback', async () => {

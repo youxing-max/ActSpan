@@ -4,7 +4,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AI_CONFIG, VERSION } from './config';
-import { LEGACY_STORAGE_KEY_AI_SETTINGS, STORAGE_KEY_AI_SETTINGS } from './ai/llm-client';
+import { LEGACY_STORAGE_KEY_AI_SETTINGS, STORAGE_KEY_AI_SETTINGS, isAISettingsConfigured } from './ai/llm-client';
 import { readMigratedStorage } from './lib/legacy-storage';
 import { registryService } from './functions/skill-registry';
 
@@ -30,7 +30,7 @@ const getLLMStatus = async (): Promise<LLMStatus> => {
   const endpoint = settings?.endpoint || '';
   const model = settings?.model || '';
   const apiKey = settings?.apiKey || '';
-  return { configured: !!(endpoint && apiKey), endpoint, model };
+  return { configured: isAISettingsConfigured({ endpoint, apiKey, model }), endpoint, model };
 };
 
 /** Read the current canonical registry snapshot, including its object-shaped skill list. */
@@ -95,7 +95,7 @@ function App() {
 
   const llmReady = !!llmStatus?.configured;
   const endpointLabel = useMemo(() => formatEndpointLabel(llmStatus?.endpoint), [llmStatus?.endpoint]);
-  const modelLabel = llmStatus?.model || AI_CONFIG.DEFAULT_MODEL;
+  const modelLabel = llmStatus?.model || AI_CONFIG.DEFAULT_MODEL || '未配置';
   const workflowValue = workflowCount === null ? '...' : String(workflowCount);
 
   return (

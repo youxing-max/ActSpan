@@ -709,7 +709,10 @@ export const residentRuntimeFunction: FunctionDefinition = {
     }
 
     if (action === 'start') {
-      const siteWorkflow = String(params.site_workflow || '').trim() || undefined;
+      const siteWorkflow = String(params.site_workflow || '').trim();
+      if (!(await getWorkflowByName(siteWorkflow))) {
+        return { success: false, error: `workflow 不存在: ${siteWorkflow}` };
+      }
       const tabId = Math.floor(Number(params.tab_id));
       const intervalMs = normalizeIntervalMs(params.interval_ms ?? 60_000);
       const maxFailures = normalizeMaxFailures(params.max_failures);

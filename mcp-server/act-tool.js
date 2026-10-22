@@ -50,7 +50,7 @@ function snapshotOf(step) {
 }
 
 /** Register the ActSpan compound action tool without owning daemon lifecycle. */
-export default function registerActTool({ registerTool, callBridge, run, tabIdParam, taskParams }) {
+export default function registerActTool({ registerTool, callBridge, run, runStructured, tabIdParam, taskParams }) {
     const inputSchema = {
         ...taskParams,
         tabId: tabIdParam,
@@ -65,7 +65,7 @@ export default function registerActTool({ registerTool, callBridge, run, tabIdPa
         title: 'ActSpan compound action',
         description: 'Your DEFAULT way to act — batch every step you can predict. Every call you merge saves a full model turn. Steps run sequentially with an effect check per step, stop at the first failure, and one final snapshot returns at the end. Only steps located by find {role, name} are eligible for draft capture; selector-only steps still run but are never promoted into a reusable draft.',
         inputSchema,
-    }, run(async (args = {}) => {
+    }, runStructured(async (args = {}) => {
         const parsed = parseActScript({ steps: args.steps });
         if (!parsed.ok) return { success: false, error: `${parsed.error.code}: ${parsed.error.message}` };
         const state = { reads: [], effects: [], executed: [], sensitive: false };
@@ -159,7 +159,8 @@ export default function registerActTool({ registerTool, callBridge, run, tabIdPa
             },
         };
         const execution = await executeActScript(parsed, handlers);
-        // error 走 run() → fail() 时只剩 message，所以把 code 拼进文案，别让 agent 丢掉诊断码。
+        // 步骤级失败是结构化负载（trace/reads 跟着走，runStructured 不把它降级成 isError），
+        // 但 error 字符串本身也要能独立读：诊断码拼进文案，别让 agent 丢掉它。
         if (!execution.ok) return { success: false, error: `${execution.error.code}: ${execution.error.message}`, trace: execution.audit, reads: state.reads };
         const draft = await invoke('act.draft', {
             steps: state.executed,

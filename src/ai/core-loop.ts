@@ -373,7 +373,7 @@ const scanTabNavigateResults = (
       const output = JSON.parse(resultItem.output || '{}');
       if (!output.success) continue;
 
-      if (action === 'open' || action === 'duplicate') {
+      if ((action === 'open' || action === 'duplicate') && output.data?.reused !== true) {
         const newTabId = output.data?.tab_id;
         if (typeof newTabId === 'number') {
           tracker.trackOpened(newTabId, !!params.keep_alive);

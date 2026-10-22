@@ -10,6 +10,7 @@ import type { Side, RecentCompletedTaskItem } from '../constants';
 export interface RoundItem {
   query: string;
   aiText: string;
+  screenshotArtifacts?: Array<{ id: string; dataUrl: string; format: 'png' | 'jpeg'; sizeKB: number }>;
   callStack: Array<{ funcName: string; icon: string; text: string; userSummary?: string }>;
   status: 'done' | 'error';
   errorMsg?: string;
@@ -25,6 +26,7 @@ export interface TaskItem {
   title: string;
   status: 'running' | 'done' | 'error';
   resultHtml: string;
+  screenshotArtifacts?: Array<{ id: string; dataUrl: string; format: 'png' | 'jpeg'; sizeKB: number }>;
   callStack: Array<{ funcName: string; icon: string; text: string; userSummary?: string }>;
   errorMsg: string;
   lastAIText: string;

@@ -93,6 +93,7 @@ export const actspanReducer = (state: ActspanState, action: ActspanAction): Acts
         query: t.query,
         aiText: t.lastAIText,
         callStack: t.callStack,
+        screenshotArtifacts: t.screenshotArtifacts,
         status: t.status === 'error' ? 'error' : 'done',
         errorMsg: t.errorMsg || undefined,
         durationMs: t.durationMs,

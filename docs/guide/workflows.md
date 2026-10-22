@@ -99,7 +99,7 @@ Actspan 默认包含以下预定义工作流：
 - **`url_patterns`** - URL 匹配规则，使用通配符语法，决定工作流在哪些页面可用
 - **`parameters`** - JSON Schema 格式的参数定义，AI 调用时传入
 - **`plan.steps`** - 步骤数组，每一步调用一个内置工具
-- **`plan.steps[].action`** - 要调用的工具名称
+- **`plan.steps[].action`** - 要调用的工具名称，可用动作：`tab_navigate`、`page`、`cdp_dom`（只读子动作）、`extract_data`、`screenshot`、`cdp_input`（点击、输入、按键、滚动等交互动作，执行时会走用户审批）
 - **`plan.steps[].params`** - 工具参数，支持 `{{变量}}` 模板语法
 - **`plan.steps[].saveAs`** - 将步骤结果存储为变量，供后续步骤引用
 - **`plan.steps[].when`** - 条件执行，值为 falsy 时跳过该步骤

@@ -368,14 +368,18 @@ export const executeToolCalls = async (
       }
     }
 
-    // 从 output 中提取 success/error 供 UI 层展示
+    // 将截图附件 ID 传给侧栏；图片本体仍留在 ArtifactStore，避免把 base64 放进事件流。
     let resultSuccess = true;
     let resultMessage = '';
     let resultCancelled = false;
+    let resultArtifactId: string | undefined;
+    let resultDataMessage = '';
     try {
       const parsed = JSON.parse(output);
       resultSuccess = parsed.success !== false;
-      resultMessage = parsed.error || parsed.data?.summary || '';
+      resultMessage = parsed.error || parsed.data?.summary || parsed.data?.message || '';
+      resultArtifactId = typeof parsed.data?.artifact_id === 'string' ? parsed.data.artifact_id : undefined;
+      resultDataMessage = parsed.data?.message || '';
       resultCancelled = signal?.aborted === true && !resultSuccess;
     } catch {
       // output 解析失败，保持默认值
@@ -388,7 +392,8 @@ export const executeToolCalls = async (
         name: call.name,
         callId: call.call_id,
         success: resultSuccess,
-        message: resultMessage,
+        message: resultMessage || resultDataMessage,
+        artifactId: resultArtifactId,
         cancelled: resultCancelled,
       }),
     });

@@ -8,7 +8,6 @@
 import React, { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 import { useActspan } from '../context/useActspan';
 import { markdownToHtml } from '../markdown';
-import Channel from '../../../lib/channel';
 import type { RoundItem } from '../context/types';
 import {
   sanitizeUserFacingRuntimeText,
@@ -19,6 +18,39 @@ import {
 /** 判断滚动容器是否在底部附近（阈值 60px） */
 const isNearBottom = (el: HTMLElement, threshold = 60): boolean => {
   return el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+};
+
+/** 截图展示区：复用既有 .actspan-screenshot-* 样式，点击交给全屏查看器 */
+const ScreenshotSection: React.FC<{
+  shots: Array<{ id: string; dataUrl: string; sizeKB: number }>;
+}> = ({ shots }) => {
+  const { dispatch } = useActspan();
+  if (shots.length === 0) return null;
+  return (
+    <div className="actspan-screenshot-section">
+      <div className="actspan-screenshot-header">
+        <div className="actspan-screenshot-meta">
+          <div className="actspan-screenshot-label">页面截图</div>
+          <div className="actspan-screenshot-sub">{shots.length} 张 · 点击放大</div>
+        </div>
+      </div>
+      {shots.map((shot, index) => (
+        <div className="actspan-screenshot-img-wrap" key={shot.id}>
+          <img
+            className="actspan-screenshot-img"
+            src={shot.dataUrl}
+            alt="页面截图"
+            onClick={() =>
+              dispatch({
+                type: 'SET_SCREENSHOT_PREVIEW',
+                payload: { list: shots.map((s) => s.dataUrl), index },
+              })
+            }
+          />
+        </div>
+      ))}
+    </div>
+  );
 };
 
 /** 工具调用折叠组 */
@@ -141,6 +173,7 @@ const HistoryRound: React.FC<{ round: RoundItem; index: number }> = ({ round }) 
           {html && (
             <div className="actspan-answer" dangerouslySetInnerHTML={{ __html: html }} />
           )}
+          {round.screenshotArtifacts && <ScreenshotSection shots={round.screenshotArtifacts} />}
           {round.status === 'error' && round.errorMsg && (
             <div className="actspan-error">⚠ {round.errorMsg}</div>
           )}
@@ -241,19 +274,20 @@ export const ResultView: React.FC = () => {
       el.appendChild(newChild);
     }
 
-    // 异步获取 link chip 的页面标题
+    // 仅在本地显示 hostname；不在渲染阶段请求远程页面。
     const chips = el.querySelectorAll<HTMLAnchorElement>('a.actspan-link-chip');
     for (const chip of chips) {
-      if (chip.dataset.titleFetched) continue;
-      chip.dataset.titleFetched = '1';
       const url = chip.dataset.url;
       if (!url) continue;
-      Channel.send('__fetch_page_title', { url }, (resp: any) => {
-        if (resp?.title && chip.isConnected) {
+      try {
+        const hostname = new URL(url).hostname;
+        if (hostname) {
           const textEl = chip.querySelector('.actspan-link-text');
-          if (textEl) textEl.textContent = resp.title;
+          if (textEl) textEl.textContent = hostname;
         }
-      });
+      } catch {
+        // 保留 markdown 已生成的原始链接文本。
+      }
     }
   }, [task?.lastAIText, task?.id]);
 
@@ -302,6 +336,8 @@ export const ResultView: React.FC = () => {
         ref={answerRef}
         style={!task.lastAIText ? { display: 'none' } : undefined}
       />
+
+      {task.screenshotArtifacts && <ScreenshotSection shots={task.screenshotArtifacts} />}
 
       {/* 错误信息 */}
       {task.status === 'error' && task.errorMsg && (

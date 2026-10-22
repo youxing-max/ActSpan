@@ -19,27 +19,79 @@ import {
 
 // ============ 选择器工具函数 ============
 
-/** 生成一个尽可能稳定的 CSS 选择器 */
-const buildSimpleSelector = (el: Element): string => {
-  if (el.id) return `#${CSS.escape(el.id)}`;
-  const testId = el.getAttribute('data-testid') || el.getAttribute('data-test');
-  if (testId) return `[data-testid="${CSS.escape(testId)}"]`;
+/** 属性值里出现引号会破坏选择器，直接判定不可用 */
+const readSelectorAttr = (el: Element, name: string): string | null => {
+  const raw = el.getAttribute(name);
+  if (!raw) return null;
+  const value = raw.trim();
+  if (!value || value.includes('"')) return null;
+  return value;
+};
+
+/** 按稳定性排序的选择器候选；不保证唯一，由调用方校验 */
+const buildSelectorCandidates = (el: Element): string[] => {
   const tag = el.tagName.toLowerCase();
-  const name = el.getAttribute('name');
-  if (name) return `${tag}[name="${CSS.escape(name)}"]`;
-  const ariaLabel = el.getAttribute('aria-label');
-  if (ariaLabel) return `${tag}[aria-label="${CSS.escape(ariaLabel)}"]`;
-  const placeholder = el.getAttribute('placeholder');
-  if (placeholder) return `${tag}[placeholder="${CSS.escape(placeholder)}"]`;
-  const classes = Array.from(el.classList).slice(0, 2);
-  if (classes.length > 0) return `${tag}.${classes.map(c => CSS.escape(c)).join('.')}`;
-  const parent = el.parentElement;
-  if (parent) {
-    const siblings = Array.from(parent.children).filter(c => c.tagName === el.tagName);
-    const idx = siblings.indexOf(el) + 1;
-    return `${tag}:nth-of-type(${idx})`;
+  const candidates: string[] = [];
+  const push = (selector: string) => {
+    if (selector && !candidates.includes(selector)) candidates.push(selector);
+  };
+
+  if (el.id && !el.id.includes('"')) push(`#${CSS.escape(el.id)}`);
+  const testId = readSelectorAttr(el, 'data-testid') || readSelectorAttr(el, 'data-test');
+  if (testId) push(`[data-testid="${CSS.escape(testId)}"]`);
+  // placeholder 比 name 更接近用户意图：同名 name 在不同区域（如侧栏搜索框）会串味。
+  const placeholder = readSelectorAttr(el, 'placeholder');
+  if (placeholder) push(`${tag}[placeholder="${CSS.escape(placeholder)}"]`);
+  const ariaLabel = readSelectorAttr(el, 'aria-label');
+  if (ariaLabel) push(`${tag}[aria-label="${CSS.escape(ariaLabel)}"]`);
+  const name = readSelectorAttr(el, 'name');
+  if (name) push(`${tag}[name="${CSS.escape(name)}"]`);
+  const role = readSelectorAttr(el, 'role');
+  if (role) push(`${tag}[role="${CSS.escape(role)}"]`);
+  const classes = Array.from(el.classList).filter(c => c && !/[0-9a-f]{6,}/i.test(c)).slice(0, 2);
+  if (classes.length > 0) push(`${tag}.${classes.map(c => CSS.escape(c)).join('.')}`);
+
+  return candidates;
+};
+
+/** 结构路径兜底：逐级 nth-of-type 上溯，直到路径唯一 */
+const buildStructuralSelector = (el: Element): string => {
+  const segments: string[] = [];
+  let current: Element | null = el;
+  while (current && current !== document.documentElement) {
+    const tag = current.tagName.toLowerCase();
+    const siblings = current.parentElement
+      ? Array.from(current.parentElement.children).filter(c => c.tagName === current!.tagName)
+      : [];
+    const segment = siblings.length > 1 ? `${tag}:nth-of-type(${siblings.indexOf(current) + 1})` : tag;
+    segments.unshift(segment);
+    const candidate = segments.join(' > ');
+    if (document.querySelectorAll(candidate).length === 1) return candidate;
+    current = current.parentElement;
   }
-  return tag;
+  return segments.join(' > ');
+};
+
+/** 选择器必须只命中目标元素，否则回放会操作到别的元素 */
+const isUniqueSelector = (selector: string, el: Element): boolean => {
+  try {
+    const matches = document.querySelectorAll(selector);
+    return matches.length === 1 && matches[0] === el;
+  } catch {
+    return false;
+  }
+};
+
+/** 生成经验证唯一的选择器，并返回全部候选供审计参考 */
+const buildVerifiedSelector = (el: Element): { selector: string; candidates: string[] } => {
+  const candidates = buildSelectorCandidates(el);
+  for (const candidate of candidates) {
+    if (isUniqueSelector(candidate, el)) {
+      return { selector: candidate, candidates };
+    }
+  }
+  const structural = buildStructuralSelector(el);
+  return { selector: structural, candidates: [...candidates, structural] };
 };
 
 /** 生成元素的语义描述 */
@@ -58,6 +110,21 @@ const getElementSemanticHint = (el: Element): string => {
   return el.getAttribute('aria-label')
     || el.getAttribute('role')
     || tag;
+};
+
+/** 只记录会改变页面状态的按键；普通字符由 input 步骤覆盖，避免每个字母都成一步 */
+const RECORDED_KEYS: Record<string, true> = {
+  Enter: true,
+  Tab: true,
+  Escape: true,
+  ArrowUp: true,
+  ArrowDown: true,
+  ArrowLeft: true,
+  ArrowRight: true,
+  Home: true,
+  End: true,
+  PageUp: true,
+  PageDown: true,
 };
 
 // ============ Hook ============
@@ -82,12 +149,14 @@ export const useRecorder = () => {
     if (!target || !value) return;
 
     const isSelect = target.tagName === 'SELECT';
+    const located = buildVerifiedSelector(target);
     stepCountRef.current++;
     const step = {
       seq: stepCountRef.current,
       action: isSelect ? 'select' : 'type',
-      selector: buildSimpleSelector(target),
-      selectorCandidates: [buildSimpleSelector(target)],
+      selector: located.selector,
+      selectorCandidates: located.candidates,
+
       semanticHint: getElementSemanticHint(target),
       tag: target.tagName.toLowerCase(),
       value,
@@ -108,6 +177,7 @@ export const useRecorder = () => {
     click: (e: MouseEvent) => void;
     input: (e: Event) => void;
     submit: (e: Event) => void;
+    keydown: (e: KeyboardEvent) => void;
   } | null>(null);
 
   // 初始化事件处理器
@@ -118,15 +188,16 @@ export const useRecorder = () => {
         const target = e.target as Element;
         if (!target || target.closest('#actspan-root') || target.closest('#actspan-recorder-overlay')) return;
 
-        const selector = buildSimpleSelector(target);
+        const located = buildVerifiedSelector(target);
         const semanticHint = getElementSemanticHint(target);
 
         stepCountRef.current++;
         Channel.send('__recorder_step', {
           seq: stepCountRef.current,
           action: 'click',
-          selector,
-          selectorCandidates: [selector],
+          selector: located.selector,
+          selectorCandidates: located.candidates,
+
           semanticHint,
           tag: target.tagName.toLowerCase(),
           url: window.location.href,
@@ -149,7 +220,7 @@ export const useRecorder = () => {
         lastInputValueRef.current = target.value || '';
         lastInputMetaRef.current = {
           tag: target.tagName.toLowerCase(),
-          selector: buildSimpleSelector(target),
+          selector: buildVerifiedSelector(target).selector,
           semanticHint: getElementSemanticHint(target),
           inputType: (target as HTMLInputElement).type,
           autocomplete: target.getAttribute('autocomplete') || undefined,
@@ -169,13 +240,43 @@ export const useRecorder = () => {
         flushInputStep();
 
         stepCountRef.current++;
+        const locatedForm = buildVerifiedSelector(form);
         Channel.send('__recorder_step', {
           seq: stepCountRef.current,
           action: 'submit',
-          selector: buildSimpleSelector(form),
-          selectorCandidates: [buildSimpleSelector(form)],
+          selector: locatedForm.selector,
+          selectorCandidates: locatedForm.candidates,
+
           semanticHint: '提交表单',
           tag: 'form',
+          url: window.location.href,
+          timestamp: Date.now(),
+        });
+        dispatch({ type: 'SET_RECORDING', payload: { isRecording: true, stepCount: stepCountRef.current } });
+        updateRecorderStepCount(stepCountRef.current);
+      },
+
+      // 回车发送、Tab 切焦点、方向键选择都不产生 click/input，只能靠键盘事件记录，
+      // 否则“输入 + 回车”这条最常见的路径永远录不全。
+      keydown: (e: KeyboardEvent) => {
+        if (!stateRef.current.isRecording || e.isComposing) return;
+        if (e.ctrlKey || e.metaKey || e.altKey) return;
+        const target = e.target as Element | null;
+        if (!target || target.closest('#actspan-root') || target.closest('#actspan-recorder-overlay')) return;
+        if (RECORDED_KEYS[e.key] !== true) return;
+
+        flushInputStep();
+
+        const locatedKey = buildVerifiedSelector(target);
+        stepCountRef.current++;
+        Channel.send('__recorder_step', {
+          seq: stepCountRef.current,
+          action: 'key_press',
+          selector: locatedKey.selector,
+          selectorCandidates: locatedKey.candidates,
+          semanticHint: `按下 ${e.key}`,
+          tag: target.tagName.toLowerCase(),
+          key: e.key,
           url: window.location.href,
           timestamp: Date.now(),
         });
@@ -192,6 +293,7 @@ export const useRecorder = () => {
     document.addEventListener('input', h.input, true);
     document.addEventListener('change', h.input, true);
     document.addEventListener('submit', h.submit, true);
+    document.addEventListener('keydown', h.keydown, true);
   }, []);
 
   /** 注销事件捕获 */
@@ -201,6 +303,7 @@ export const useRecorder = () => {
     document.removeEventListener('input', h.input, true);
     document.removeEventListener('change', h.input, true);
     document.removeEventListener('submit', h.submit, true);
+    document.removeEventListener('keydown', h.keydown, true);
     if (inputDebounceTimerRef.current) {
       window.clearTimeout(inputDebounceTimerRef.current);
       inputDebounceTimerRef.current = null;

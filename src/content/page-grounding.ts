@@ -978,7 +978,8 @@ export const captureObservableState = (target: Element): ElementObservableState 
   return {
     visible: readTargetVisible(target),
     text: getElementText(target),
-    value: type === 'password' ? undefined : rawValue,
+    // 密码框只暴露「有没有内容」：与 bridge 的 pageAction 同源，否则填写成功也被判 unchanged 而触发无谓的真实事件重放。
+    value: type === 'password' ? (rawValue ? '[set]' : '') : rawValue,
     ariaExpanded: target.getAttribute('aria-expanded') || undefined,
     disabled: isElementDisabled(target),
     className: typeof (target as HTMLElement).className === 'string' ? (target as HTMLElement).className : '',

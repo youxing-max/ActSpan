@@ -329,6 +329,38 @@ const performDrag = async (
   };
 };
 
+/**
+ * 读取当前焦点元素的可编辑状态与值。
+ * 键盘事件只发给 document.activeElement，焦点不在输入框时 CDP 会静默成功但页面毫无变化，
+ * 所以打字前后都要用它核实。
+ */
+const probeFocusedElement = async (
+  tabId: number,
+): Promise<{ success: true; editable: boolean; tag: string; value: string } | { success: false; error: string }> => {
+  const result = await CDPSessionManager.sendCommand(tabId, 'Runtime.evaluate', {
+    expression: `(function() {
+      var el = document.activeElement;
+      // 焦点可能落在 shadow root 内部（自定义元素），逐层下钻
+      while (el && el.shadowRoot && el.shadowRoot.activeElement) el = el.shadowRoot.activeElement;
+      if (!el || el === document.body || el === document.documentElement) {
+        return { editable: false, tag: el ? el.tagName.toLowerCase() : '', value: '' };
+      }
+      var tag = el.tagName.toLowerCase();
+      var isField = tag === 'input' || tag === 'textarea';
+      var editable = (isField && !el.disabled && !el.readOnly) || el.isContentEditable === true;
+      var value = isField ? String(el.value == null ? '' : el.value) : (el.isContentEditable ? String(el.textContent || '') : '');
+      return { editable: editable, tag: tag, value: value };
+    })()`,
+    returnByValue: true,
+    awaitPromise: false,
+  });
+
+  if (!result.success) return { success: false, error: result.error || '无法读取当前焦点元素' };
+  const value = result.result?.result?.value;
+  if (!value || typeof value !== 'object') return { success: false, error: '无法读取当前焦点元素' };
+  return { success: true, editable: !!value.editable, tag: String(value.tag || ''), value: String(value.value ?? '') };
+};
+
 /** 键盘输入文本（ASCII 走逐字符键盘事件，非 ASCII 走 insertText 避免重复） */
 const performType = async (
   tabId: number,
@@ -336,7 +368,19 @@ const performType = async (
   intervalMs: number,
   signal?: AbortSignal,
 ): Promise<FunctionResult> => {
-  if (!text) return { success: true, data: { length: 0, message: 'CDP 输入 0 个字符' } };
+  if (!text) return { success: false, error: '输入文本为空，未发送任何按键' };
+
+  // 打字前校验焦点：focus 不在可编辑元素上时 CDP 按键不会落到任何输入框。
+  // shortcut: 探测读不到焦点（非浏览器注入环境/受限页面）时退回主分支的盲打行为，不做硬失败。
+  const before = await probeFocusedElement(tabId);
+  const canVerify = before.success;
+  if (before.success && !before.editable) {
+    return {
+      success: false,
+      error: '当前没有可输入的焦点元素，请先 click/focus 目标输入框',
+      data: { focused_tag: before.tag, focused_value: before.value },
+    };
+  }
 
   const normalizedInterval = Math.max(0, Math.min(200, Math.floor(intervalMs)));
 
@@ -346,18 +390,19 @@ const performType = async (
     const code = char.charCodeAt(0);
 
     if (code >= 0x20 && code <= 0x7E) {
-      // ASCII 可打印字符：keyDown → char → keyUp（保持键盘事件兼容，autocomplete 等场景需要）
+      // ASCII 可打印字符：rawKeyDown（不带 text，否则 keyDown 自己就插一次）→ char（唯一插入点）→ keyUp。
+      // keydown/keypress/keyup 序列保持不变，autocomplete 等场景仍能拿到键盘事件。
       const r1 = await CDPSessionManager.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-        type: 'keyDown', text: char,
+        type: 'rawKeyDown', key: char,
       });
       if (!r1.success) return { success: false, error: r1.error };
 
       await CDPSessionManager.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-        type: 'char', text: char,
+        type: 'char', text: char, key: char,
       });
 
       await CDPSessionManager.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-        type: 'keyUp', text: char,
+        type: 'keyUp', key: char,
       });
     } else {
       // 非 ASCII 字符（中文、日文、emoji 等）：使用 Input.insertText
@@ -372,9 +417,24 @@ const performType = async (
     }
   }
 
+  // 打字后核实：受控组件/只读/被抢焦点的情况下按键会全部丢失，此时不能报成功
+  await sleep(30);
+  const after = await probeFocusedElement(tabId);
+  if (canVerify && after.success && before.success && (after.value === '' || after.value === before.value)) {
+    return {
+      success: false,
+      error: `按键已发送但输入框内容未变化（焦点元素 ${after.tag || 'unknown'}，当前值 ${JSON.stringify(after.value)}）`,
+      data: { tag: after.tag, value: after.value, length: after.value.length },
+    };
+  }
+
   return {
     success: true,
-    data: { length: text.length, message: `CDP 输入 ${text.length} 个字符` },
+    data: {
+      length: after.success ? after.value.length : text.length,
+      ...(after.success ? { tag: after.tag, value: after.value } : {}),
+      message: `CDP 输入 ${text.length} 个字符`,
+    },
   };
 };
 
@@ -435,8 +495,11 @@ const performKeyPress = async (
     modifiers,
   };
 
+  // Enter 必须带 text 走 keyDown，rawKeyDown 只产生 keydown，React 表单常见的
+  // keypress/默认提交路径不会发生，表现为“按了回车但没发送”。
+  const enterText = key === 'Enter' ? { text: '\r', unmodifiedText: '\r' } : {};
   const r1 = await CDPSessionManager.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-    type: 'rawKeyDown', ...baseParams,
+    type: key === 'Enter' ? 'keyDown' : 'rawKeyDown', ...baseParams, ...enterText,
   });
   if (!r1.success) return { success: false, error: r1.error };
 
@@ -528,10 +591,10 @@ const performFill = async (
       }
       if (tagName === 'input' || tagName === 'textarea') {
         __el__.focus();
-        var nativeSet = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value');
-        if (!nativeSet || !nativeSet.set) {
-          nativeSet = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value');
-        }
+        var nativeSet = Object.getOwnPropertyDescriptor(
+          tagName === 'textarea' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype,
+          'value',
+        );
         if (nativeSet && nativeSet.set) {
           nativeSet.set.call(__el__, ${valueJson});
         } else {
@@ -571,10 +634,10 @@ const performClear = async (
       }
       if (tagName === 'input' || tagName === 'textarea') {
         __el__.focus();
-        var nativeSet = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value');
-        if (!nativeSet || !nativeSet.set) {
-          nativeSet = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value');
-        }
+        var nativeSet = Object.getOwnPropertyDescriptor(
+          tagName === 'textarea' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype,
+          'value',
+        );
         if (nativeSet && nativeSet.set) {
           nativeSet.set.call(__el__, '');
         } else {
@@ -1075,6 +1138,19 @@ export const cdpInputFunction: FunctionDefinition = {
   ].join(' ') + '\n\n⚠️ Do NOT use this tool for:\n- Reading page content (use page_viewer)\n- Checking element existence (use page_snapshot or page_assert)\n- Getting element text (use cdp_dom get_text)',
   supportsParallel: false,
   permissionLevel: 'interact',
+  // 会改变页面状态的动作必须经用户确认；只读/导航类动作（hover/scroll/focus/wait_*/get_info）保持 interact 自动放行
+  actionPermissions: {
+    click: 'sensitive',
+    double_click: 'sensitive',
+    right_click: 'sensitive',
+    click_text: 'sensitive',
+    type: 'sensitive',
+    fill: 'sensitive',
+    clear: 'sensitive',
+    select: 'sensitive',
+    key_press: 'sensitive',
+    drag: 'sensitive',
+  },
   parameters: {
     type: 'object',
     properties: {
@@ -1367,6 +1443,11 @@ export const cdpInputFunction: FunctionDefinition = {
       }
 
       case 'type': {
+        // type 只向当前焦点发送按键；给了目标就先聚焦，否则焦点在别处时输入会静默丢失。
+        if (params.selector || params.element_id) {
+          const focused = await performFocus(tabId, params, signal);
+          if (!focused.success) return focused;
+        }
         return performType(tabId, params.text || '', params.interval_ms ?? 30, signal);
       }
 

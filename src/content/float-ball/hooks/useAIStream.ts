@@ -11,6 +11,7 @@
 
 import { useEffect, useCallback, useRef } from 'react';
 import Channel from '../../../lib/channel';
+import { ArtifactStore } from '../../../lib/artifact-store';
 import { useActspan } from '../context/useActspan';
 import { buildToolIntentText, buildUserFacingActionSummary } from '../text-utils';
 import { reconcileSessionSyncTask } from '../session-sync';
@@ -119,12 +120,33 @@ export const useAIStream = (_resultRef: React.RefObject<HTMLDivElement | null>) 
         } catch { /* 忽略 */ }
         break;
 
-      case 'function_result':
+      case 'function_result': {
         dispatch({
           type: 'UPDATE_TASK',
           payload: { liveStatusText: '处理中...' },
         });
+        let artifactId = '';
+        try {
+          artifactId = JSON.parse(content || '{}')?.artifactId || '';
+        } catch { /* 忽略 */ }
+        if (artifactId) {
+          ArtifactStore.getScreenshot(artifactId).then((record) => {
+            if (!record) return;
+            const task = stateRef.current.currentTask;
+            if (!task || task.screenshotArtifacts?.some((s) => s.id === record.id)) return;
+            dispatch({
+              type: 'UPDATE_TASK',
+              payload: {
+                screenshotArtifacts: [
+                  ...(task.screenshotArtifacts || []),
+                  { id: record.id, dataUrl: record.dataUrl, format: record.format, sizeKB: record.sizeKB },
+                ],
+              },
+            });
+          }).catch(() => { /* 图片读取失败不影响任务 */ });
+        }
         break;
+      }
 
       case 'text':
         dispatch({

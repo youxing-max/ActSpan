@@ -24,12 +24,14 @@ const LEGACY_RECORDER_STATE_KEY = 'mole_recorder_state';
 /** 录制步骤 */
 export interface RecorderStep {
     seq: number;
-    action: 'click' | 'type' | 'select' | 'submit' | 'navigate';
+    action: 'click' | 'type' | 'select' | 'submit' | 'navigate' | 'key_press';
     selector: string;
     selectorCandidates: string[];
     semanticHint: string;
     tag: string;
     value?: string;
+    /** key_press 步骤的按键名（Enter/Tab/ArrowUp…） */
+    key?: string;
     url: string;
     timestamp: number;
     /** 该步骤对应的截图 artifact ID */
@@ -240,6 +242,7 @@ Channel.on('__recorder_step', (data, sender) => {
         semanticHint: data.semanticHint || '',
         tag: data.tag || '',
         value: data.value,
+        key: data.key,
         url: data.url || '',
         timestamp: data.timestamp || Date.now(),
     };
@@ -309,8 +312,8 @@ Channel.on('__recorder_submit', (_data, sender, sendResponse) => {
         try {
             // 构建 AI 审计 prompt
             // 审计时只传必要字段，去掉 screenshotArtifactId 等内部字段
-            const cleanSteps = steps.map(({ seq, action, selector, semanticHint, tag, value, url }) => {
-                const raw = { seq, action, selector, semanticHint, tag, ...(value !== undefined ? { value } : {}), url };
+            const cleanSteps = steps.map(({ seq, action, selector, semanticHint, tag, value, key, url }) => {
+                const raw = { seq, action, selector, semanticHint, tag, ...(value !== undefined ? { value } : {}), ...(key ? { key } : {}), url };
                 return redactRecordedStep(raw, { tag, selector, semanticHint });
             });
 
