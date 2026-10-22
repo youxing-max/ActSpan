@@ -8,13 +8,14 @@ html,
 body,
 #root {
   width: 100%;
-  height: 100%;
 }
 
 body {
   width: 360px;
-  height: 458px;
-  overflow: hidden;
+  min-height: 458px;
+  max-height: 600px;
+  overflow-x: hidden;
+  overflow-y: auto;
   font-family: -apple-system, "SF Pro Display", "SF Pro Text", "Helvetica Neue", "PingFang SC", sans-serif;
   -webkit-font-smoothing: antialiased;
   background: #eaf0f7;
@@ -27,9 +28,8 @@ button {
 
 .popup-shell {
   position: relative;
-  height: 100%;
   padding: 12px;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .popup-card {
@@ -38,7 +38,7 @@ button {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  height: 100%;
+  min-height: 434px;
   padding: 12px;
   border: 1px solid #cad7e8;
   border-radius: 6px;
@@ -206,8 +206,8 @@ button {
 }
 
 .popup-section {
-  flex: 1;
-  min-height: 0;
+  /* 内容高度由状态行决定：不能给 flex:1 + min-height:0，否则弹窗高度不足时文字会被压出框。 */
+  flex: 0 0 auto;
   padding: 12px 14px;
   border: 1px solid rgba(219, 227, 238, 0.92);
   border-radius: 18px;
@@ -256,9 +256,8 @@ button {
   color: #667085;
   font-size: 11px;
   line-height: 1.5;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .popup-pill {
