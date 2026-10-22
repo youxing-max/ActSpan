@@ -18,7 +18,8 @@
     "actspan-doctor": "./doctor.js",
     "actspan-bridge": "./bridge-cli.js",
     "actspan-dingtalk": "./dingtalk-stream.js",
-    "actspan-telegram": "./telegram-bot.js"
+    "actspan-telegram": "./telegram-bot.js",
+    "actspan-feishu": "./feishu-bot.js"
   },
   "engines": {
     "node": ">=20.0.0"
@@ -27,7 +28,8 @@
     "start": "node index.js",
     "dingtalk": "node dingtalk-stream.js",
     "telegram": "node telegram-bot.js",
-    "test": "node --test test/catalog.mjs test/protocol-version.mjs test/bridge-lock.mjs test/identity.mjs test/usage.mjs test/security.mjs test/lifecycle.mjs test/status-tool.mjs test/omp-compat.mjs test/act-script.mjs test/act-tool.mjs test/tool-schema.mjs test/dingtalk-stream.mjs test/telegram-bot.mjs",
+    "feishu": "node feishu-bot.js",
+    "test": "node --test test/catalog.mjs test/protocol-version.mjs test/bridge-lock.mjs test/identity.mjs test/usage.mjs test/security.mjs test/lifecycle.mjs test/status-tool.mjs test/omp-compat.mjs test/act-script.mjs test/act-tool.mjs test/tool-schema.mjs test/dingtalk-stream.mjs test/telegram-bot.mjs test/feishu-bot.mjs",
     "test:e2e": "node test/e2e.mjs",
     "test:install": "node --test test/install.mjs test/doctor.mjs",
     "test:acceptance": "node test/acceptance.mjs",
@@ -35,6 +37,7 @@
     "check:docs": "node check-tool-docs.mjs"
   },
   "dependencies": {
+    "@larksuiteoapi/node-sdk": "1.76.0",
     "@modelcontextprotocol/sdk": "1.32.1",
     "dingtalk-stream": "2.1.5",
     "ws": "8.22.0",
