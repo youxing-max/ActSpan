@@ -154,10 +154,16 @@ const postProcessHtml = (html: string): string => {
     },
   );
 
-  // 第三步：URL 文本链接 → link chip（仅当链接文本本身是 URL 时）
+  // 第三步：URL 文本链接 → link chip（链接文本是完整 URL，或省略协议的域名路径）
   html = html.replace(
-    /<a\s+href="([^"]+)"[^>]*>(https?:\/\/[^<]+)<\/a>/g,
-    (_, href, urlText) => buildLinkChip(href, urlText),
+    /<a\s+href="([^"]+)"[^>]*>([^<]+)<\/a>/g,
+    (match, href, text) => {
+      const decoded = String(text).replace(/&amp;/g, '&').trim();
+      if (!/^https?:\/\//i.test(href)) return match;
+      const isUrlText = /^https?:\/\//i.test(decoded)
+        || /^[a-z0-9.-]+\.[a-z]{2,}(?:[/?#]|$)/i.test(decoded);
+      return isUrlText ? buildLinkChip(href, /^https?:\/\//i.test(decoded) ? decoded : href) : match;
+    },
   );
 
   return html;
@@ -267,7 +273,7 @@ export const markdownToHtml = (text: string): string => {
       const headers = parseRow(lines[0]);
       const bodyRows = lines.slice(2).filter(l => l.includes('|'));
 
-      html += '<table><thead><tr>';
+      html += `<div class="actspan-table-wrap"><table class="actspan-md-table cols-${Math.min(headers.length, 5)}"><thead><tr>`;
       for (const h of headers) {
         html += `<th>${inlineMarkdown(escapeHtml(h))}</th>`;
       }
@@ -285,7 +291,7 @@ export const markdownToHtml = (text: string): string => {
         }
         html += '</tbody>';
       }
-      html += '</table>';
+      html += '</table></div>';
       continue;
     }
 

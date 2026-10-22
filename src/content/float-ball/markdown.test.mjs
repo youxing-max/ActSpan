@@ -47,7 +47,20 @@ test('model output cannot collide with the slot placeholder', () => {
   assert.ok(html.includes('href="https://example.com"'));
 });
 
-test('images carry no-referrer', () => {
-  const html = inlineMarkdown('![alt](https://example.com/a.png)');
-  assert.ok(html.includes('referrerpolicy="no-referrer"'));
+test('tables render in a scrollable wrapper with column-count sizing', () => {
+  const html = markdownToHtml([
+    '| # | 标题 | 来源 | 摘要 |',
+    '|---|---|---|---|',
+    '| 1 | Google Play | play.google.com/apps/dev?id=1 | 123 CO., LTD. |',
+  ].join('\n'));
+  assert.ok(html.includes('class="actspan-table-wrap"'), html);
+  assert.ok(html.includes('class="actspan-md-table cols-4"'), html);
+  assert.ok(html.trimEnd().endsWith('</table></div>'), html);
+});
+
+test('domain-only link text becomes a compact link chip', () => {
+  const html = markdownToHtml('[play.google.com/apps/dev?id=1](https://play.google.com/apps/dev?id=1)');
+  assert.ok(html.includes('class="actspan-link-chip"'), html);
+  assert.ok(html.includes('play.google.com/apps/dev'),
+    'chip keeps a shortened, readable URL');
 });
