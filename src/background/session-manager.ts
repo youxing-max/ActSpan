@@ -8,7 +8,7 @@ import { CDPSessionManager } from '../lib/cdp-session';
 import { handleChat } from '../ai/orchestrator';
 import { getTextContent } from '../ai/context-manager';
 import { mcpClient } from '../functions/registry';
-import { sendFeishuCompletion, isFeishuAutoPushEnabled } from '../functions/webhook';
+import { sendCompletionNotifications, isFeishuAutoPushEnabled } from '../functions/webhook';
 import type { HandleChatOptions } from '../ai/orchestrator';
 import { taskManager } from './task-manager';
 import { tabLeaseManager } from './tab-lease-manager';
@@ -540,13 +540,13 @@ export function createSessionPushEvent(session: Session) {
         if (completionMessage) {
             const pending = isFeishuAutoPushEnabled().then((enabled) => {
                 if (!enabled) return;
-                return sendFeishuCompletion(completionMessage).then((result) => {
+                return sendCompletionNotifications(completionMessage).then((result) => {
                     if (!result.success) {
-                        console.warn('[Actspan] 调查完成结果飞书推送失败:', result.data?.message || result.error || '未知错误');
+                        console.warn('[Actspan] 完成结果推送失败:', result.data?.message || result.error || '未知错误');
                     }
                 });
             }).catch((error: unknown) => {
-                console.warn('[Actspan] 调查完成结果飞书推送异常:', error instanceof Error ? error.message : String(error));
+                console.warn('[Actspan] 完成结果推送异常:', error instanceof Error ? error.message : String(error));
             });
             const notifications = pendingFeishuCompletionNotifications.get(session) || new Set<Promise<void>>();
             notifications.add(pending);

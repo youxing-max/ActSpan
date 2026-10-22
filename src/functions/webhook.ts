@@ -1,7 +1,7 @@
 /**
  * Webhook 远端通知工具
  * 向用户配置的 webhook URL 发送推送通知
- * 支持通用 webhook 和 Bark（iOS 推送）深度适配
+ * 支持通用 webhook、Bark（iOS 推送）以及飞书/钉钉机器人格式
  */
 
 import type { FunctionDefinition, FunctionResult } from './types';
@@ -49,6 +49,8 @@ export interface WebhookEntry {
   headers?: Record<string, string>;
   /** Bark 专属配置 */
   bark?: BarkConfig;
+  /** 钉钉机器人加签密钥（SEC 开头，可选；仅钉钉地址生效） */
+  dingtalkSecret?: string;
 }
 
 interface WebhookConfigStore {
@@ -105,10 +107,22 @@ const buildBarkRequest = (
 };
 
 /** 判断是否为飞书/Lark 机器人 Webhook */
-const isFeishuWebhookUrl = (url: string): boolean => {
+export const isFeishuWebhookUrl = (url: string): boolean => {
   try {
     const host = new URL(url).hostname;
     return host === 'open.feishu.cn' || host === 'open.larksuite.com';
+  } catch {
+    return false;
+  }
+};
+
+/** 判断是否为钉钉自定义机器人 Webhook */
+export const isDingTalkWebhookUrl = (url: string): boolean => {
+  try {
+    const parsed = new URL(url);
+    const path = parsed.pathname.replace(/\/+$/, '');
+    return (parsed.hostname === 'oapi.dingtalk.com' && path === '/robot/send')
+      || (parsed.hostname === 'api.dingtalk.com' && path.endsWith('/robot/webhook/send'));
   } catch {
     return false;
   }
@@ -124,6 +138,64 @@ export const selectFeishuWebhooks = (entries: WebhookEntry[], name?: string): We
     isFeishuWebhookUrl(entry.url) &&
     (!target || entry.name === target),
   );
+};
+
+/** 选择已启用的飞书/钉钉 Webhook；名称匹配时必须完全相等 */
+export const selectCompletionWebhooks = (entries: WebhookEntry[], name?: string): WebhookEntry[] => {
+  const target = name?.trim();
+  return entries.filter((entry) =>
+    entry.enabled &&
+    entry.type === 'generic' &&
+    typeof entry.url === 'string' &&
+    (isFeishuWebhookUrl(entry.url) || isDingTalkWebhookUrl(entry.url)) &&
+    (!target || entry.name === target),
+  );
+};
+
+/** 钉钉加签：把 timestamp 与 HMAC-SHA256 签名追加到机器人 URL */
+const signDingTalkUrl = async (url: string, secret: string): Promise<string> => {
+  const timestamp = Date.now();
+  const encoder = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+  const digest = new Uint8Array(await crypto.subtle.sign('HMAC', key, encoder.encode(`${timestamp}\n${secret}`)));
+  let binary = '';
+  for (const byte of digest) binary += String.fromCharCode(byte);
+
+  const signed = new URL(url);
+  signed.searchParams.set('timestamp', String(timestamp));
+  signed.searchParams.set('sign', btoa(binary));
+  return signed.toString();
+};
+
+/** 构建钉钉机器人请求：text 消息，可选加签 */
+const buildDingTalkRequest = async (
+  entry: WebhookEntry,
+  body: { title: string; message: string },
+): Promise<{ url: string; init: RequestInit }> => {
+  const url = entry.dingtalkSecret
+    ? await signDingTalkUrl(entry.url!, entry.dingtalkSecret)
+    : entry.url!;
+
+  return {
+    url,
+    init: {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(entry.headers || {}),
+      },
+      body: JSON.stringify({
+        msgtype: 'text',
+        text: { content: [body.title, body.message].filter(Boolean).join('\n') },
+      }),
+    },
+  };
 };
 
 /** 构建通用 webhook 请求 */
@@ -174,10 +246,13 @@ export const sendToWebhook = async (
   const timer = globalThis.setTimeout(() => controller.abort(), WEBHOOK_TIMEOUT_MS);
 
   try {
+    const isDingTalk = entry.type === 'generic' && !!entry.url && isDingTalkWebhookUrl(entry.url);
     const { url, init } =
       entry.type === 'bark' && entry.bark
         ? buildBarkRequest(entry.bark, body)
-        : buildGenericRequest(entry, body);
+        : isDingTalk
+          ? await buildDingTalkRequest(entry, body)
+          : buildGenericRequest(entry, body);
 
     const response = await fetch(url, { ...init, signal: controller.signal });
 
@@ -186,7 +261,7 @@ export const sendToWebhook = async (
     }
 
     const isFeishu = entry.type === 'generic' && isFeishuWebhookUrl(url);
-    const inspectJson = entry.type === 'bark' || isFeishu;
+    const inspectJson = entry.type === 'bark' || isFeishu || isDingTalk;
     if (inspectJson) {
       try {
         const json = await response.json();
@@ -194,12 +269,23 @@ export const sendToWebhook = async (
         if (isFeishu && (json === null || typeof json !== 'object' || json.code === undefined)) {
           return { success: false, message: '飞书响应缺少成功码' };
         }
+        if (isDingTalk) {
+          if (json === null || typeof json !== 'object' || json.errcode === undefined) {
+            return { success: false, message: '钉钉响应缺少成功码' };
+          }
+          if (Number(json.errcode) !== 0) {
+            return { success: false, message: json.errmsg || json.message || `Webhook errcode ${json.errcode}` };
+          }
+        }
         if (json?.code !== undefined && Number(json.code) !== successCode) {
           return { success: false, message: json.message || json.msg || `Webhook code ${json.code}` };
         }
       } catch {
         if (isFeishu) {
           return { success: false, message: '飞书响应不是有效 JSON' };
+        }
+        if (isDingTalk) {
+          return { success: false, message: '钉钉响应不是有效 JSON' };
         }
         // 非 JSON 响应，HTTP 200 视为成功
       }
@@ -243,7 +329,7 @@ export const sendWebhookEntries = async (
     },
   };
 };
-/** 自动推送开关：默认开启；用户可在 Webhook 设置页关闭，避免页面内容在不知情时外发。 */
+/** 自动推送开关：默认开启；覆盖飞书与钉钉，用户可在 Webhook 设置页关闭。 */
 const AUTO_PUSH_KEY = 'actspan_feishu_auto_push';
 
 export const isFeishuAutoPushEnabled = async (): Promise<boolean> => {
@@ -263,8 +349,25 @@ export const setFeishuAutoPushEnabled = async (enabled: boolean): Promise<void> 
   });
 };
 
-/** 向已启用的飞书 Webhook 推送 AI 完成结果 */
-export const sendFeishuCompletion = async (message: string): Promise<FunctionResult> => {  const entries = selectFeishuWebhooks(await readWebhookConfig());
+/** 向已启用的飞书/钉钉 Webhook 推送 AI 完成结果 */
+export const sendCompletionNotifications = async (message: string): Promise<FunctionResult> => {
+  const entries = selectCompletionWebhooks(await readWebhookConfig());
+  if (entries.length === 0) {
+    return {
+      success: false,
+      error: '未配置启用的飞书或钉钉 Webhook',
+      data: { message: '未配置启用的飞书或钉钉 Webhook', sent: 0, failed: 0 },
+    };
+  }
+  return sendWebhookEntries(entries, {
+    title: '调查完成',
+    message,
+  });
+};
+
+/** 向已启用的飞书 Webhook 推送 AI 完成结果（保留给已有调用方） */
+export const sendFeishuCompletion = async (message: string): Promise<FunctionResult> => {
+  const entries = selectFeishuWebhooks(await readWebhookConfig());
   if (entries.length === 0) {
     return {
       success: false,
@@ -293,7 +396,7 @@ export const getEntryDisplayUrl = (entry: WebhookEntry): string => {
 export const webhookFunction: FunctionDefinition = {
   name: 'webhook',
   description:
-    'Send a notification to remote webhook endpoints (Bark, Feishu, Slack, Discord, WeChat Work, etc.) configured by the user in Options page. ' +
+    'Send a notification to remote webhook endpoints (Bark, Feishu/Lark, DingTalk, Slack, Discord, WeChat Work, etc.) configured by the user in Options page. ' +
     'Use this tool when you need to push results, alerts, or reminders to external platforms. ' +
     'The user must configure at least one enabled webhook in Options > Webhook before this tool works.\n\n' +
     '⚠️ Do NOT use this tool for browser desktop notifications — use the "notification" tool instead.',

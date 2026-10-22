@@ -11,7 +11,7 @@
 import { VERSION } from '../config';
 import { ensureSkillRegistryReady, listManifestSources, registryService } from '../functions/skill-registry';
 import { getBuiltinFunction } from '../functions/registry';
-import { readWebhookConfig, selectFeishuWebhooks, sendWebhookEntries } from '../functions/webhook';
+import { readWebhookConfig, selectCompletionWebhooks, sendWebhookEntries } from '../functions/webhook';
 import { requestConfirmationFunction } from '../functions/request-confirmation';
 import { getWorkflowPlanActionNames, isWorkflowPlanActionAllowed, isWorkflowPlanSubActionAllowed, resolveWorkflowPlanAction, resolveTemplateValue, readPathValue } from '../functions/remote-workflow';
 import { redactAuditParams, redactPageContent, redactSensitive, isCredentialUrl } from '../functions/redact';
@@ -1408,16 +1408,16 @@ export function initMcpBridge() {
     registerCapabilityHandler('page.status_update', updateStatus, 'read');
     registerCapabilityHandler('feishu.push', async (input) => {
         if (typeof input.title !== 'string' || typeof input.message !== 'string') {
-            throw new Error('飞书推送需要 title 和 message');
+            throw new Error('推送需要 title 和 message');
         }
         const webhookName = typeof input.webhookName === 'string' ? input.webhookName.trim() : undefined;
-        const entries = selectFeishuWebhooks(await readWebhookConfig(), webhookName);
+        const entries = selectCompletionWebhooks(await readWebhookConfig(), webhookName);
         if (entries.length === 0) {
             return {
                 success: false,
                 error: webhookName
-                    ? `未找到已启用的飞书 Webhook: ${webhookName}`
-                    : '没有已启用的飞书 Webhook，请在 Options > Webhook 页面添加并启用至少一个飞书 Webhook',
+                    ? `未找到已启用的飞书或钉钉 Webhook: ${webhookName}`
+                    : '没有已启用的飞书或钉钉 Webhook，请在 Options > Webhook 页面添加并启用至少一个飞书或钉钉 Webhook',
             };
         }
         return sendWebhookEntries(entries, { title: input.title, message: input.message });

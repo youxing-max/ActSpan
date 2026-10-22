@@ -166,12 +166,12 @@ async function main(config) {
         return { ...await callBridge('ping', {}, 5000), connected: true, loop_mode: 'enabled', pairing_required: false, ...owner };
     }));
     registerTool('actspan_feishu_push', {
-        title: 'Push Feishu notification',
-        description: 'Send a notification through enabled Feishu/Lark bot webhooks configured in the extension. Optional webhookName must match exactly; omit it to send to all enabled Feishu webhooks. No browser tab or confirmation prompt is required.',
+        title: 'Push Feishu or DingTalk notification',
+        description: 'Send a notification through enabled Feishu/Lark or DingTalk bot webhooks configured in the extension. Optional webhookName must match exactly; omit it to send to all enabled Feishu and DingTalk webhooks. No browser tab or confirmation prompt is required.',
         inputSchema: {
             title: z.string().min(1),
             message: z.string(),
-            webhookName: z.string().min(1).optional().describe('Exact configured webhook name; omit to target all enabled Feishu webhooks.'),
+            webhookName: z.string().min(1).optional().describe('Exact configured webhook name; omit to target all enabled Feishu and DingTalk webhooks.'),
         },
     }, run((args) => callBridge('feishu.push', args, 30000)));
 

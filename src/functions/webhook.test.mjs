@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
+import { createHmac } from 'node:crypto';
 import test from 'node:test';
 import { build } from 'esbuild';
 
 const bundle = await build({
   stdin: {
     contents: `
-      export { sendFeishuCompletion, sendToWebhook, selectFeishuWebhooks, sendWebhookEntries } from './src/functions/webhook.ts';
+      export { sendCompletionNotifications, sendFeishuCompletion, sendToWebhook, selectCompletionWebhooks, selectFeishuWebhooks, sendWebhookEntries, isDingTalkWebhookUrl } from './src/functions/webhook.ts';
     `,
     resolveDir: process.cwd(),
     loader: 'ts',
@@ -15,7 +16,7 @@ const bundle = await build({
   format: 'esm',
   platform: 'node',
 });
-const { sendFeishuCompletion, sendToWebhook, selectFeishuWebhooks, sendWebhookEntries } = await import(
+const { sendCompletionNotifications, sendFeishuCompletion, sendToWebhook, selectCompletionWebhooks, selectFeishuWebhooks, sendWebhookEntries, isDingTalkWebhookUrl } = await import(
   `data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].contents).toString('base64')}`
 );
 
@@ -180,6 +181,171 @@ test('rejects Feishu responses without a success code', async () => {
     assert.equal(result.success, false);
   } finally {
     globalThis.fetch = originalFetch;
+  }
+});
+
+test('formats a DingTalk bot webhook as a text message', async () => {
+  const originalFetch = globalThis.fetch;
+  let request;
+  globalThis.fetch = async (input, init) => {
+    request = { input, init };
+    return new Response('{"errcode":0,"errmsg":"ok"}', {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  try {
+    const result = await sendToWebhook(
+      {
+        id: 'dingtalk-1',
+        name: '钉钉通知群',
+        type: 'generic',
+        enabled: true,
+        createdAt: 1,
+        url: 'https://oapi.dingtalk.com/robot/send?access_token=test-token',
+      },
+      { title: '任务完成', message: '处理结果已生成' },
+    );
+
+    assert.equal(result.success, true);
+    assert.equal(request.input, 'https://oapi.dingtalk.com/robot/send?access_token=test-token');
+    assert.deepEqual(JSON.parse(request.init.body), {
+      msgtype: 'text',
+      text: { content: '任务完成\n处理结果已生成' },
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('signs a DingTalk webhook when a secret is configured', async () => {
+  const originalFetch = globalThis.fetch;
+  const secret = 'SECtest-secret';
+  let request;
+  globalThis.fetch = async (input, init) => {
+    request = { input, init };
+    return new Response('{"errcode":0,"errmsg":"ok"}', {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  try {
+    const result = await sendToWebhook(
+      {
+        id: 'dingtalk-1',
+        name: '钉钉通知群',
+        type: 'generic',
+        enabled: true,
+        createdAt: 1,
+        url: 'https://oapi.dingtalk.com/robot/send?access_token=test-token',
+        dingtalkSecret: secret,
+      },
+      { title: '任务完成', message: '处理结果已生成' },
+    );
+
+    assert.equal(result.success, true);
+    const signed = new URL(String(request.input));
+    const timestamp = signed.searchParams.get('timestamp');
+    assert.ok(timestamp);
+    assert.equal(signed.searchParams.get('access_token'), 'test-token');
+    assert.equal(
+      signed.searchParams.get('sign'),
+      createHmac('sha256', secret).update(`${timestamp}\n${secret}`).digest('base64'),
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('reports a DingTalk business error from an HTTP 200 response', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response('{"errcode":310000,"errmsg":"keywords not in content"}', {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  });
+
+  try {
+    const result = await sendToWebhook(
+      {
+        id: 'dingtalk-1',
+        name: '钉钉通知群',
+        type: 'generic',
+        enabled: true,
+        createdAt: 1,
+        url: 'https://oapi.dingtalk.com/robot/send?access_token=test-token',
+      },
+      { title: '任务完成', message: '处理结果已生成' },
+    );
+
+    assert.deepEqual(result, { success: false, message: 'keywords not in content' });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('selects enabled Feishu and DingTalk completion webhooks', () => {
+  const entries = [
+    { id: 'feishu-1', name: '研发群', type: 'generic', enabled: true, createdAt: 1, url: 'https://open.feishu.cn/open-apis/bot/v2/hook/one' },
+    { id: 'dingtalk-1', name: '钉钉群', type: 'generic', enabled: true, createdAt: 1, url: 'https://oapi.dingtalk.com/robot/send?access_token=token' },
+    { id: 'dingtalk-2', name: '旧钉钉群', type: 'generic', enabled: false, createdAt: 1, url: 'https://oapi.dingtalk.com/robot/send?access_token=old' },
+    { id: 'other-1', name: '其他服务', type: 'generic', enabled: true, createdAt: 1, url: 'https://example.com/hook' },
+    { id: 'bark-1', name: '手机', type: 'bark', enabled: true, createdAt: 1, bark: { server: 'https://api.day.app', deviceKey: 'device' } },
+  ];
+
+  assert.equal(isDingTalkWebhookUrl('https://oapi.dingtalk.com/robot/send?access_token=token'), true);
+  assert.equal(isDingTalkWebhookUrl('https://oapi.dingtalk.com/robot/send/?access_token=token'), true);
+  assert.equal(isDingTalkWebhookUrl('https://example.com/robot/send'), false);
+  assert.deepEqual(selectCompletionWebhooks(entries).map((entry) => entry.name), ['研发群', '钉钉群']);
+  assert.deepEqual(selectCompletionWebhooks(entries, '钉钉群').map((entry) => entry.name), ['钉钉群']);
+  assert.deepEqual(selectCompletionWebhooks(entries, '旧钉钉群'), []);
+});
+
+test('completion notifications reach both Feishu and DingTalk', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalChrome = globalThis.chrome;
+  const calls = [];
+  globalThis.chrome = {
+    storage: {
+      local: {
+        get(_keys, callback) {
+          callback({
+            actspan_webhook_config_v1: {
+              version: 1,
+              updatedAt: 1,
+              webhooks: [
+                { id: 'feishu-1', name: '飞书群', type: 'generic', enabled: true, createdAt: 1, url: 'https://open.feishu.cn/open-apis/bot/v2/hook/test-token' },
+                { id: 'dingtalk-1', name: '钉钉群', type: 'generic', enabled: true, createdAt: 1, url: 'https://oapi.dingtalk.com/robot/send?access_token=test-token' },
+              ],
+            },
+          });
+        },
+        set(_items, callback) {
+          callback?.();
+        },
+      },
+    },
+  };
+  globalThis.fetch = async (input) => {
+    calls.push(String(input));
+    return new Response(String(input).includes('dingtalk')
+      ? '{"errcode":0,"errmsg":"ok"}'
+      : '{"code":0,"msg":"success"}', {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  try {
+    const result = await sendCompletionNotifications('处理结果已生成');
+    assert.equal(result.success, true);
+    assert.equal(result.data.sent, 2);
+    assert.equal(result.data.failed, 0);
+    assert.deepEqual(calls.map((url) => new URL(url).hostname), ['open.feishu.cn', 'oapi.dingtalk.com']);
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.chrome = originalChrome;
   }
 });
 
