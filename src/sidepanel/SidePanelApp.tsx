@@ -92,13 +92,18 @@ const SidePanelInner: React.FC = () => {
     }, [dispatch]);
 
     // 恢复活跃会话（只恢复属于当前标签页的会话，避免侧栏串台）
-    useEffect(() => {
+    const syncActiveSession = useCallback(() => {
         if (state.selfTabId === null) return;
         Channel.send('__session_get_active', {}, (response: { sessionId?: string; status?: string; summary?: string; originTabId?: number; startedAt?: number; endedAt?: number; durationMs?: number; lastError?: string; failureCode?: string; agentState?: { phase?: string; round?: number }; taskKind?: string }) => {
             if (!response?.sessionId || (response.status !== 'running' && response.status !== 'done' && response.status !== 'error')) return;
-            if (typeof response.originTabId === 'number' && response.originTabId !== state.selfTabId) return;
+            const currentTask = currentTaskRef.current;
+            const isCurrentSession = currentTask?.id === response.sessionId;
+            // 当前任务自身必须允许刷新，即使 Agent 运行期间切换了活动标签页；
+            // 其他会话仍只接受属于当前标签页的。
+            if (!isCurrentSession && typeof response.originTabId === 'number' && response.originTabId !== state.selfTabId) return;
             // 当前标签页已有运行中的任务时，不要被另一个标签页的活跃会话覆盖
-            if (currentTaskRef.current?.status === 'running' && currentTaskRef.current.id !== response.sessionId) return;            const status = response.status === 'error' ? 'error' : response.status === 'done' ? 'done' : 'running';
+            if (!isCurrentSession && currentTask?.status === 'running') return;
+            const status = response.status === 'error' ? 'error' : response.status === 'done' ? 'done' : 'running';
             dispatch({
                 type: 'SET_TASK',
                 payload: {
@@ -132,6 +137,19 @@ const SidePanelInner: React.FC = () => {
             }, 0);
         });
     }, [dispatch, state.selfTabId]);
+
+    useEffect(() => {
+        syncActiveSession();
+    }, [syncActiveSession]);
+
+    // background 被浏览器回收后 port 会断开；重连成功时补一次会话状态，
+    // 否则页面会一直停留在断开前的“正在执行”。
+    useEffect(() => {
+        Channel.on('__channel_extension_reconnected', syncActiveSession);
+        return () => {
+            Channel.off('__channel_extension_reconnected', syncActiveSession);
+        };
+    }, [syncActiveSession]);
 
     // 搜索框状态 class
     const boxState = !task ? 'state-idle'

@@ -298,8 +298,7 @@ export const useAIStream = (_resultRef: React.RefObject<HTMLDivElement | null>) 
   }, [dispatch]);
 
   // 监听会话同步
-  useEffect(() => {
-    const handleSessionSync = (data: any) => {
+  const applySessionSync = useCallback((data: any) => {
       if (!data || typeof data !== 'object' || typeof data.sessionId !== 'string') return;
 
       const currentTask = stateRef.current.currentTask;
@@ -326,13 +325,31 @@ export const useAIStream = (_resultRef: React.RefObject<HTMLDivElement | null>) 
       } else if (result.kind === 'clear') {
         dispatch({ type: 'SET_TASK', payload: null });
       }
-    };
-
-    Channel.on('__session_sync', handleSessionSync);
-    return () => {
-      Channel.off('__session_sync', handleSessionSync);
-    };
   }, [dispatch]);
+
+  useEffect(() => {
+    Channel.on('__session_sync', applySessionSync);
+    return () => {
+      Channel.off('__session_sync', applySessionSync);
+    };
+  }, [applySessionSync]);
+
+  // background 重启后重新注册成功时，主动拉一次当前会话，
+  // 避免后台休眠期间错过 turn_completed 后页面一直显示“正在执行”。
+  useEffect(() => {
+    const handleReconnected = () => {
+      Channel.send('__session_get_active', {}, (response: any) => {
+        if (!response?.sessionId) return;
+        const currentTask = stateRef.current.currentTask;
+        if (currentTask && !currentTask.pendingSession && currentTask.id !== response.sessionId) return;
+        applySessionSync(response);
+      });
+    };
+    Channel.on('__channel_tab_reconnected', handleReconnected);
+    return () => {
+      Channel.off('__channel_tab_reconnected', handleReconnected);
+    };
+  }, [applySessionSync]);
   // 侧栏作为 extension page 没有 sender.tab，恢复会话时需要自行消费回放事件。
   useEffect(() => {
     const handleSessionReplay = (data: any) => {

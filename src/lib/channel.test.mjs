@@ -61,6 +61,15 @@ await test('background Channel re-registers tabs that survived a service worker 
   assert.deepEqual(Channel.getRegisteredTabs().sort(), [7, 8]);
 });
 
+await test('content script notifies local subscribers when background asks it to re-register', () => {
+  let reconnected = 0;
+  const handler = () => { reconnected += 1; };
+  Channel.on('__channel_tab_reconnected', handler);
+  onMessage({ __channel_tab_register: true }, {}, () => {});
+  Channel.off('__channel_tab_reconnected', handler);
+  assert.equal(reconnected, 1);
+});
+
 await test('extension page reconnects after background drops the port and notifies subscribers', async () => {
   let reconnected = 0;
   Channel.on('__channel_extension_reconnected', () => { reconnected += 1; });
