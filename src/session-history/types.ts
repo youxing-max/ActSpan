@@ -1,4 +1,4 @@
-import type { SessionFailureCode, SessionStatus } from '../ai/types';
+import type { SessionFailureCode, SessionStatus, SessionTurnSummary } from '../ai/types';
 
 /** 工具调用链项（用于 options 页面复现调用进度） */
 export interface SessionToolCallChainItem {
@@ -17,6 +17,9 @@ export interface SessionAgentTransitionItem {
   updatedAt: number;
 }
 
+/** 单轮对话记录（用于历史详情中查看完整多轮对话） */
+export type SessionHistoryTurn = SessionTurnSummary;
+
 /** 会话历史记录（用于 options 页面展示） */
 export interface SessionHistoryRecord {
   sessionId: string;
@@ -28,6 +31,8 @@ export interface SessionHistoryRecord {
   failureCode?: SessionFailureCode;
   lastError?: string;
   assistantReply?: string;
+  /** 会话中的每一轮对话；旧记录可能没有该字段 */
+  turns?: SessionHistoryTurn[];
   toolCalls: string[];
   toolCallChain: SessionToolCallChainItem[];
   agentTransitions: SessionAgentTransitionItem[];

@@ -143,6 +143,15 @@ export async function restoreRuntimeSessions() {
                     content: JSON.stringify(abortedPayload),
                     timestamp: endedAt,
                 }];
+                // 同步修正累积轮次快照，避免历史详情一直显示“运行中”
+                const lastTurn = item.turns?.[item.turns.length - 1];
+                if (lastTurn && lastTurn.status === 'running') {
+                    lastTurn.status = 'error';
+                    lastTurn.endedAt = endedAt;
+                    lastTurn.durationMs = abortedPayload.durationMs;
+                    lastTurn.failureCode = 'E_SESSION_RUNTIME';
+                    lastTurn.error = reason;
+                }
                 patchedAfterRestore = true;
             }
             sessions.set(item.id, item);

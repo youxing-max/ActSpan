@@ -9,6 +9,7 @@ import type {
     Session,
     SessionEventLogItem,
     SessionHistoryRecord,
+    SessionHistoryTurn,
     SessionToolCallChainItem,
     SessionAgentTransitionItem,
 } from './session-types';
@@ -43,6 +44,140 @@ function extractTurnCompletedReply(eventLog: SessionEventLogItem[]): string | un
         if (text) return text;
     }
     return undefined;
+}
+
+// ============ 多轮对话提取 ============
+
+/** 历史记录中最多保留的对话轮数（从最新一轮往前保留） */
+const MAX_HISTORY_TURNS = 20;
+const MAX_TURN_QUERY_CHARS = 300;
+const MAX_TURN_REPLY_CHARS = 4_000;
+
+const truncateText = (text: string | undefined, max: number): string | undefined => {
+    if (!text) return text;
+    if (text.length <= max) return text;
+    return `${text.slice(0, max)}…（已截断 ${text.length - max} 字）`;
+};
+
+/** 统一裁剪轮次，避免历史记录无限增长 */
+const normalizeSessionTurns = (turns: SessionHistoryTurn[]): SessionHistoryTurn[] => turns
+    .slice(-MAX_HISTORY_TURNS)
+    .map(turn => ({
+        ...turn,
+        query: truncateText(turn.query, MAX_TURN_QUERY_CHARS) || '(无输入)',
+        reply: truncateText(turn.reply, MAX_TURN_REPLY_CHARS),
+    }));
+
+/** 合并已保存的旧轮次与本次快照，防止 eventLog 裁剪导致早期轮次丢失 */
+export function mergeSessionTurns(
+    previous: SessionHistoryTurn[] | undefined,
+    incoming: SessionHistoryTurn[] | undefined,
+): SessionHistoryTurn[] {
+    const merged = new Map<string, SessionHistoryTurn>();
+    const keyOf = (turn: SessionHistoryTurn) => turn.runId || `${turn.startedAt}:${turn.query.slice(0, 40)}`;
+    for (const turn of previous || []) merged.set(keyOf(turn), turn);
+    for (const turn of incoming || []) merged.set(keyOf(turn), turn);
+    return normalizeSessionTurns(
+        Array.from(merged.values()).sort((left, right) => left.startedAt - right.startedAt),
+    );
+}
+
+/**
+ * 从 eventLog 还原每一轮用户输入与 AI 回复。
+ *
+ * 之前历史记录只取最新一轮的 assistantReply，多轮对话在页面上只能看到
+ * 第一句 summary，后面的轮次全部丢失。这里按 turn_started /
+ * turn_completed / turn_aborted 切分轮次，并保留每轮回复。
+ */
+export function extractSessionTurns(
+    eventLog: SessionEventLogItem[],
+    fallback?: { summary?: string; startedAt?: number; reply?: string },
+): SessionHistoryTurn[] {
+    const turns: SessionHistoryTurn[] = [];
+    let current: SessionHistoryTurn | null = null;
+
+    const resolvedStartedAt = fallback?.startedAt || eventLog[0]?.timestamp || Date.now();
+
+    const ensureCurrent = () => {
+        if (current) return current;
+        if (!fallback?.summary) return null;
+        current = {
+            query: fallback.summary,
+            status: 'running',
+            startedAt: resolvedStartedAt,
+            reply: fallback.reply,
+        };
+        return current;
+    };
+
+    for (const event of eventLog) {
+        const timestamp = event.timestamp;
+
+        if (event.type === 'turn_started') {
+            if (current) {
+                turns.push({ ...current, endedAt: timestamp, status: current.status === 'running' ? 'error' : current.status });
+            }
+            let parsed: { query?: unknown; runId?: unknown; startedAt?: unknown } | null = null;
+            try {
+                parsed = JSON.parse(event.content || '{}');
+            } catch {
+                // 兼容非 JSON 的旧格式
+            }
+            const query = typeof parsed?.query === 'string' ? parsed.query.trim() : '';
+            current = {
+                runId: typeof parsed?.runId === 'string' ? parsed.runId : undefined,
+                query: query || fallback?.summary || '(无输入)',
+                status: 'running',
+                startedAt: typeof parsed?.startedAt === 'number' ? parsed.startedAt : (timestamp || resolvedStartedAt),
+            };
+            continue;
+        }
+
+        if (event.type === 'text') {
+            const text = event.content?.trim();
+            if (text) {
+                const turn = ensureCurrent();
+                if (turn) turn.reply = text;
+            }
+            continue;
+        }
+
+        if (event.type !== 'turn_completed' && event.type !== 'turn_aborted') continue;
+
+        const turn = ensureCurrent();
+        if (!turn) continue;
+        const payload = parseTurnLifecycleEventPayload(event.content || '');
+        const endedAt = typeof payload?.endedAt === 'number' ? payload.endedAt : (timestamp || Date.now());
+        const durationMs = typeof payload?.durationMs === 'number'
+            ? payload.durationMs
+            : Math.max(0, endedAt - turn.startedAt);
+        turn.status = event.type === 'turn_completed' && payload?.status === 'done' ? 'done' : 'error';
+        turn.endedAt = endedAt;
+        turn.durationMs = durationMs;
+        turn.failureCode = payload?.failureCode;
+        turn.error = payload?.reason;
+        const lastMessage = typeof payload?.lastAgentMessage === 'string'
+            ? payload.lastAgentMessage.trim()
+            : '';
+        if (lastMessage) turn.reply = lastMessage;
+        turns.push(turn);
+        current = null;
+    }
+
+    if (current) {
+        turns.push(current);
+    }
+
+    if (turns.length === 0 && fallback?.summary) {
+        turns.push({
+            query: fallback.summary,
+            status: 'done',
+            reply: fallback.reply,
+            startedAt: resolvedStartedAt,
+        });
+    }
+
+    return normalizeSessionTurns(turns);
 }
 
 // ============ 工具调用提取 ============
@@ -246,11 +381,22 @@ const truncateAssistantReply = (reply: string | undefined): string | undefined =
 };
 
 /** 构建会话历史记录 */
-function buildSessionHistoryRecord(session: Session): SessionHistoryRecord {
+export function buildSessionHistoryRecord(session: Session): SessionHistoryRecord {
     const updatedAt = Date.now();
     const startedAt = session.startedAt || session.createdAt || updatedAt;
     const endedAt = session.endedAt ?? (session.status === 'running' ? undefined : updatedAt);
     const durationMs = session.durationMs ?? (endedAt ? Math.max(0, endedAt - startedAt) : undefined);
+    const assistantReply = extractTurnCompletedReply(session.eventLog) || extractAssistantReply(session.eventLog);
+    // 优先使用运行期累积的快照：eventLog 只有 500 条，长回答可能撑满一轮
+    const turns = normalizeSessionTurns(
+        session.turns?.length
+            ? session.turns
+            : extractSessionTurns(session.eventLog, {
+                summary: session.summary,
+                startedAt,
+                reply: assistantReply,
+            }),
+    );
 
     return {
         sessionId: session.id,
@@ -261,9 +407,8 @@ function buildSessionHistoryRecord(session: Session): SessionHistoryRecord {
         durationMs,
         failureCode: session.failureCode,
         lastError: session.lastError,
-        assistantReply: truncateAssistantReply(
-            extractTurnCompletedReply(session.eventLog) || extractAssistantReply(session.eventLog),
-        ),
+        assistantReply: truncateAssistantReply(assistantReply),
+        turns,
         toolCalls: extractToolCalls(session.eventLog),
         toolCallChain: extractToolCallChain(session.eventLog),
         agentTransitions: extractAgentTransitions(session.eventLog),
@@ -305,7 +450,12 @@ export function persistSessionHistory(session: Session) {
                 SESSION_HISTORY_STORAGE_KEY,
                 LEGACY_SESSION_HISTORY_STORAGE_KEY,
             )) || [];
-            const nextHistory = [record, ...history.filter(item => item.sessionId !== record.sessionId)]
+            const previous = history.find(item => item.sessionId === record.sessionId);
+            const nextRecord: SessionHistoryRecord = {
+                ...record,
+                turns: mergeSessionTurns(previous?.turns, record.turns),
+            };
+            const nextHistory = [nextRecord, ...history.filter(item => item.sessionId !== record.sessionId)]
                 .sort((left, right) => right.updatedAt - left.updatedAt)
                 .slice(0, MAX_SESSION_HISTORY);
 

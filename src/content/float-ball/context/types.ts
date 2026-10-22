@@ -21,6 +21,10 @@ export interface RoundItem {
 
 export interface TaskItem {
   id: string;                  // sessionId（由 background 生成）
+  /** 是否还在等待 background 返回真实 sessionId（本地临时 ID） */
+  pendingSession?: boolean;
+  /** 发起会话的标签页 ID，用于过滤其他标签页的广播事件 */
+  originTabId?: number;
   activeRunId?: string | null;
   query: string;
   title: string;

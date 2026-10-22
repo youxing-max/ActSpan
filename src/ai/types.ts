@@ -128,6 +128,19 @@ export interface SessionReplayPayload {
   lastTimestamp: number;
 }
 
+/** 单轮对话的累积快照（不受 eventLog 裁剪影响） */
+export interface SessionTurnSummary {
+  runId?: string;
+  query: string;
+  status: 'running' | 'done' | 'error';
+  reply?: string;
+  startedAt: number;
+  endedAt?: number;
+  durationMs?: number;
+  failureCode?: string;
+  error?: string;
+}
+
 /** AI 事件类型 */
 export type AIStreamEventType =
   | 'thinking'
@@ -251,6 +264,8 @@ export interface Session {
   lastError?: string;
   /** 发起任务的标签页 ID（用于页签感知） */
   originTabId?: number;
+  /** 多轮对话累积快照（eventLog 被裁剪后仍能保留历史轮次） */
+  turns?: SessionTurnSummary[];
 }
 
 /** 调度阶段 */

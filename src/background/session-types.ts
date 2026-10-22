@@ -28,6 +28,7 @@ export type { HandleChatOptions } from '../ai/orchestrator';
 export type {
     SessionAgentTransitionItem,
     SessionHistoryRecord,
+    SessionHistoryTurn,
     SessionToolCallChainItem,
 } from '../session-history/types';
 

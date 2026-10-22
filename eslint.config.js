@@ -7,7 +7,15 @@ import tsParser from '@typescript-eslint/parser'
 
 export default [
   {
-    ignores: ['dist/**', 'build_version/**', 'node_modules/**', 'codex-main/**', 'docs/**'],
+    ignores: [
+      'dist/**',
+      'build_version/**',
+      'node_modules/**',
+      'codex-main/**',
+      'docs/**',
+      // Vite 构建时生成的临时配置（vite.config.*.timestamp-*.mjs），不属于源码
+      '**/*.timestamp-*.mjs',
+    ],
   },
   js.configs.recommended,
   {

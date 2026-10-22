@@ -14,7 +14,7 @@ import Channel from '../../../lib/channel';
 import { ArtifactStore } from '../../../lib/artifact-store';
 import { useActspan } from '../context/useActspan';
 import { buildToolIntentText, buildUserFacingActionSummary } from '../text-utils';
-import { reconcileSessionSyncTask } from '../session-sync';
+import { reconcileSessionSyncTask, isSessionVisibleInTab } from '../session-sync';
 import { FUNCTION_ICONS, FUNCTION_LABELS } from '../icons';
 
 /** 流式告警是内部诊断数据，不能把原始 JSON 直接当成进度文案展示。 */
@@ -41,17 +41,15 @@ export const useAIStream = (_resultRef: React.RefObject<HTMLDivElement | null>) 
     const { taskId, type, content } = data;
     const currentTask = stateRef.current.currentTask;
 
-    // 放宽匹配：只要有活跃任务就接受事件
-    // 原因：submitNewTask 先用临时 ID 创建任务，background 稍后返回真实 sessionId
-    // 流式事件在 sessionId 更新前就可能到达，严格匹配会丢弃这些事件
     if (!currentTask) return;
     if (currentTask.id !== taskId) {
-      // 如果任务正在运行，自动绑定到正确的 sessionId
-      if (currentTask.status === 'running') {
-        dispatch({ type: 'UPDATE_TASK', payload: { id: taskId } });
-      } else {
-        return;
-      }
+      // 只有本地刚提交、尚未拿到真实 sessionId 的临时任务才允许自动绑定；
+      // 且必须来自同一个标签页，避免把其他标签页的运行中会话绑过来。
+      if (!currentTask.pendingSession) return;
+      if (!isSessionVisibleInTab(data.originTabId, currentTask.originTabId ?? stateRef.current.selfTabId)) return;
+      dispatch({ type: 'UPDATE_TASK', payload: { id: taskId, pendingSession: false, originTabId: data.originTabId } });
+    } else if (currentTask.pendingSession) {
+      dispatch({ type: 'UPDATE_TASK', payload: { pendingSession: false } });
     }
 
     switch (type) {
@@ -288,10 +286,33 @@ export const useAIStream = (_resultRef: React.RefObject<HTMLDivElement | null>) 
     };
   }, [handleStream]);
 
+  // content script 没有 chrome.tabs 权限，向 background 询问自身标签页 ID，
+  // 用于过滤其他标签页广播过来的会话事件。
+  useEffect(() => {
+    if (stateRef.current.selfTabId !== null) return;
+    Channel.send('__get_self_tab_id', {}, (response: { tabId?: number } | undefined) => {
+      if (typeof response?.tabId === 'number') {
+        dispatch({ type: 'SET_SELF_TAB_ID', payload: response.tabId });
+      }
+    });
+  }, [dispatch]);
+
   // 监听会话同步
   useEffect(() => {
     const handleSessionSync = (data: any) => {
       if (!data || typeof data !== 'object' || typeof data.sessionId !== 'string') return;
+
+      const currentTask = stateRef.current.currentTask;
+      if (currentTask) {
+        if (currentTask.id !== data.sessionId) {
+          // 非本地临时任务不允许被其他会话的同步事件替换
+          if (!currentTask.pendingSession) return;
+          if (!isSessionVisibleInTab(data.originTabId, currentTask.originTabId ?? stateRef.current.selfTabId)) return;
+        }
+      } else if (!isSessionVisibleInTab(data.originTabId, stateRef.current.selfTabId)) {
+        // 没有本地任务时，只接受当前标签页的会话
+        return;
+      }
 
       if (data.originTabId !== undefined) {
         dispatch({ type: 'SET_SESSION_ORIGIN_TAB', payload: data.originTabId });

@@ -81,6 +81,7 @@ import { RuntimeResourceManager, trackRuntimeResourceFromEvent } from './session
 
 // 持久化
 import { persistRuntimeSessions, persistRuntimeSessionsImmediate } from './session-persistence';
+import { acquireServiceWorkerKeepAlive } from './service-worker-keepalive';
 
 // 历史
 import { persistSessionHistory } from './session-history';
@@ -533,6 +534,93 @@ export async function flushFeishuCompletionNotifications(session: Session): Prom
  * 创建会话级 pushEvent 函数
  * 同时广播到所有标签页并追加到会话事件日志
  */
+/** 会话内最多保留的轮次快照 */
+const MAX_SESSION_TURNS = 20;
+
+/**
+ * 维护会话的多轮快照。
+ * eventLog 只保留最近 500 条事件，长回答一轮就可能把它占满，
+ * 不能仅靠 eventLog 还原多轮历史；因此在事件产生时同步累积。
+ */
+function applyEventToSessionTurns(session: Session, event: AIStreamEvent, timestamp: number) {
+    if (event.type !== 'turn_started'
+        && event.type !== 'text'
+        && event.type !== 'turn_completed'
+        && event.type !== 'turn_aborted') {
+        return;
+    }
+
+    const turns = session.turns || (session.turns = []);
+    const latest = () => turns[turns.length - 1];
+
+    if (event.type === 'turn_started') {
+        let parsed: { query?: unknown; runId?: unknown; startedAt?: unknown } | null = null;
+        try {
+            parsed = JSON.parse(event.content || '{}');
+        } catch {
+            // 忽略非 JSON 负载
+        }
+        const runId = typeof parsed?.runId === 'string' ? parsed.runId : undefined;
+        const query = typeof parsed?.query === 'string' ? parsed.query.trim() : '';
+        const existing = runId ? turns.find(turn => turn.runId === runId) : undefined;
+        if (existing) {
+            existing.query = query || existing.query;
+            existing.status = 'running';
+            existing.startedAt = typeof parsed?.startedAt === 'number' ? parsed.startedAt : existing.startedAt;
+            return;
+        }
+        // 上一轮没有收到结束事件（例如被替换），标记为异常，避免一直停在 running
+        const previous = latest();
+        if (previous?.status === 'running') previous.status = 'error';
+        turns.push({
+            runId,
+            query: query || session.summary || '(无输入)',
+            status: 'running',
+            startedAt: typeof parsed?.startedAt === 'number' ? parsed.startedAt : timestamp,
+        });
+    } else if (event.type === 'text') {
+        const text = event.content?.trim();
+        if (!text) return;
+        let turn = latest();
+        if (!turn) {
+            turns.push({
+                query: session.summary || '(无输入)',
+                status: 'running',
+                startedAt: session.startedAt || timestamp,
+            });
+            turn = latest();
+        }
+        if (turn) turn.reply = text;
+    } else {
+        const payload = parseTurnLifecycleEventPayload(event.content || '');
+        let turn = payload?.runId
+            ? turns.find(item => item.runId === payload.runId)
+            : undefined;
+        if (!turn) turn = latest()?.status === 'running' ? latest() : undefined;
+        if (!turn) {
+            turn = {
+                query: session.summary || '(无输入)',
+                status: 'running',
+                startedAt: session.startedAt || timestamp,
+            };
+            turns.push(turn);
+        }
+        const endedAt = typeof payload?.endedAt === 'number' ? payload.endedAt : timestamp;
+        turn.status = event.type === 'turn_completed' && payload?.status === 'done' ? 'done' : 'error';
+        turn.endedAt = endedAt;
+        turn.durationMs = typeof payload?.durationMs === 'number'
+            ? payload.durationMs
+            : Math.max(0, endedAt - turn.startedAt);
+        turn.failureCode = payload?.failureCode;
+        turn.error = payload?.reason;
+        if (payload?.lastAgentMessage?.trim()) turn.reply = payload.lastAgentMessage.trim();
+    }
+
+    if (turns.length > MAX_SESSION_TURNS) {
+        turns.splice(0, turns.length - MAX_SESSION_TURNS);
+    }
+}
+
 export function createSessionPushEvent(session: Session) {
     return (event: AIStreamEvent) => {
         const completionMessage = getFeishuCompletionMessage(session, event);
@@ -554,10 +642,12 @@ export function createSessionPushEvent(session: Session) {
             pending.then(() => notifications.delete(pending), () => notifications.delete(pending));
         }
 
+        const eventTimestamp = Date.now();
         session.eventLog.push({
             ...event,
-            timestamp: Date.now(),
+            timestamp: eventTimestamp,
         } as SessionEventLogItem);
+        applyEventToSessionTurns(session, event, eventTimestamp);
         // 内存中同样裁剪，避免长会话 eventLog 无上限增长（持久化只截断快照副本）。
         if (session.eventLog.length > MAX_RUNTIME_EVENT_LOG) {
             session.eventLog.splice(0, session.eventLog.length - MAX_RUNTIME_EVENT_LOG);
@@ -598,7 +688,7 @@ export function createSessionPushEvent(session: Session) {
             applyTurnLifecycleEventToSession(session, 'turn_completed', payload);
         }
 
-        const streamPayload = { ...event, sessionId: session.id, taskId: session.id };
+        const streamPayload = { ...event, sessionId: session.id, taskId: session.id, originTabId: session.originTabId };
         const shouldSync = SESSION_SYNC_EVENT_TYPES.has(event.type);
         const syncPayload = shouldSync ? buildSessionSyncPayload(session) : null;
         const shouldPersistImmediate = SESSION_IMMEDIATE_PERSIST_EVENT_TYPES.has(event.type);
@@ -989,46 +1079,47 @@ async function executeSessionChat(session: Session, query: string, tabId?: numbe
     options?.signal?.addEventListener('abort', () => controller.abort(), { once: true });
     registerActiveTask(session.id, controller, taskRunner, runId, tabId);
     const pushEvent = createRunScopedPushEvent(session, runId, sessionPushEvent);
-
-    session.startedAt = Date.now();
-    session.endedAt = undefined;
-    session.durationMs = undefined;
-    session.failureCode = undefined;
-    session.lastError = undefined;
-    session.agentState = {
-        phase: 'plan',
-        round: 0,
-        reason: `开始处理：${normalizedQuery.slice(0, 30)}`,
-        updatedAt: Date.now(),
-    };
-    await persistRuntimeSessionsImmediate();
-    if (taskRunner.emitTurnStarted !== false) {
-        pushEvent({
-            type: 'turn_started',
-            content: JSON.stringify({
-                sessionId: session.id,
-                runId,
-                query: normalizedQuery,
-                startedAt: session.startedAt,
-                taskKind,
-            }),
-        });
-    }
-    if (taskRunner.start) {
-        try {
-            await taskRunner.start({
-                session,
-                pushEvent,
-                taskKind,
-                query: normalizedQuery,
-                runId,
-            });
-        } catch (err) {
-            console.warn('[Actspan] 执行任务 start hook 失败:', err);
-        }
-    }
+    const releaseKeepAlive = acquireServiceWorkerKeepAlive();
 
     try {
+        session.startedAt = Date.now();
+        session.endedAt = undefined;
+        session.durationMs = undefined;
+        session.failureCode = undefined;
+        session.lastError = undefined;
+        session.agentState = {
+            phase: 'plan',
+            round: 0,
+            reason: `开始处理：${normalizedQuery.slice(0, 30)}`,
+            updatedAt: Date.now(),
+        };
+        await persistRuntimeSessionsImmediate();
+        if (taskRunner.emitTurnStarted !== false) {
+            pushEvent({
+                type: 'turn_started',
+                content: JSON.stringify({
+                    sessionId: session.id,
+                    runId,
+                    query: normalizedQuery,
+                    startedAt: session.startedAt,
+                    taskKind,
+                }),
+            });
+        }
+        if (taskRunner.start) {
+            try {
+                await taskRunner.start({
+                    session,
+                    pushEvent,
+                    taskKind,
+                    query: normalizedQuery,
+                    runId,
+                });
+            } catch (err) {
+                console.warn('[Actspan] 执行任务 start hook 失败:', err);
+            }
+        }
+
         console.log(`[Actspan] AI 对话请求(session: ${session.id}, kind: ${taskKind}), query: ${normalizedQuery}`);
         try {
             await taskRunner.run({
@@ -1115,6 +1206,7 @@ async function executeSessionChat(session: Session, query: string, tabId?: numbe
         persistRuntimeSessions();
     } finally {
         completeActiveTask(session.id, runId);
+        releaseKeepAlive();
     }
 }
 

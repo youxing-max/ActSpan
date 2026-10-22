@@ -74,6 +74,8 @@ const useSidePanelEvents = () => {
 const SidePanelInner: React.FC = () => {
     const { state, dispatch } = useActspan();
     const resultRef = useRef<HTMLDivElement>(null);
+    const currentTaskRef = useRef(state.currentTask);
+    currentTaskRef.current = state.currentTask;
     useActiveTab();
 
     // 注册 AI 流式事件监听
@@ -82,7 +84,6 @@ const SidePanelInner: React.FC = () => {
 
     const task = state.currentTask;
     const isRunning = task?.status === 'running';
-
     useSecondTick(isRunning === true);
 
     // Side Panel 打开时自动标记为已打开状态
@@ -90,15 +91,20 @@ const SidePanelInner: React.FC = () => {
         dispatch({ type: 'TOGGLE_OPEN', payload: true });
     }, [dispatch]);
 
-    // 恢复活跃会话
+    // 恢复活跃会话（只恢复属于当前标签页的会话，避免侧栏串台）
     useEffect(() => {
-        Channel.send('__session_get_active', {}, (response: { sessionId?: string; status?: string; summary?: string; startedAt?: number; endedAt?: number; durationMs?: number; lastError?: string; failureCode?: string; agentState?: { phase?: string; round?: number }; taskKind?: string }) => {
+        if (state.selfTabId === null) return;
+        Channel.send('__session_get_active', {}, (response: { sessionId?: string; status?: string; summary?: string; originTabId?: number; startedAt?: number; endedAt?: number; durationMs?: number; lastError?: string; failureCode?: string; agentState?: { phase?: string; round?: number }; taskKind?: string }) => {
             if (!response?.sessionId || (response.status !== 'running' && response.status !== 'done' && response.status !== 'error')) return;
-            const status = response.status === 'error' ? 'error' : response.status === 'done' ? 'done' : 'running';
+            if (typeof response.originTabId === 'number' && response.originTabId !== state.selfTabId) return;
+            // 当前标签页已有运行中的任务时，不要被另一个标签页的活跃会话覆盖
+            if (currentTaskRef.current?.status === 'running' && currentTaskRef.current.id !== response.sessionId) return;            const status = response.status === 'error' ? 'error' : response.status === 'done' ? 'done' : 'running';
             dispatch({
                 type: 'SET_TASK',
                 payload: {
                     id: response.sessionId,
+                    pendingSession: false,
+                    originTabId: response.originTabId,
                     query: response.summary || '',
                     title: response.summary || '',
                     status,
@@ -125,7 +131,7 @@ const SidePanelInner: React.FC = () => {
                 });
             }, 0);
         });
-    }, [dispatch]);
+    }, [dispatch, state.selfTabId]);
 
     // 搜索框状态 class
     const boxState = !task ? 'state-idle'

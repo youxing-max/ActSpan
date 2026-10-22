@@ -104,9 +104,10 @@ const AgentStatePanel: React.FC<{
   statusText: string;
   isRunning: boolean;
   isFinished: boolean;
+  isError?: boolean;
   durationText: string;
   children?: React.ReactNode;
-}> = ({ statusText, isRunning, isFinished, durationText, children }) => {
+}> = ({ statusText, isRunning, isFinished, isError = false, durationText, children }) => {
   const [isOpen, setIsOpen] = useState(true);
 
   // 任务结束自动折叠
@@ -115,7 +116,9 @@ const AgentStatePanel: React.FC<{
   }, [isFinished]);
 
   const summaryText = isFinished
-    ? (durationText ? `已完成 · 耗时 ${durationText}` : '已完成')
+    ? (isError
+        ? (durationText ? `已中断 · 耗时 ${durationText}` : '已中断')
+        : (durationText ? `已完成 · 耗时 ${durationText}` : '已完成'))
     : statusText;
 
   return (
@@ -324,6 +327,7 @@ export const ResultView: React.FC = () => {
           statusText={statusText}
           isRunning={isRunning}
           isFinished={isFinished}
+          isError={task.status === 'error'}
           durationText={durationText}
         >
           <CallsGroup calls={task.callStack} isRunning={isRunning} />
