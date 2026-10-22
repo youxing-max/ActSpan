@@ -285,9 +285,15 @@ const sendQuietly = async (replier, message, content) => {
 };
 
 const runTask = async ({ message, query, replier, actspan, timeoutMs }) => {
+  const expiresIn = Number(message.sessionWebhookExpiredTime) - Date.now();
+  const effectiveTimeout = Number.isFinite(expiresIn)
+    ? Math.min(timeoutMs, expiresIn - 10_000)
+    : timeoutMs;
+  if (effectiveTimeout <= 0) throw new Error('会话回复地址已过期，请重新 @机器人');
+
   log(`收到任务：${query.slice(0, 120)}`);
   const handle = await actspan.submit(query);
-  const result = await actspan.waitForCompletion(handle.taskId, timeoutMs);
+  const result = await actspan.waitForCompletion(handle.taskId, effectiveTimeout);
   const text = extractTaskText(result);
   await replier.send(message, `ActSpan 执行完成\n\n${text}`);
 };
