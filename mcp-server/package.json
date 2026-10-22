@@ -17,7 +17,8 @@
     "actspan-install": "./install.js",
     "actspan-doctor": "./doctor.js",
     "actspan-bridge": "./bridge-cli.js",
-    "actspan-dingtalk": "./dingtalk-stream.js"
+    "actspan-dingtalk": "./dingtalk-stream.js",
+    "actspan-telegram": "./telegram-bot.js"
   },
   "engines": {
     "node": ">=20.0.0"
@@ -25,7 +26,8 @@
   "scripts": {
     "start": "node index.js",
     "dingtalk": "node dingtalk-stream.js",
-    "test": "node --test test/catalog.mjs test/protocol-version.mjs test/bridge-lock.mjs test/identity.mjs test/usage.mjs test/security.mjs test/lifecycle.mjs test/status-tool.mjs test/omp-compat.mjs test/act-script.mjs test/act-tool.mjs test/tool-schema.mjs test/dingtalk-stream.mjs",
+    "telegram": "node telegram-bot.js",
+    "test": "node --test test/catalog.mjs test/protocol-version.mjs test/bridge-lock.mjs test/identity.mjs test/usage.mjs test/security.mjs test/lifecycle.mjs test/status-tool.mjs test/omp-compat.mjs test/act-script.mjs test/act-tool.mjs test/tool-schema.mjs test/dingtalk-stream.mjs test/telegram-bot.mjs",
     "test:e2e": "node test/e2e.mjs",
     "test:install": "node --test test/install.mjs test/doctor.mjs",
     "test:acceptance": "node test/acceptance.mjs",
