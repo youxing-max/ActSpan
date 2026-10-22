@@ -234,7 +234,18 @@ test('旧 actspan 配置与当前安装不一致时要求 --force 才更新', ()
     assert.equal(fs.existsSync(`${file}.bak-456`), true);
 });
 
-test('原子写入保留 dotfiles 符号链接并更新真实目标', () => {
+const canCreateSymlink = (() => {
+    try {
+        const dir = mkdtempSync(path.join(os.tmpdir(), 'actspan-symlink-probe-'));
+        fs.symlinkSync(path.join(dir, 'a'), path.join(dir, 'b'));
+        fs.rmSync(dir, { recursive: true, force: true });
+        return true;
+    } catch {
+        return false;
+    }
+})();
+
+test('原子写入保留 dotfiles 符号链接并更新真实目标', { skip: canCreateSymlink ? false : '当前账户不允许创建符号链接（Windows 需开发者模式或管理员权限）' }, () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), 'actspan-symlink-'));
     const real = path.join(dir, 'dotfiles-config.toml');
     const link = path.join(dir, 'config.toml');
@@ -252,12 +263,16 @@ test('原子写入保留 dotfiles 符号链接并更新真实目标', () => {
 
 test('损坏配置导致 0 写入时 CLI 以非零退出', () => {
     const fakeHome = mkdtempSync(path.join(os.tmpdir(), 'actspan-home-'));
-    const cursorDir = path.join(fakeHome, 'Library', 'Application Support', 'Cursor', 'User');
+    // Windows 走 %APPDATA% 且 os.homedir() 只认 USERPROFILE；只改 HOME 会写到真实目录。
+    const fakeAppData = path.join(fakeHome, 'AppData', 'Roaming');
+    const cursorDir = process.platform === 'win32'
+        ? path.join(fakeAppData, 'Cursor', 'User')
+        : path.join(fakeHome, 'Library', 'Application Support', 'Cursor', 'User');
     fs.mkdirSync(cursorDir, { recursive: true });
     writeFileSync(path.join(cursorDir, 'mcp.json'), '{bad');
     const result = spawnSync(process.execPath, ['install.js', '--apply', '--yes', '--extension-id', extensionIdFromKey()], {
         cwd: new URL('..', import.meta.url),
-        env: { ...process.env, HOME: fakeHome, ACTSPAN_API_URL: '', ACTSPAN_API_KEY: '' },
+        env: { ...process.env, HOME: fakeHome, USERPROFILE: fakeHome, APPDATA: fakeAppData, ACTSPAN_API_URL: '', ACTSPAN_API_KEY: '' },
         encoding: 'utf8',
     });
     assert.equal(result.status, 1);
@@ -299,6 +314,8 @@ test('TOML 旧 actspan 段在 --force 时原位替换并保留其它表', () => 
     const text = fs.readFileSync(file, 'utf8');
     assert.match(text, /\[other\]\nx = 1/);
     assert.match(text, /\[after\]\ny = 2/);
-    assert.match(text, new RegExp(`command = "${definition.command.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`));
+    // 写出用 JSON.stringify 做 TOML 转义，Windows 路径里的 \ 会变成 \\；断言必须按转义后的字面量比。
+    const escapedCommand = JSON.stringify(definition.command).slice(1, -1);
+    assert.match(text, new RegExp(`command = "${escapedCommand.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`));
     assert.equal((text.match(/\[mcp_servers\.actspan\]/g) || []).length, 1);
 });

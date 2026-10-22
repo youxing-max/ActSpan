@@ -115,7 +115,9 @@ export default function registerActTool({ registerTool, callBridge, run, runStru
                 return recordEffect(step, await invoke('page.scroll', cleanStep(step)), true);
             },
             wait: async (step) => {
-                const result = await invoke('page.wait', { ...cleanStep(step), for: step.for || 'idle', timeoutMs: step.timeoutMs ?? step.ms ?? 10000 });
+                // act 脚本用短字段 ms，桥侧白名单只认 timeoutMs；残留的 ms 会被参数校验拒掉。
+                const { ms: waitMs, ...rest } = cleanStep(step);
+                const result = await invoke('page.wait', { ...rest, for: step.for || 'idle', timeoutMs: step.timeoutMs ?? waitMs ?? 10000 });
                 if (result?.found === false) throw { code: 'NO_EFFECT', message: 'Wait condition was not observed' };
                 return recordEffect(step, result);
             },

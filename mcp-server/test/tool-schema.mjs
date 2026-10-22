@@ -47,7 +47,7 @@ test('every tool publishes the parameters it documents', async (t) => {
     }
 
     // 三个曾经空表的目标工具：模型必须能直接看到定位与动作参数。
-    assert.deepEqual(keysOf('actspan_page_read'), ['taskId', 'sessionId', 'tabId', 'selector', 'ref', 'snapshotId', 'find', 'format', 'maxChars']);
+    assert.deepEqual(keysOf('actspan_page_read'), ['taskId', 'sessionId', 'tabId', 'selector', 'ref', 'snapshotId', 'find', 'format', 'maxChars', 'attr', 'expect']);
     assert.deepEqual(keysOf('actspan_page_click'), ['taskId', 'sessionId', 'tabId', 'selector', 'ref', 'snapshotId', 'find', 'real']);
     assert.deepEqual(keysOf('actspan_page_type'), ['taskId', 'sessionId', 'tabId', 'selector', 'ref', 'snapshotId', 'find', 'text', 'submit', 'real']);
 

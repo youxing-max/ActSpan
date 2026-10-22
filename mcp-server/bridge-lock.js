@@ -248,8 +248,10 @@ function isBridgeProcess(pid) {
     } catch { /* 非 POSIX 或无 ps，继续按平台兜底 */ }
     if (process.platform === 'win32') {
         try {
+            // Get-CimInstance 冷启动常在 1.5–2s，超时太短会把「无法确认」当成「不是 bridge」，
+            // 结果 stop 永远拒绝发信号。
             const command = execFileSync('powershell.exe', ['-NoProfile', '-Command',
-                `(Get-CimInstance Win32_Process -Filter "ProcessId=${Number(pid)}").CommandLine`], { encoding: 'utf8', timeout: 1500 });
+                `(Get-CimInstance Win32_Process -Filter "ProcessId=${Number(pid)}").CommandLine`], { encoding: 'utf8', timeout: 5000 });
             return /bridge(?:-daemon)?\.js\b/.test(command);
         } catch { return false; }
     }

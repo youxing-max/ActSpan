@@ -86,6 +86,14 @@ async function main(config) {
             return fail(error);
         }
     };
+    // actspan_act 的失败要带 trace/reads，不能被降级成单条 isError 文案。
+    const runStructured = (fn) => async (args) => {
+        try {
+            return ok(await fn(args || {}));
+        } catch (error) {
+            return fail(error);
+        }
+    };
 
     const tabIdParam = z.number().int().optional()
         .describe('Optional tab id. Mutating operations must use a tab leased to the current task.');
@@ -235,6 +243,9 @@ async function main(config) {
     const readTarget = targetSchema({
         format: z.enum(['text', 'html']).default('text'),
         maxChars: z.number().int().min(1000).max(200000).default(20000),
+        // 桥侧 page.read 支持条件探针；schema 用 .strict()，漏暴露会让 page_eval 的错误提示变成死路。
+        attr: z.enum(['exists', 'checked', 'value', 'text', 'textContains']).optional(),
+        expect: z.union([z.string(), z.number(), z.boolean()]).optional(),
     }, false);
     const realParam = z.boolean().default(false).describe('Force real CDP input events instead of synthetic DOM events. Use when the synthetic click or type produced no observable effect; sensitive submit/payment/delete targets never auto-escalate and require this flag.');
     const clickTarget = targetSchema({ real: realParam }, true);
@@ -247,6 +258,7 @@ async function main(config) {
         include_non_interactive: z.boolean().default(false),
         include_hidden: z.boolean().default(false),
         only_viewport: z.boolean().default(false),
+        include_frames: z.boolean().optional().describe('Include child frames (refs end in @fN). Raises the policy level to sensitive because cross-frame reads may touch other origins.'),
         limit: z.number().int().min(1).max(60).default(20),
     }).strict();
 
@@ -371,7 +383,7 @@ async function main(config) {
         title: 'Cancel agent task', description: 'Cancel an agent task by taskId.', inputSchema: taskParams,
     }, taskCall('task.cancel'));
 
-    registerActTool({ registerTool, callBridge, run, tabIdParam, taskParams });
+    registerActTool({ registerTool, callBridge, run, runStructured, tabIdParam, taskParams });
     registerInteractionTools({ registerTool, callBridge, run, tabIdParam, taskParams });
     registerNetworkTools({ registerTool, callBridge, run, tabIdParam, taskParams });
     registerDataTools({ registerTool, callBridge, run, tabIdParam, taskParams });

@@ -73,9 +73,11 @@ export const requestConfirmationFunction: FunctionDefinition = {
     let injectedOnce = false;
     const deliver = (type: string, data: unknown) => {
       const dispatch = (tabId: number) => {
-        // 首次投递要能落进还没跑 document_idle 的页面，走带注入重试的通道；
-        // 之后的重发只需普通发送，避免每次重发都挂 5s 等待。
-        if (injectedOnce) {
+        // 审批是 push 型消息，页面不会回 sendResponse，走 sendToTabWithRetry 只会被判成
+        // “端口关闭” → 重新注入 content.js → 空转 5s。页面已注册就直接推送，
+        // 只有 content script 确实还没就绪时才用带注入重试的通道。
+        if (injectedOnce || Channel.getRegisteredTabs().includes(tabId)) {
+          injectedOnce = true;
           Channel.sendToTab(tabId, type, data);
           return;
         }

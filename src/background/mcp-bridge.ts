@@ -642,7 +642,7 @@ async function pageAction(action: 'inspect' | 'click' | 'type' | 'observe' | 're
 
 /** 出站/落盘能力必须每次确认：批准一次不能通过“本轮不再询问”覆盖后续外发。 */
 const ALWAYS_CONFIRM_CAPABILITIES = new Set([
-    'data.fetch', 'data.paginate', 'data.paginate_page', 'data.download',
+    'data.fetch', 'data.paginate', 'data.paginate_page', 'data.download', 'feishu.push',
 ]);
 
 /** 导航前拒绝本机/内网与凭据页；about:blank 仍允许。 */
