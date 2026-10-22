@@ -771,6 +771,10 @@ async function runSessionTaskChat(
         clientId,
         owner: 'extension-agent',
     });
+    // 每轮开始都把 loop 任务置回 running；否则任务会一直停留在 queued，
+    // Service Worker 下次启动时被 restore() 误判为中断并写入
+    // E_TASK_RUNTIME_INTERRUPTED。
+    taskManager.update(taskId, { state: 'running', error: undefined });
     let leasedForLoop = false;
     if (typeof tabId === 'number') {
         try {
@@ -793,6 +797,12 @@ async function runSessionTaskChat(
             onCheckpoint: createSessionCheckpointHandler(session),
             toolContext: { clientId, requestId, taskId, sessionId: session.id, owner: 'extension-agent' },
         });
+    } catch (err) {
+        const aborted = signal.aborted || (err instanceof Error && err.name === 'AbortError');
+        taskManager.update(taskId, aborted
+            ? { state: 'cancelled', error: { code: 'E_CANCELLED', message: '任务已取消' } }
+            : { state: 'failed', error: { code: 'E_TASK_EXECUTION', message: err instanceof Error ? err.message : 'AI 处理异常' } });
+        throw err;
     } finally {
         clearStatusForTask(taskId);
         if (leasedForLoop) tabLeaseManager.release(taskId, tabId, clientId);
@@ -804,6 +814,14 @@ async function runSessionTaskChat(
     }
     if (session.status === 'running') {
         session.status = 'done';
+    }
+    // 任务正常结束必须落到终态，避免持久化里留下 running/queued 的僵尸任务
+    if (signal.aborted) {
+        taskManager.update(taskId, { state: 'cancelled', error: { code: 'E_CANCELLED', message: '任务已取消' } });
+    } else {
+        taskManager.update(taskId, session.status === 'error'
+            ? { state: 'failed', error: { code: 'E_TASK_EXECUTION', message: session.lastError || 'AI 处理异常' } }
+            : { state: 'succeeded', error: undefined });
     }
 }
 

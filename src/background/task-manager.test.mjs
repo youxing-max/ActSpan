@@ -409,6 +409,15 @@ test('restore deterministically fails interrupted tasks and keeps idempotent can
   assert.equal(tasks.cancel('restart-1'), false);
 });
 
+test('restore marks interrupted chat loop tasks cancelled instead of runtime interrupted', async () => {
+  values.actspan_task_state = { version: 1, tasks: [{ taskId: 'loop:session-1', sessionId: 'session-1', owner: 'extension-agent', state: 'queued', ownedTabIds: [], registryRevision: 0, createdAt: 1, updatedAt: 1 }], leases: [], updatedAt: 1 };
+  const tasks = new TaskManager(new TabLeaseManager());
+  await tasks.restore();
+  const restored = tasks.get('loop:session-1');
+  assert.equal(restored.state, 'cancelled');
+  assert.notEqual(restored.error?.code, 'E_TASK_RUNTIME_INTERRUPTED');
+});
+
 test('restore closes tabs owned by interrupted tasks and releases their leases', async () => {
   removedTabs.length = 0;
   values.actspan_task_state = {
