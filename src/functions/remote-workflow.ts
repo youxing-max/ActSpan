@@ -4,7 +4,6 @@
  */
 
 import type { FunctionDefinition, FunctionResult, ToolExecutionContext } from './types';
-import { requestConfirmationFunction } from './request-confirmation';
 import { tabLeaseManager } from '../background/tab-lease-manager';
 
 type BuiltinResolver = (name: string) => FunctionDefinition | undefined;
@@ -101,37 +100,6 @@ const validatePlanStepAction = (action: string, params: Record<string, unknown>)
 
 /** 保存与执行共用的 plan 动作校验：与执行边界同一份白名单。 */
 export const isSupportedRemotePlanAction = (name: string): boolean => isWorkflowPlanActionAllowed(name);
-
-/** 会改变页面状态的 cdp_input 子动作：工作流执行前必须用户批准。 */
-const WORKFLOW_GATED_INPUT_ACTIONS: Record<string, true> = {
-  click: true,
-  double_click: true,
-  type: true,
-  fill: true,
-  clear: true,
-  select: true,
-  key_press: true,
-  click_text: true,
-};
-
-/** 需要审批时返回中文确认文案；只读/无副作用的子动作返回 null。 */
-const buildWorkflowStepApprovalMessage = (
-  workflow: string,
-  index: number,
-  step: RemotePlanStep,
-  params: Record<string, unknown>,
-): string | null => {
-  if (resolveWorkflowPlanAction(step.action)?.name !== 'cdp_input') return null;
-  const subAction = String(params.action || '').trim().toLowerCase();
-  if (WORKFLOW_GATED_INPUT_ACTIONS[subAction] !== true) return null;
-  const selector = String(params.selector || '').trim();
-  const target = selector
-    ? `选择器 ${selector}`
-    : (params.element_id ? `元素 ${String(params.element_id)}` : '页面元素');
-  const note = String(step.note || '').trim();
-  return `工作流「${workflow}」第 ${index + 1} 步将执行页面操作 ${subAction}（${target}）`
-    + `${note ? `：${note}` : ''}，是否批准？`;
-};
 
 type PlanStepErrorPolicy = 'abort' | 'continue';
 
@@ -612,34 +580,6 @@ const runRemotePlan = async (
         if (resolvedParams.active === undefined) resolvedParams.active = false;
       }
 
-      const approvalMessage = buildWorkflowStepApprovalMessage(workflow, index, step, resolvedParams);
-      if (approvalMessage) {
-        const approval = await requestConfirmationFunction.execute(
-          { message: approvalMessage },
-          { signal: context?.signal, tabId: runtimeTabId },
-        );
-        if (!approval.success || approval.data?.approved !== true) {
-          await closeTrackedTabs('failure');
-          return {
-            success: false,
-            error: `用户未批准工作流步骤: ${approvalMessage}`,
-            data: {
-              workflow,
-              mode: 'plan',
-              step: index,
-              traces,
-              tabLifecycle: {
-                closeOpenedTabs: closeMode,
-                openedCleanupTabIds: Array.from(openedCleanupTabIds.values()),
-                openedKeepAliveTabIds: Array.from(openedKeepAliveTabIds.values()),
-                closedTabIds,
-                closeErrors,
-              },
-            },
-          };
-        }
-      }
-
       const maxAttempts = step.retry?.maxAttempts || 1;
       let retryDelayMs = step.retry?.delayMs || 0;
       let stepResult: FunctionResult = {
@@ -690,7 +630,6 @@ const runRemotePlan = async (
         step.action === 'tab_navigate'
         && String(resolvedParams.action || '').trim().toLowerCase() === 'open'
         && stepResult.success
-        && (stepResult.data as { reused?: boolean } | undefined)?.reused !== true
       ) {
         const openedTabId = Number((stepResult.data as any)?.tab_id);
         if (Number.isFinite(openedTabId) && openedTabId > 0) {

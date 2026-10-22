@@ -33,9 +33,9 @@ const PillActionCard: React.FC<{
     event?.nativeEvent?.isTrusted === true;
 
   // 审批操作
-  const handleApprove = useCallback((event: React.MouseEvent, trustAll = false) => {
+  const handleApprove = useCallback((event: React.MouseEvent) => {
     if (!isTrustedEvent(event) || !approvalRequest) return;
-    Channel.send('__approval_response', { requestId: approvalRequest.requestId, approved: true, ...(trustAll ? { trustAll: true } : {}) });
+    Channel.send('__approval_response', { requestId: approvalRequest.requestId, approved: true });
     hideSelf();
   }, [approvalRequest, hideSelf]);
 
@@ -80,7 +80,6 @@ const PillActionCard: React.FC<{
           <div className="pac-actions">
             <button className="pac-btn pac-approve" onClick={handleApprove}>批准</button>
             <button className="pac-btn pac-reject" onClick={handleReject}>拒绝</button>
-            <button className="pac-btn pac-trust" onClick={(event) => handleApprove(event, true)}>不再询问</button>
           </div>
         </div>
       )}

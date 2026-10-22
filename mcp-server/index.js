@@ -8,7 +8,6 @@ import { createLazyBridgeDaemonClient } from './daemon-rpc.js';
 import { ensureBridgeDaemon } from './bridge-lock.js';
 import { createStableClientId, createStableSessionId, normalizeHostIdentity } from './identity.js';
 import { readUsage } from './usage.js';
-import { createToolResult } from './tool-result.js';
 import registerActTool from './act-tool.js';
 import { registerInteractionTools } from './interaction-tools.js';
 import registerNetworkTools from './network-tool.js';
@@ -28,9 +27,13 @@ const safeError = (error) => {
     return checked.config?.apiKey ? message.replaceAll(checked.config.apiKey, '[redacted]') : message;
 };
 
-// run() 把 `{success:false}` 升级成 isError，只保留一条 message；act 的结构化失败里还有
-// trace/reads，所以它拿 runStructured——抛出的异常照样 fail()，结构化失败原样进 content。
-const { fail, run, runStructured } = createToolResult({ safeError });
+const ok = (data) => ({
+    content: [{ type: 'text', text: typeof data === 'string' ? data : JSON.stringify(data, null, 2) }],
+});
+const fail = (error) => ({
+    content: [{ type: 'text', text: `Actspan error: ${safeError(error)}` }],
+    isError: true,
+});
 
 async function main(config) {
     const fallbackIndex = process.argv.indexOf('--client');
@@ -70,6 +73,18 @@ async function main(config) {
         const taskId = task.taskId || params.taskId || defaultTaskId;
         const requestSessionId = task.sessionId || params.sessionId || sessionId;
         return hub.call(method, params, timeoutMs, createRequestContext({ clientId: resolveClientId(), taskId, sessionId: requestSessionId, host: host.slug }));
+    };
+
+    const run = (fn) => async (args) => {
+        try {
+            const result = await fn(args || {});
+            if (result && typeof result === 'object' && result.success === false) {
+                return fail(result.error || result.message || result.data?.message || '操作失败');
+            }
+            return ok(result);
+        } catch (error) {
+            return fail(error);
+        }
     };
 
     const tabIdParam = z.number().int().optional()
@@ -356,7 +371,7 @@ async function main(config) {
         title: 'Cancel agent task', description: 'Cancel an agent task by taskId.', inputSchema: taskParams,
     }, taskCall('task.cancel'));
 
-    registerActTool({ registerTool, callBridge, run, runStructured, tabIdParam, taskParams });
+    registerActTool({ registerTool, callBridge, run, tabIdParam, taskParams });
     registerInteractionTools({ registerTool, callBridge, run, tabIdParam, taskParams });
     registerNetworkTools({ registerTool, callBridge, run, tabIdParam, taskParams });
     registerDataTools({ registerTool, callBridge, run, tabIdParam, taskParams });
