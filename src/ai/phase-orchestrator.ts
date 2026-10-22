@@ -19,8 +19,9 @@ import type {
 } from './loop-config';
 import {
   HANDOFF_TOKEN_THRESHOLD, FORCE_HANDOFF_ROUNDS,
-  TODO_COMPLETION_THRESHOLD, MAX_REVIEW_RETRIES, MAX_PHASES,
+  TODO_COMPLETION_THRESHOLD, MAX_REVIEW_RETRIES, MAX_PHASES, DEFAULT_BUDGET,
 } from './loop-config';
+import { createDeadlineSignal } from './deadline';
 
 import { agenticLoop } from './core-loop';
 import { shouldSkipReview, runReviewAgent } from './review-agent';
@@ -242,6 +243,20 @@ export const phaseOrchestrator = async (
   const originalQuery = query;
   let lastContext: InputItem[] = [];
   let reviewRetries = 0;
+  // 阶段交接共享同一个墙钟 deadline，避免每个阶段重新计时。
+  const taskDeadline = createDeadlineSignal(
+    signal,
+    budget.taskDeadlineMs ?? DEFAULT_BUDGET.taskDeadlineMs,
+    '任务级墙钟预算已到期',
+  );
+  // 轮次/工具调用/同签名计数也跨阶段累计，避免每阶段重置额度。
+  const sharedUsage = {
+    rounds: 0,
+    toolCalls: 0,
+    emptyRetries: 0,
+    sameSignatureCounts: new Map<string, number>(),
+  };
+  const phaseBudget: LoopBudget = { ...budget, sharedUsage };
 
   for (let phase = 0; phase < MAX_PHASES; phase++) {
     let context: InputItem[];
@@ -270,15 +285,16 @@ export const phaseOrchestrator = async (
     };
 
     const resultContext = await agenticLoop(
-      context, tools, systemPrompt, budget,
+      context, tools, systemPrompt, phaseBudget,
       tabId, signal, emit, options, 0,
       todoManager, todoFn, phaseControl, tabTracker,
-      undefined, allTools, loadedOnDemandTools,
+      undefined, allTools, loadedOnDemandTools, taskDeadline,
     );
 
     lastContext = resultContext;
 
     if (!phaseControl.handoffRequested) {
+      taskDeadline.cleanup();
       return resultContext;
     }
 
@@ -315,5 +331,13 @@ export const phaseOrchestrator = async (
     query = buildHandoffPrompt(artifact);
   }
 
+  taskDeadline.cleanup();
+  emit({
+    type: 'error',
+    content: JSON.stringify({
+      code: 'E_PHASE_LIMIT',
+      message: `阶段数已达到上限（${MAX_PHASES}），已停止继续交接。`,
+    }),
+  });
   return lastContext;
 };

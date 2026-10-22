@@ -12,6 +12,7 @@ import { isPlainObject } from '../lib/guards';
 import { isRecorderOwnerTab, isRecorderStateForTab, shouldTransferRecorderToTab } from './recorder-state';
 import { saveAuditedWorkflow } from './workflow-recorder-save';
 import { buildRecorderAuditPrompt } from './workflow-recorder-prompt';
+import { redactRecordedStep } from '../lib/recorder-redaction';
 import type { InputItem } from '../ai/types';
 
 const RECORDER_STATE_KEY = 'actspan_recorder_state';
@@ -231,7 +232,7 @@ Channel.on('__recorder_stop', (_data, sender, sendResponse) => {
 Channel.on('__recorder_step', (data, sender) => {
     if (!recorderState?.active || !isRecorderOwner(sender) || !data) return;
 
-    const step: RecorderStep = {
+    const rawStep = {
         seq: data.seq ?? (recorderState.steps.length + 1),
         action: data.action,
         selector: data.selector || '',
@@ -242,6 +243,12 @@ Channel.on('__recorder_step', (data, sender) => {
         url: data.url || '',
         timestamp: data.timestamp || Date.now(),
     };
+    // 不信任 content 传入的数据：按选择器/语义提示再脱敏一次
+    const step = redactRecordedStep(rawStep, {
+        tag: rawStep.tag,
+        selector: rawStep.selector,
+        semanticHint: rawStep.semanticHint,
+    }) as RecorderStep;
 
     recorderState.steps.push(step);
     void saveRecorderState();
@@ -302,9 +309,10 @@ Channel.on('__recorder_submit', (_data, sender, sendResponse) => {
         try {
             // 构建 AI 审计 prompt
             // 审计时只传必要字段，去掉 screenshotArtifactId 等内部字段
-            const cleanSteps = steps.map(({ seq, action, selector, semanticHint, tag, value, url }) => ({
-                seq, action, selector, semanticHint, tag, ...(value !== undefined ? { value } : {}), url,
-            }));
+            const cleanSteps = steps.map(({ seq, action, selector, semanticHint, tag, value, url }) => {
+                const raw = { seq, action, selector, semanticHint, tag, ...(value !== undefined ? { value } : {}), url };
+                return redactRecordedStep(raw, { tag, selector, semanticHint });
+            });
 
             const prompt = buildRecorderAuditPrompt(cleanSteps, startUrl);
 

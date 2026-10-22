@@ -219,6 +219,7 @@ export function showRecorderOverlay(
   completeBtn.addEventListener('click', (e) => {
     e.preventDefault();
     e.stopPropagation();
+    if (!e.isTrusted) return;
     onCompleteCallback?.();
   });
 
@@ -229,6 +230,7 @@ export function showRecorderOverlay(
   cancelBtn.addEventListener('click', (e) => {
     e.preventDefault();
     e.stopPropagation();
+    if (!e.isTrusted) return;
     onCancelCallback?.();
   });
 

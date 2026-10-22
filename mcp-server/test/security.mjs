@@ -37,6 +37,33 @@ async function hubTest(t) {
     return { hub, url: `ws://127.0.0.1:${hub.wss.address().port}` };
 }
 
+test('pairing requires the proof issued by the first pair', async (t) => {
+    const { url } = await hubTest(t);
+
+    const first = await open(url);
+    const firstReply = frame(first);
+    first.send(JSON.stringify({ type: 'pair' }));
+    const ok = await firstReply;
+    assert.equal(ok.type, 'pair_ok');
+    assert.match(ok.pairingSecret, /^[a-f0-9]{64}$/);
+    first.terminate();
+
+    // 伪造 allowlisted Origin、但没有配对证明：不能拿到 token
+    const forged = await open(url);
+    const closed = once(forged, 'close');
+    forged.send(JSON.stringify({ type: 'pair' }));
+    assert.equal((await closed)[0], 4001);
+
+    // 合法扩展带回首次签发的证明，可以重新配对
+    const legit = await open(url);
+    const legitReply = frame(legit);
+    legit.send(JSON.stringify({ type: 'pair', pairingSecret: ok.pairingSecret }));
+    const again = await legitReply;
+    assert.equal(again.type, 'pair_ok');
+    assert.equal(again.token, ok.token);
+    legit.terminate();
+});
+
 test('unknown extension and web origins never receive pairing token, even with known token', async (t) => {
     const { url } = await hubTest(t);
     for (const from of [otherOrigin, 'https://evil.example']) {

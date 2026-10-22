@@ -5,9 +5,11 @@
 
 import type { InputItem, OutputFunctionCallItem, AIStreamEvent, ToolSchema, MessageInputItem } from './types';
 import type { PermissionLevel, ToolExecutionContext } from '../functions/types';
-import { mcpClient, getBuiltinFunction } from '../functions/registry';
-import { truncateToolResult, getTextContent } from './context-manager';
+import { mcpClient, getRegisteredFunction } from '../functions/registry';
 import { requestConfirmationFunction } from '../functions/request-confirmation';
+import { truncateToolResult, getTextContent } from './context-manager';
+import { taskManager } from '../background/task-manager';
+import { tabLeaseManager } from '../background/tab-lease-manager';
 
 /** Agent 执行器类型（由 orchestrator 注入） */
 export type AgentRunner = (params: {
@@ -131,11 +133,21 @@ const buildExecutionGroups = async (calls: OutputFunctionCallItem[]): Promise<Ex
  * 执行一批工具调用
  * 支持并行分流：连续的 supportsParallel 工具用 Promise.all 并发执行
  */
-/** 会话级敏感操作信任标记：用户选择"本次不再询问"后置为 true，持续到 SW 重启 */
-let sensitiveAccessTrusted = false;
+/**
+ * 会话级敏感操作信任标记：按 sessionId/taskId 隔离。
+ * 无身份信息的调用（定时器、常驻任务等）不共享任何信任作用域，必须每次确认。
+ */
+const sensitiveTrustScopes = new Set<string>();
 
-/** 重置敏感操作信任标记（新会话时调用） */
-export const resetSensitiveAccessTrust = () => { sensitiveAccessTrusted = false; };
+/** 解析信任作用域：优先会话，其次任务；没有身份时返回空串表示“永不信任”。 */
+const resolveTrustScope = (context?: Omit<ToolExecutionContext, 'tabId' | 'signal'>): string =>
+  context?.sessionId || context?.taskId || '';
+
+/** 重置敏感操作信任标记；不传作用域时清空全部（仅供测试/登出）。 */
+export const resetSensitiveAccessTrust = (scope?: string) => {
+  if (scope) sensitiveTrustScopes.delete(scope);
+  else sensitiveTrustScopes.clear();
+};
 
 export const executeToolCalls = async (
   calls: OutputFunctionCallItem[],
@@ -146,19 +158,39 @@ export const executeToolCalls = async (
   executionContext?: Omit<ToolExecutionContext, 'tabId' | 'signal'>,
 ): Promise<InputItem[]> => {
   const results: InputItem[] = [];
+  const trustScope = resolveTrustScope(executionContext);
 
   // ===== 元数据驱动的权限检查 =====
 
+  /** 解析调用显式指定的目标标签页 */
+  const explicitTargetTabId = (params: Record<string, any>): number | undefined => {
+    const raw = params.tab_id ?? params.tabId;
+    return typeof raw === 'number' && Number.isFinite(raw) && raw > 0 ? raw : undefined;
+  };
+
+  /** 是否跨标签页访问：显式目标与当前任务标签页不一致 */
+  const isCrossTabTarget = (params: Record<string, any>): boolean => {
+    const target = explicitTargetTabId(params);
+    return target !== undefined && typeof tabId === 'number' && target !== tabId;
+  };
+
   /** 获取工具+action 的实际权限等级（从 FunctionDefinition 元数据读取） */
   const resolvePermissionLevel = (name: string, params: Record<string, any>): PermissionLevel => {
-    const def = getBuiltinFunction(name);
-    if (!def) return 'interact'; // 动态工具/未知工具默认 interact
+    // Agent 编排工具由内部执行器接管，本身不产生直接副作用（子工具各自校验）
+    if (isAgentTool(name)) return 'interact';
+    const def = getRegisteredFunction(name);
+    // 未知/动态工具的服务端行为无法预判，默认按敏感操作处理（P1-24）
+    if (!def) return 'sensitive';
     const action = String(params.action || '');
     // action 级覆盖优先
-    if (action && def.actionPermissions?.[action]) {
-      return def.actionPermissions[action];
+    const baseLevel: PermissionLevel = (action && def.actionPermissions?.[action])
+      ? def.actionPermissions[action]
+      : def.permissionLevel || 'interact';
+    // 读取/交互类工具跨标签页访问时提升为 sensitive，避免静默读取其他标签页
+    if (isCrossTabTarget(params) && (baseLevel === 'read' || baseLevel === 'interact')) {
+      return 'sensitive';
     }
-    return def.permissionLevel || 'interact';
+    return baseLevel;
   };
 
   /** 生成确认消息（根据工具元数据的 approvalMessageTemplate 或兜底） */
@@ -166,22 +198,32 @@ export const executeToolCalls = async (
     const level = resolvePermissionLevel(name, params);
     if (level === 'read' || level === 'interact') return null;
 
-    const def = getBuiltinFunction(name);
+    const def = getRegisteredFunction(name);
     const action = String(params.action || '');
     const template = typeof def?.approvalMessageTemplate === 'string'
       ? def.approvalMessageTemplate
       : def?.approvalMessageTemplate?.[action];
 
-    if (template) {
-      return template.replace(/\{(\w+)\}/g, (_, key: string) => String(params[key] ?? '?'));
+    const baseMessage = template
+      ? template.replace(/\{(\w+)\}/g, (_, key: string) => String(params[key] ?? '?'))
+      : `AI 正在执行需要授权的操作: ${name}${action ? ` (${action})` : ''}`;
+
+    // 跨标签页访问必须在审批文案里点名目标，否则用户无法判断读的是哪个页面
+    if (isCrossTabTarget(params)) {
+      return `${baseMessage}（目标标签页 #${explicitTargetTabId(params)}，当前任务标签页 #${tabId}）`;
     }
-    // 兜底消息
-    return `AI 正在执行需要授权的操作: ${name}${action ? ` (${action})` : ''}`;
+    return baseMessage;
   };
 
-  /** 判断是否每次必须确认（dangerous 级别不受 trustAll 影响） */
+  /** 带用户数据出站/可批量读取历史的工具：不能被“本次不再询问”长期放行 */
+  const OUTBOUND_RISK_TOOLS = new Set(['fetch_url', 'webhook', 'history_search']);
+
+  /** 判断是否每次必须确认（dangerous、跨标签页与数据外发工具不受 trustAll 影响） */
   const isAlwaysConfirmOperation = (name: string, params: Record<string, any>): boolean => {
-    return resolvePermissionLevel(name, params) === 'dangerous';
+    return resolvePermissionLevel(name, params) === 'dangerous'
+      || (name === 'tab_navigate' && String(params.action || '') === 'open')
+      || isCrossTabTarget(params)
+      || OUTBOUND_RISK_TOOLS.has(name);
   };
 
   /**
@@ -196,16 +238,16 @@ export const executeToolCalls = async (
     if (!approvalMessage) return null;
     // 高危操作（导航/关闭标签页）始终需要确认，不受 trustAll 影响
     const alwaysConfirm = isAlwaysConfirmOperation(call.name, params);
-    if (sensitiveAccessTrusted && !alwaysConfirm) return null;
+    if (trustScope && sensitiveTrustScopes.has(trustScope) && !alwaysConfirm) return null;
 
     const approvalResult = await requestConfirmationFunction.execute(
       { message: approvalMessage },
-      { tabId, signal },
+      { tabId, signal, sessionId: executionContext?.sessionId, taskId: executionContext?.taskId },
     );
     const approved = approvalResult.success && approvalResult.data?.approved;
-    // 用户选择"本次不再询问"时，后续自动跳过确认
-    if (approved && approvalResult.data?.trustAll) {
-      sensitiveAccessTrusted = true;
+    // 用户选择“本轮内不再询问”时，后续自动跳过确认（跨标签页、dangerous 与外发工具除外）
+    if (approved && approvalResult.data?.trustAll && !alwaysConfirm && trustScope) {
+      sensitiveTrustScopes.add(trustScope);
     }
     if (approved) return null;
 
@@ -233,6 +275,46 @@ export const executeToolCalls = async (
   ): Promise<{ call: OutputFunctionCallItem; output: string }> => {
     const params = safeParseArgs(call.arguments);
     let output: string;
+
+    // 执行器层禁用：即使模型伪造了未出现在 schema 中的工具名，也必须拒绝。
+    const disallowed = executionContext?.disallowedTools;
+    if (disallowed && (disallowed.has(call.name)
+      || (disallowed.has('agent') && call.name !== 'send_message' && isAgentTool(call.name)))) {
+      const message = `工具 ${call.name} 在当前会话中不可用`;
+      output = JSON.stringify({ success: false, error: message });
+      emit({
+        type: 'function_result',
+        content: JSON.stringify({ name: call.name, callId: call.call_id, success: false, message, cancelled: false }),
+      });
+      return { call, output };
+    }
+
+    // 显式目标必须落在当前任务租约内；同标签页若已被其他任务租用也不允许读取/操作。
+    const targetTabId = explicitTargetTabId(params);
+    const mustCheckLease = targetTabId !== undefined
+      && (targetTabId !== tabId || Boolean(tabLeaseManager.get(targetTabId)));
+    if (mustCheckLease) {
+      try {
+        const task = executionContext?.taskId ? taskManager.get(executionContext.taskId) : undefined;
+        // 没有可验证的任务身份时不能跨标签页操作，避免绕过租约。
+        if (!task) throw new Error('跨标签页操作需要有效的任务上下文');
+        tabLeaseManager.authorize({
+          taskId: task.taskId,
+          sessionId: executionContext?.sessionId || task.sessionId,
+          clientId: executionContext?.clientId || task.clientId || task.owner,
+          requestId: executionContext?.requestId || `ai-${task.taskId}`,
+          owner: task.owner,
+        }, targetTabId, (getRegisteredFunction(call.name)?.permissionLevel || 'interact') !== 'read');
+      } catch (error: any) {
+        output = JSON.stringify({ success: false, error: error?.message || '目标标签页不在当前任务租约内' });
+        emit({
+          type: 'function_result',
+          content: JSON.stringify({ name: call.name, callId: call.call_id, success: false,
+            message: error?.message || '目标标签页不在当前任务租约内', cancelled: false }),
+        });
+        return { call, output };
+      }
+    }
 
     if (isAgentTool(call.name) && call.name !== 'send_message') {
       // 统一 Agent 执行（含旧工具名别名映射）

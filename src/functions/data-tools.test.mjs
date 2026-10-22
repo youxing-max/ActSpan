@@ -87,6 +87,24 @@ test('pipeline exports UTF-8 base64 in JSON, CSV, Markdown and TSV MIME formats'
   await dataPipelineFunction.execute({ action: 'clear', buffer_id: id });
 });
 
+test('pipeline export is sensitive and sanitizes filenames', async () => {
+  assert.equal(dataPipelineFunction.actionPermissions?.export, 'sensitive');
+  const id = `export-name-${Date.now()}`;
+  await dataPipelineFunction.execute({ action: 'append', buffer_id: id, data: [{ a: 1 }] });
+  const blocked = await dataPipelineFunction.execute({ action: 'export', buffer_id: id, filename: '../../evil.command' });
+  assert.equal(blocked.success, false);
+  const html = await dataPipelineFunction.execute({ action: 'export', buffer_id: id, filename: 'page.html' });
+  assert.equal(html.success, false);
+  assert.match(html.error, /不允许导出/);
+  const reserved = await dataPipelineFunction.execute({ action: 'export', buffer_id: id, filename: 'CON.txt' });
+  assert.equal(reserved.success, false);
+  const plain = await dataPipelineFunction.execute({ action: 'export', buffer_id: id, filename: 'report' });
+  assert.equal(plain.success, true);
+  assert.equal(plain.data.filename, 'report.json');
+  assert.equal(downloads.at(-1).filename, 'report.json');
+  await dataPipelineFunction.execute({ action: 'clear', buffer_id: id });
+});
+
 test('extract clamps max_items and appends only remaining capacity', async () => {
   const original = chrome.scripting;
   let args;
@@ -213,6 +231,26 @@ test('CDP failed resolution keeps the request visible for retry', async () => {
     chrome.debugger.sendCommand = original;
     await cdpFetchFunction.execute({ action: 'disable', tab_id: 12 });
   }
+});
+
+test('CDP text body redacts credentials and get_body requires approval', async () => {
+  assert.equal(cdpNetworkFunction.actionPermissions?.get_body, 'sensitive');
+  const original = chrome.debugger.sendCommand;
+  chrome.debugger.sendCommand = async (_target, method) => {
+    if (method === 'Network.getResponseBody') {
+      return {
+        body: JSON.stringify({ access_token: 'secret-token', profile: { email: 'user@example.test' }, note: 'ok' }),
+        base64Encoded: false,
+      };
+    }
+    return {};
+  };
+  try {
+    const result = await cdpNetworkFunction.execute({ action: 'get_body', request_id: 'text', tab_id: 12 });
+    assert.equal(result.success, true);
+    assert.equal(result.data.body.includes('secret-token'), false);
+    assert.match(result.data.body, /REDACTED/);
+  } finally { chrome.debugger.sendCommand = original; }
 });
 
 test('CDP binary body returns base64 without converting to text', async () => {
@@ -370,5 +408,27 @@ test('pagination masks token query values in ordinary page echoes', async () => 
     assert.equal(page.data.stop_reason, 'max_pages');
     assert.doesNotMatch(JSON.stringify(page.data), /leaked-token/);
     assert.match(JSON.stringify(page.data), /"id":1/);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('paginate rejects loopback, credential and redirecting targets before reading', async () => {
+  assert.match(paginateFunction.validate({ url: 'http://127.0.0.1:9/admin', param: 'page' }), /本机或内网/);
+  assert.match(paginateFunction.validate({ url: 'http://169.254.169.254/latest', param: 'page' }), /本机或内网/);
+  assert.match(paginateFunction.validate({ url: 'https://evil.nip.io/data', param: 'page' }), /本机或内网/);
+  assert.match(paginateFunction.validate({ url: 'https://site.test/password', param: 'page' }), /凭据页面/);
+  assert.equal(paginateFunction.permissionLevel, 'sensitive');
+
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return { status: 302, ok: false, type: 'default', url: 'https://api.test/items', headers: new Headers(), text: async () => '' };
+  };
+  try {
+    const result = await paginateFunction.execute({ url: 'https://api.test/items', param: 'page' });
+    assert.equal(result.success, true);
+    assert.equal(result.data.stop_reason, 'redirect_blocked');
+    assert.equal(result.data.page_count, 0);
+    assert.equal(calls, 1);
   } finally { globalThis.fetch = originalFetch; }
 });

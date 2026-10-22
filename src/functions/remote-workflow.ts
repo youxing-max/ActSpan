@@ -4,6 +4,7 @@
  */
 
 import type { FunctionDefinition, FunctionResult, ToolExecutionContext } from './types';
+import { tabLeaseManager } from '../background/tab-lease-manager';
 
 type BuiltinResolver = (name: string) => FunctionDefinition | undefined;
 type BuiltinNamesResolver = () => string[];
@@ -36,9 +37,6 @@ export const resolveRemotePlanAction = (name: string): { name: string; definitio
   return definition ? { name: mapped, definition } : undefined;
 };
 
-const resolveBuiltinFunction = (name: string): FunctionDefinition | undefined =>
-  resolveRemotePlanAction(name)?.definition;
-
 /** Return the built-in action names after the registry has wired its resolver. */
 export const getSupportedRemotePlanActions = (): string[] => resolveNames();
 
@@ -49,17 +47,21 @@ export const isBuiltinResolverReady = (): boolean => resolverReady;
 /**
  * 工作流 plan 动作白名单：只有录制器文档化且不绕过桥接策略的动作可执行。
  * 值为该动作允许的子动作集合；null 表示子动作不在 plan 层收窄（仍受桥接权限与租约约束）。
- * cdp_frame / cdp_input 等可执行任意 JS 或直接触发页面副作用的动作一律不在白名单内，
- * 必须走 page.eval / page.click / page.type 的桥接策略路径。
+ * cdp_frame.evaluate 只以「只读 evaluate」形态放行：cdp-frame.ts 对 Runtime.evaluate 强制
+ * throwOnSideEffect，写副作用会被 V8 拒绝；写操作仍必须走 page.click / page.type 的桥接策略路径，
+ * 或 cdp_input 的显式写子动作（plan 层按 interact 触发审批与写租约）。
  */
 const WORKFLOW_PLAN_ACTION_SUB_ACTIONS: Record<string, readonly string[] | null> = {
-  tab_navigate: null,
+  // 工作流只允许打开/导航/查看，不允许借 plan 关闭或移动用户已有标签页
+  tab_navigate: ['open', 'navigate', 'list', 'current', 'reload', 'go_back', 'go_forward'],
   page: ['view', 'snapshot', 'skeleton', 'assert', 'repair'],
   cdp_dom: [
     'query_selector', 'query_selector_all', 'get_outer_html', 'get_attributes', 'get_box_model',
     'get_document', 'get_text', 'get_html', 'get_computed_style_simple', 'wait_for',
     'css_get_computed_style', 'css_get_matched_rules', 'css_get_stylesheets', 'css_get_stylesheet',
   ],
+  cdp_frame: ['evaluate'],
+  cdp_input: ['wait_for_element', 'click', 'click_text', 'fill', 'key_press'],
   extract_data: null,
   screenshot: null,
 };
@@ -81,6 +83,19 @@ export const isWorkflowPlanSubActionAllowed = (name: string, subAction: string):
   if (!resolved) return false;
   const allowed = WORKFLOW_PLAN_ACTION_SUB_ACTIONS[resolved.name];
   return allowed === null || allowed.includes(subAction);
+};
+
+/** 校验单个 step 的 action 与已解析子动作（模板未解析时留给运行时再校验）。 */
+const validatePlanStepAction = (action: string, params: Record<string, unknown>): string | null => {
+  if (!resolveWorkflowPlanAction(action)) {
+    return `action "${action}" 不在工作流动作白名单内`;
+  }
+  const rawSubAction = typeof params.action === 'string' ? params.action.trim().toLowerCase() : '';
+  if (!rawSubAction || rawSubAction.includes('{{')) return null;
+  if (!isWorkflowPlanSubActionAllowed(action, rawSubAction)) {
+    return `${action}.${rawSubAction} 不是工作流允许的子动作`;
+  }
+  return null;
 };
 
 /** 保存与执行共用的 plan 动作校验：与执行边界同一份白名单。 */
@@ -325,8 +340,15 @@ const validateRemotePlan = (raw: unknown): PlanValidationError[] => {
     const action = String((step as Record<string, unknown>).action || '').trim();
     if (!action) {
       errors.push({ stepIndex: i, action: '', message: `步骤 ${i + 1} 缺少 action 字段` });
-    } else if (!resolveBuiltinFunction(action)) {
-      errors.push({ stepIndex: i, action, message: `步骤 ${i + 1} 的 action "${action}" 不是已注册的内置工具` });
+    } else if (!resolveWorkflowPlanAction(action)) {
+      errors.push({ stepIndex: i, action, message: `步骤 ${i + 1} 的 action "${action}" 不在工作流动作白名单内` });
+    } else {
+      const rawParams = (step as Record<string, unknown>).params;
+      const params = rawParams && typeof rawParams === 'object' && !Array.isArray(rawParams)
+        ? rawParams as Record<string, unknown>
+        : {};
+      const subActionError = validatePlanStepAction(action, params);
+      if (subActionError) errors.push({ stepIndex: i, action, message: `步骤 ${i + 1}: ${subActionError}` });
     }
   }
   return errors;
@@ -344,10 +366,11 @@ const normalizeRemotePlan = (raw: unknown): RemoteWorkflowPlan | null => {
     if (!item || typeof item !== 'object') return null;
     const sourceStep = item as Record<string, unknown>;
     const action = String(sourceStep.action || '').trim();
-    if (!resolveBuiltinFunction(action)) return null;
+    if (!resolveWorkflowPlanAction(action)) return null;
     const params = sourceStep.params && typeof sourceStep.params === 'object' && !Array.isArray(sourceStep.params)
       ? sourceStep.params as Record<string, unknown>
       : {};
+    if (validatePlanStepAction(action, params)) return null;
     const saveAs = String(sourceStep.saveAs || '').trim() || undefined;
     steps.push({
       action,
@@ -428,6 +451,18 @@ const runRemotePlan = async (
   const traces: StepExecutionTraceItem[] = [];
   const warnings: string[] = [];
   let runtimeTabId = context?.tabId;
+  // 直接调用 plan 的入口（调试页/常驻任务）也要尊重已有租约：目标标签页被其他任务
+  // 持有时不能借 plan 绕过 tool-executor 的租约校验。每一步都复查，覆盖 switch/open 后的目标变化。
+  const leaseConflictError = (tabId?: number): string | null => {
+    if (typeof tabId !== 'number' || tabId <= 0) return null;
+    const lease = tabLeaseManager.get(tabId);
+    const sameOwner = Boolean(context?.taskId && lease
+      && lease.taskId === context.taskId
+      && (!context.sessionId || lease.sessionId === context.sessionId));
+    return lease && !sameOwner ? `标签页 ${tabId} 正被其他任务使用` : null;
+  };
+  const initialLeaseError = leaseConflictError(runtimeTabId);
+  if (initialLeaseError) return { success: false, error: initialLeaseError };
   const shouldPushTakeoverState = inputParams.float_ball_execution_state !== false;
   const defaultExecutionLabel = 'Actspan AI 执行中';
   const takeoverLabel = String(inputParams.execution_state_label || inputParams.takeover_label || defaultExecutionLabel).trim()
@@ -472,6 +507,8 @@ const runRemotePlan = async (
       }
 
       const step = plan.steps[index];
+      const stepLeaseError = leaseConflictError(runtimeTabId);
+      if (stepLeaseError) return { success: false, error: stepLeaseError };
       await refreshTakeoverState();
       const resolvedWhenValue = resolveTemplateValue(step.when === undefined ? true : step.when, vars);
       const shouldRun = resolveConditionBoolean(resolvedWhenValue);
@@ -483,6 +520,11 @@ const runRemotePlan = async (
         };
       }
       const resolvedParams = resolvedRawParams as Record<string, unknown>;
+      // 模板展开后再次校验子动作，防止 {{input.action}} 绕过静态白名单
+      const runtimeSubActionError = validatePlanStepAction(step.action, resolvedParams);
+      if (runtimeSubActionError) {
+        return { success: false, error: `plan step ${index}: ${runtimeSubActionError}` };
+      }
       if (!shouldRun) {
         traces.push({
           index,
@@ -502,9 +544,16 @@ const runRemotePlan = async (
       if (!resolverReady) {
         return { success: false, error: 'workflow runtime registry is not initialized' };
       }
-      const runner = resolveBuiltinFunction(step.action);
+      const runner = resolveWorkflowPlanAction(step.action)?.definition;
       if (!runner) {
         return { success: false, error: `unsupported plan action: ${step.action}` };
+      }
+
+      // 执行上下文已确定的标签页是唯一合法目标：计划内的 tab_id 不能把动作引到
+      // 任务租约之外的页面（tab_navigate 的 open/switch 会在成功后更新 runtimeTabId）。
+      if (typeof runtimeTabId === 'number') {
+        resolvedParams.tab_id = runtimeTabId;
+        delete resolvedParams.tabId;
       }
 
       const tabAction = step.action === 'tab_navigate'

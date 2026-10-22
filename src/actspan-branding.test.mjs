@@ -13,8 +13,9 @@ test('active float-ball entry uses Actspan symbols and DOM contracts', async () 
   assert.match(entry, /import \{ ActspanRoot \} from ['"]\.\/float-ball\/ActspanRoot['"]/);
   assert.match(entry, /actspan-root/);
   assert.match(entry, /actspan-react-root/);
-  assert.match(entry, /actspan-escape/);
-  assert.match(entry, /actspan-click-outside/);
+  assert.match(entry, /emitGlobalEscape/);
+  assert.match(entry, /emitGlobalClickOutside/);
+  assert.doesNotMatch(entry, /dispatchEvent\(new CustomEvent\('actspan-escape'/);
   assert.doesNotMatch(entry, /MoleRoot|mole-root|mole-react-root|mole-escape|mole-click-outside/);
 });
 
@@ -38,7 +39,7 @@ test('active DOM producers and consumers share Actspan contracts', () => {
   const contracts = {
     'src/content/float-ball-react.tsx': ['actspan-root'],
     'src/content/recorder-overlay.ts': ['actspan-recorder-overlay', 'data-actspan-step'],
-    'src/content/float-ball/hooks/useGlobalEvents.ts': ['actspan-escape', 'actspan-click-outside'],
+    'src/content/float-ball/hooks/useGlobalEvents.ts': ['registerGlobalUiEventHandlers'],
     'src/content/float-ball/hooks/useRecorder.ts': ['#actspan-root', '#actspan-recorder-overlay'],
     'src/functions/cdp-dom.ts': ["getElementById('actspan-root')"],
     'src/functions/extract-data.ts': ["child.id === 'actspan-root'"],

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -137,11 +138,54 @@ export function deriveSessionIdentity(sid) {
     };
 }
 
-export function createStableSessionId(host, processId, now = Date.now()) {
+export function createStableSessionId(host) {
     const hostSlug = slugify(host || 'host');
-    const processSlug = text(processId).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 48) || 'process';
-    const timestamp = Number.isFinite(Number(now)) ? Math.max(0, Number(now)).toString(36) : Date.now().toString(36);
-    return `${hostSlug}:${processSlug}:${timestamp}-${randomUUID().replaceAll('-', '').slice(0, 12)}`;
+    // D009：session 是「宿主」的身份，不是「进程」的身份。掺 process.pid / randomUUID 会让
+    // 重启后的归属校验（policy-executor 比对 task.sessionId）永久失败，任务再也读不回来。
+    return `${hostSlug}:${hashString(`session:${hostSlug}`).toString(36).padStart(7, '0')}`;
+}
+
+export const DEFAULT_CLIENT_IDS_PATH = path.join(os.homedir(), '.actspan', 'client-ids.json');
+const CLIENT_IDS_VERSION = 1;
+
+function readClientIds(file) {
+    try {
+        const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+        if (!parsed || typeof parsed !== 'object' || parsed.version !== CLIENT_IDS_VERSION) return {};
+        const hosts = parsed.hosts && typeof parsed.hosts === 'object' ? parsed.hosts : {};
+        return Object.fromEntries(Object.entries(hosts).filter(([, value]) => typeof value === 'string' && value));
+    } catch {
+        return {};
+    }
+}
+
+function writeClientIds(file, hosts) {
+    const temp = `${file}.${process.pid}.tmp`;
+    try {
+        fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+        fs.writeFileSync(temp, JSON.stringify({ version: CLIENT_IDS_VERSION, hosts }), { mode: 0o600 });
+        fs.renameSync(temp, file);
+        return true;
+    } catch {
+        try { fs.unlinkSync(temp); } catch { /* Nothing to clean up. */ }
+        return false;
+    }
+}
+
+/**
+ * D009：clientId 同样按宿主落盘（`~/.actspan/client-ids.json`），首次生成后跨进程复用；
+ * 不同 host slug 各占一个桶，所以隔离性不受影响。
+ * 写盘失败就退回一次性的 id——主目录不可写不该让 MCP server 起不来，代价只是这次重启读不回旧任务。
+ */
+export function createStableClientId(hostSlug, { file = DEFAULT_CLIENT_IDS_PATH } = {}) {
+    const slug = slugify(hostSlug || 'host');
+    const hosts = readClientIds(file);
+    if (hosts[slug]) return hosts[slug];
+    const generated = randomUUID();
+    hosts[slug] = generated;
+    if (!writeClientIds(file, hosts)) return generated;
+    // 再读一次：两个进程同时冷启动时，以最终落盘的那个 id 为准，后续两边都收敛到同一身份。
+    return readClientIds(file)[slug] || generated;
 }
 
 export { AGENTS as DEFAULT_AGENTS, slugOf };

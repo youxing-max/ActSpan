@@ -51,8 +51,7 @@
   "web_accessible_resources": [
     {
       "resources": [
-        "actspan-logo.svg",
-        "skills/**/*"
+        "actspan-logo.svg"
       ],
       "matches": [
         "<all_urls>"

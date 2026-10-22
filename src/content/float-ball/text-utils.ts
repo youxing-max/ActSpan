@@ -25,7 +25,7 @@ export const replaceInternalToolTerms = (raw: string): string => {
 };
 
 /** 用户输入内容的脱敏掩码：只保留「已隐藏」这一事实，不带原值、长度或类型 */
-export const USER_INPUT_MASK = '[已隐藏用户输入]';
+const USER_INPUT_MASK = '[已隐藏用户输入]';
 
 /** 只有单字符的声明值不动（会把文案打成一片掩码）；两字中文姓名必须过滤 */
 const MIN_USER_INPUT_LENGTH = 2;
@@ -227,7 +227,7 @@ export const getRecentTaskStatusLabel = (status: string): string => {
 };
 
 /** 裁剪意图文本，超长时截断并加省略号 */
-export const clipIntentText = (raw: unknown, max: number = 34): string => {
+const clipIntentText = (raw: unknown, max: number = 34): string => {
   const text = String(raw ?? '').replace(/\s+/g, ' ').trim();
   if (!text) return '';
   return text.length > max ? `${text.slice(0, max)}...` : text;

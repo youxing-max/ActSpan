@@ -102,11 +102,13 @@ export const cdpNetworkFunction: FunctionDefinition = {
   supportsParallel: false,
   permissionLevel: 'interact',
   actionPermissions: {
+    get_body: 'sensitive',
     get_cookies: 'sensitive',
     set_cookie: 'sensitive',
     delete_cookie: 'sensitive',
   },
   approvalMessageTemplate: {
+    get_body: 'AI 正在请求读取网络响应体（可能包含令牌或个人信息）',
     get_cookies: 'AI 正在请求读取页面 Cookie',
     set_cookie: 'AI 正在请求设置 Cookie "{name}"',
     delete_cookie: 'AI 正在请求删除 Cookie "{name}"',
@@ -351,17 +353,24 @@ export const cdpNetworkFunction: FunctionDefinition = {
           };
         }
 
-        // 文本内容，截断过大的响应
+        // 文本内容，截断过大的响应；返回前对 JSON/文本做凭据与 PII 脱敏。
         if (body.length > MAX_BODY_SIZE) {
           body = body.substring(0, MAX_BODY_SIZE);
           truncated = true;
+        }
+        let safeBody = body;
+        try {
+          safeBody = JSON.stringify(redactSensitive(JSON.parse(body)));
+        } catch {
+          const redacted = redactSensitive(body);
+          safeBody = typeof redacted === 'string' ? redacted : body;
         }
 
         return {
           success: true,
           data: {
             request_id: params.request_id,
-            body,
+            body: safeBody,
             truncated,
             original_length: bodyResult.result?.body?.length || 0,
             message: truncated ? `响应体已截断至 ${MAX_BODY_SIZE} 字节` : '获取响应体成功',

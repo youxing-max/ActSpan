@@ -12,6 +12,14 @@ import { buildSubtaskPrompt, buildExplorePrompt, buildReviewPrompt, buildPlanPro
 // ============ 类型定义 ============
 
 /** 循环预算 */
+/** 跨阶段共享的预算用量，避免每次交接重置轮次/工具调用计数。 */
+export interface LoopUsage {
+  rounds: number;
+  toolCalls: number;
+  emptyRetries: number;
+  sameSignatureCounts: Map<string, number>;
+}
+
 export interface LoopBudget {
   maxRounds: number;
   maxToolCalls: number;
@@ -20,6 +28,8 @@ export interface LoopBudget {
   /** Maximum nested subagent depth; 0 forbids spawning subagents. */
   maxSubtaskDepth?: number;
   taskDeadlineMs?: number;
+  /** 阶段交接时共享的总用量 */
+  sharedUsage?: LoopUsage;
 }
 
 /** 检查点（供 background.ts 持久化会话状态） */
@@ -179,7 +189,7 @@ export const EXPLORE_ALLOWED_TOOLS: ReadonlySet<string> = new Set([
 export const REVIEW_ALLOWED_TOOLS: ReadonlySet<string> = new Set([
   'page',
   'screenshot',
-  'tab_navigate',
+  // 审查代理没有 tabTracker/toolContext，开放 tab_navigate 会留下未追踪标签页并绕过租约。
   'extract_data',
 ]);
 

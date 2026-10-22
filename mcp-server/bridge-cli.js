@@ -4,14 +4,35 @@ import path from 'node:path';
 import { bridgePaths, ensureBridgeDaemon, stopBridgeDaemon, readMetadata, readCredential, processAlive } from './bridge-lock.js';
 
 const args = process.argv.slice(2);
-const command = (args[0] && !args[0].startsWith('--') ? args[0] : 'start').toLowerCase();
+const FLAGS_WITH_VALUE = new Set(['--port', '--origins-json']);
+// 子命令可以出现在 flag 之后（`--port 39999 status`）；不能因为首参是 --flag 就默认 start。
+let command = 'start';
+for (let i = 0; i < args.length; i += 1) {
+    if (FLAGS_WITH_VALUE.has(args[i])) { i += 1; continue; }
+    if (args[i].startsWith('-')) continue;
+    command = args[i].toLowerCase();
+    break;
+}
 const valueOf = (flag) => {
     const index = args.indexOf(flag);
     return index >= 0 ? args[index + 1] : undefined;
 };
-const port = Number(valueOf('--port') ?? 30121);
+const hasPort = args.includes('--port');
+const port = hasPort ? Number(valueOf('--port')) : 30121;
+const hasOrigins = args.includes('--origins-json');
 let pairOrigins = [];
-try { pairOrigins = JSON.parse(valueOf('--origins-json') ?? '[]'); } catch { pairOrigins = []; }
+let originsError = null;
+if (hasOrigins) {
+    try {
+        const parsed = JSON.parse(valueOf('--origins-json'));
+        if (!Array.isArray(parsed) || parsed.some((origin) => typeof origin !== 'string')) throw new Error('must be a JSON string array');
+        const invalid = parsed.filter((origin) => !/^chrome-extension:\/\/[a-p]{32}$/.test(origin));
+        if (invalid.length) throw new Error(`invalid extension origin(s): ${invalid.join(', ')}`);
+        pairOrigins = parsed;
+    } catch (error) {
+        originsError = `Invalid --origins-json: ${error.message}`;
+    }
+}
 
 const print = (value) => process.stdout.write(`${JSON.stringify(value)}\n`);
 
@@ -30,8 +51,17 @@ function status() {
 }
 
 async function main() {
+    if (args.includes('--help') || args.includes('-h')) {
+        print({ ok: true, usage: 'actspan bridge [start|stop|status|usage] [--port N] [--origins-json JSON]' });
+        return;
+    }
     if (!Number.isInteger(port) || port <= 0 || port > 65535) {
-        print({ ok: false, error: `Invalid bridge port: ${port}` });
+        print({ ok: false, error: `Invalid bridge port: ${valueOf('--port') ?? '(missing)'}` });
+        process.exitCode = 1;
+        return;
+    }
+    if (originsError) {
+        print({ ok: false, error: originsError });
         process.exitCode = 1;
         return;
     }
@@ -54,7 +84,7 @@ async function main() {
         return;
     }
     if (command !== 'start') {
-        print({ ok: false, error: `Unknown bridge command: ${command}`, usage: 'actspan bridge [start|stop|status|usage] [--port N] [--origins-json [...]]' });
+        print({ ok: false, error: `Unknown bridge command: ${command}`, usage: 'actspan bridge [start|stop|status|usage] [--port N] [--origins-json JSON]' });
         process.exitCode = 1;
         return;
     }

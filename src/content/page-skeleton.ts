@@ -5,6 +5,7 @@
  */
 
 import Channel from '../lib/channel';
+import { isSensitiveRecordedField, REDACTED_RECORDED_VALUE } from '../lib/recorder-redaction';
 import {
   getOrCreateElementHandle,
   isElementVisible,
@@ -137,7 +138,16 @@ const annotateInteractiveAttrs = (node: SkeletonNode, el: Element): void => {
 
   if (isElementEditable(el)) {
     const value = (el as HTMLInputElement).value;
-    if (value) attrs.value = clipText(value, 20);
+    if (value) {
+      const inputType = el.getAttribute('type') || '';
+      const sensitive = inputType.toLowerCase() === 'hidden' || isSensitiveRecordedField({
+        tag: el.tagName,
+        selector: `${el.getAttribute('name') || ''} ${el.id || ''}`.trim(),
+        inputType,
+        autocomplete: el.getAttribute('autocomplete') || undefined,
+      });
+      attrs.value = sensitive ? REDACTED_RECORDED_VALUE : clipText(value, 20);
+    }
   }
 
   if (Object.keys(attrs).length > 0) node.attrs = attrs;

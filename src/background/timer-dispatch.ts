@@ -12,6 +12,7 @@ import {
     createSession,
     runSessionNow,
     hasRunningTasks,
+    getRunningTasks,
     dispatchSessionOp,
     RuntimeResourceManager,
     activeCoalescedTasks,
@@ -21,6 +22,8 @@ import {
 // ============ 定时器到期处理 ============
 
 const activeTimerDispatch = new Set<string>();
+/** 定时器因同标签页任务而被跳过时的重试间隔 */
+const TIMER_BUSY_RETRY_MS = 15_000;
 
 /**
  * 定时任务触发处理（支持 alarm + runtime）
@@ -38,15 +41,32 @@ async function handleTimerTrigger(timerId: string, source: 'alarm' | 'runtime_ti
 
         const coalesceKey = `timer:${timerId}`;
         const hasInFlightTimerRun = activeCoalescedTasks.has(coalesceKey);
-        const hasActiveSessionRun = hasRunningTasks();
-        if (hasInFlightTimerRun || hasActiveSessionRun) {
+        // 只有同一标签页的任务才构成资源冲突；无关会话不应阻塞定时器
+        const tabHasRunningTask = task.tabId
+            ? getRunningTasks().some(running => running.tabId === task.tabId)
+            : hasRunningTasks();
+        if (hasInFlightTimerRun || tabHasRunningTask) {
             if (task.type === 'interval') {
                 const intervalMs = task.intervalMs || Math.max(1, Math.round((task.intervalMinutes || 1) * 60 * 1000));
                 await TimerStore.update(timerId, {
                     nextRunAt: Date.now() + intervalMs,
                 });
+            } else if (task.type === 'schedule') {
+                // 一次性 alarm 已触发，跳过时必须重新排下一次，否则永久丢失
+                const nextRunAt = computeNextScheduleRun(task.scheduleRule!);
+                await TimerStore.update(timerId, { nextRunAt });
+                await chrome.alarms.create(`${TIMER_ALARM_PREFIX}${timerId}`, { when: nextRunAt });
+            } else {
+                // timeout 的运行时定时器已触发并清除，短延迟重试而不是丢弃
+                const retryAt = Date.now() + TIMER_BUSY_RETRY_MS;
+                if (task.scheduleMode === 'runtime') {
+                    TimerScheduler.scheduleTimeout(timerId, TIMER_BUSY_RETRY_MS);
+                } else {
+                    await chrome.alarms.create(`${TIMER_ALARM_PREFIX}${timerId}`, { when: retryAt });
+                }
+                await TimerStore.update(timerId, { nextRunAt: retryAt });
             }
-            console.log(`[Actspan] 定时器触发已合并（已有活跃执行）: ${timerId}`);
+            console.log(`[Actspan] 定时器触发已合并（同一标签页仍有任务）: ${timerId}`);
             return;
         }
 

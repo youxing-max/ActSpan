@@ -135,8 +135,9 @@ const contextProbeFunction = {
 };
 const builtins = new Map([
   ['tab_navigate', tabNavigateFunction],
-  ['throwing_tool', throwingFunction],
-  ['context_probe', contextProbeFunction],
+  // 白名单只放行真实内置动作；用允许的动作名挂测试桩，保留隔离行为测试意图
+  ['page', throwingFunction],
+  ['extract_data', contextProbeFunction],
 ]);
 registerBuiltinFunctionResolver((name) => builtins.get(name), () => [...builtins.keys()]);
 
@@ -201,7 +202,7 @@ test('isolated debug plan closes opened tabs when a later tool throws', async ()
     closeOpenedTabs: 'never',
     steps: [
       { action: 'tab_navigate', params: { action: 'open', url: 'https://debug.example/' } },
-      { action: 'throwing_tool', params: {} },
+      { action: 'page', params: { action: 'view' } },
     ],
   }, quietParams, isolatedContext), /debug failure/);
 
@@ -214,11 +215,31 @@ test('isolated debug forwards shared tab ownership to workflow actions', async (
 
   const result = await executeDebugRemotePlan('debug', {
     version: 1,
-    steps: [{ action: 'context_probe', params: {} }],
+    steps: [{ action: 'extract_data', params: {} }],
   }, quietParams, { ...isolatedContext, debugTabIds });
 
   assert.equal(result.success, true);
   assert.equal(receivedDebugTabIds, debugTabIds);
+});
+
+test('remote plan refuses actions outside the workflow whitelist', async () => {
+  resetCalls();
+  const result = await executeDebugRemotePlan('debug', {
+    steps: [{ action: 'throwing_tool', params: {} }],
+  }, quietParams, isolatedContext);
+
+  assert.equal(result.success, false);
+  assert.match(result.error, /白名单/);
+});
+
+test('remote plan refuses dangerous tab sub-actions such as close', async () => {
+  resetCalls();
+  const result = await executeDebugRemotePlan('debug', {
+    steps: [{ action: 'tab_navigate', params: { action: 'close', tab_id: 7 } }],
+  }, quietParams, isolatedContext);
+
+  assert.equal(result.success, false);
+  assert.match(result.error, /白名单|子动作/);
 });
 
 test('debug tool calls are pinned to the isolated tab and cannot change focus', () => {

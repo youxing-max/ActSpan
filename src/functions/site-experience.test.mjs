@@ -133,6 +133,22 @@ test('回贴反污染只保留有限站点字段', () => {
   assert.equal(serialized.includes('provenance'), false);
 });
 
+test('保存本机层按域合并，不会清空其他站点', async () => {
+  const state = {};
+  globalThis.chrome = { storage: { local: {
+    get(keys, callback) { callback(typeof keys === 'string' ? { [keys]: state[keys] } : state); },
+    set(items, callback) { Object.assign(state, items); callback(); },
+  } } };
+  await saveSiteExperience(mergeSiteExperience({}, { host: 'bank.example', action: 'click', selector: '#transfer', success: true }));
+  await saveSiteExperience(mergeSiteExperience({}, { host: 'shop.example', action: 'click', selector: '#buy', success: true }));
+  const stored = state.actspan_site_experience_layers_v1;
+  assert.ok(stored.domains['bank.example']);
+  assert.ok(stored.domains['shop.example']);
+
+  await saveSiteExperience({ version: 1, domains: {} });
+  assert.ok(state.actspan_site_experience_layers_v1.domains['bank.example'], '空提交不能清空已有经验');
+});
+
 test('保存本机层保留最近十份并返回免责提示', async () => {
   const state = {};
   globalThis.chrome = { storage: { local: {
@@ -273,4 +289,23 @@ test('F6 本机草稿保留，出厂草稿不进本机层', async () => {
   const pasted = getSiteExperienceLayers(FACTORY, { version: 1, domains: { 'example.com': { selectors: {}, failureReasons: {}, drafts: [LOCAL_DRAFT, FACTORY_DRAFT] } } }, 'example.com');
   const result = await saveSiteExperience(pasted, FACTORY);
   assert.deepEqual(result.experience.domains['example.com'].drafts, [LOCAL_DRAFT]);
+});
+
+test('并发保存不同域不会互相覆盖', async () => {
+  const state = {};
+  globalThis.chrome = { storage: { local: {
+    get(keys, callback) {
+      const key = typeof keys === 'string' ? keys : '';
+      setTimeout(() => callback(key ? { [key]: state[key] } : state), 0);
+    },
+    set(items, callback) {
+      setTimeout(() => { Object.assign(state, items); callback(); }, 0);
+    },
+  } } };
+  const a = mergeSiteExperience({}, { host: 'a.example', action: 'click', selector: '#a', success: true });
+  const b = mergeSiteExperience({}, { host: 'b.example', action: 'click', selector: '#b', success: true });
+  await Promise.all([saveSiteExperience(a), saveSiteExperience(b)]);
+  const stored = state.actspan_site_experience_layers_v1;
+  assert.ok(stored.domains['a.example'], '并发写入后 a.example 仍在');
+  assert.ok(stored.domains['b.example'], '并发写入后 b.example 仍在');
 });

@@ -4,6 +4,7 @@
  */
 
 import { handleChat } from '../ai/orchestrator';
+import { getSubagentNames } from '../ai/tool-executor';
 import { injectAIResponseRunner } from '../functions/resident-runtime';
 
 // ============ 常驻任务 AI 响应 ============
@@ -46,7 +47,12 @@ export async function runResidentAIResponse(
             job.tabId,
             undefined,
             undefined,
-            { maxRounds: 1, disallowTools: ['resident_runtime', 'spawn_subtask'] },
+            {
+              maxRounds: 1,
+              // 常驻任务没有任务租约，禁止统一 agent 及其旧别名，避免子代理操作任意标签页。
+              disallowTools: ['resident_runtime', ...getSubagentNames()],
+              toolContext: { owner: 'extension-agent' },
+            },
         ).catch((err: unknown) => {
             safeResolve({ success: false, error: err instanceof Error ? err.message : 'handleChat 异常' });
         });

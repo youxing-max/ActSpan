@@ -15,7 +15,9 @@ assert.match(client, /endpoint:\s*AI_CONFIG\.DEFAULT_ENDPOINT/);
 assert.match(client, /model:\s*AI_CONFIG\.DEFAULT_MODEL/);
 
 const settingsPage = read('src/options/pages/LLMSettingsPage.tsx');
-assert.match(settingsPage, /AI_CONFIG\.DEFAULT_ENDPOINT/);
+// 首次配置/重置不预填内置网关地址，只展示占位示例；默认值仍由 config/client 保证。
+assert.match(settingsPage, /AI_CONFIG\.ENDPOINT_PLACEHOLDER/);
+assert.doesNotMatch(settingsPage, /endpoint:\s*AI_CONFIG\.DEFAULT_ENDPOINT/);
 assert.match(settingsPage, /AI_CONFIG\.DEFAULT_MODEL/);
 assert.doesNotMatch(settingsPage, /gpt-5\.4|gpt-5\.3-codex/);
 

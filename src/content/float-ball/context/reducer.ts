@@ -116,9 +116,6 @@ export const actspanReducer = (state: ActspanState, action: ActspanAction): Acts
     case 'SET_RECORDER_AUDITING':
       return { ...state, isRecorderAuditing: action.payload };
 
-    case 'SET_RECORD_MODAL':
-      return { ...state, showRecordModal: action.payload };
-
     case 'SET_SCREENSHOT_PREVIEW':
       return { ...state, screenshotPreviewList: action.payload.list, screenshotPreviewIndex: action.payload.index };
 

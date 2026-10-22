@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import { createHash, randomBytes } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { validateConfig } from './catalog.js';
@@ -64,28 +65,107 @@ export function serverDefinition({ client = 'actspan', extensionId, fromNpm = fa
 }
 function jsonTarget(parsed) {
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { supported: false, configured: false, reason: '顶层不是 JSON 对象' };
-    if (parsed.mcpServers && typeof parsed.mcpServers === 'object' && !Array.isArray(parsed.mcpServers)) return { supported: true, configured: Boolean(parsed.mcpServers.actspan) };
+    if (Object.prototype.hasOwnProperty.call(parsed, 'mcpServers')) {
+        const servers = parsed.mcpServers;
+        // 数组/字符串/ null 都不是合法的 mcpServers 映射；静默展开会写成 "0"/"1" 键。
+        if (!servers || typeof servers !== 'object' || Array.isArray(servers)) {
+            return { supported: false, configured: false, reason: 'mcpServers 不是普通对象；拒绝改写以避免破坏配置' };
+        }
+        return { supported: true, configured: Boolean(servers.actspan), existing: servers.actspan };
+    }
     if (Object.prototype.hasOwnProperty.call(parsed, 'mcp')) return { supported: false, configured: false, reason: '识别到顶层 mcp + 命令数组格式；不会猜测其语义' };
     return { supported: true, configured: false };
 }
-export function planConfig(entry, definition) {
+function staleDefinitionReason() { return '已有 actspan 配置与当前安装不一致（路径/Node/参数已变化）；确认后使用 --force 更新'; }
+
+export function planConfig(entry, definition, { unknownAllowed = false, force = false } = {}) {
+    if (entry.known === false && !unknownAllowed) return { ...entry, action: 'manual', configured: false, supported: true, reason: '未知配置路径：确认后使用 --include-unknown 才会写入', definition };
     if (entry.format === 'toml') {
         const source = entry.exists ? fs.readFileSync(entry.path, 'utf8') : '';
-        const configured = /^\[mcp_servers\.actspan\]\s*$/m.test(source);
-        return { ...entry, action: configured ? 'skip' : entry.exists ? 'append' : 'create', configured, supported: true, definition };
+        const configured = source.split('\n').some(isActspanParentHeader);
+        if (!configured) return { ...entry, action: entry.exists ? 'append' : 'create', configured: false, supported: true, definition };
+        const matches = extractTomlSection(source) === tomlBlock(definition).trim();
+        if (matches) return { ...entry, action: 'skip', configured: true, supported: true, definition };
+        if (!force) return { ...entry, action: 'manual', configured: true, supported: true, reason: staleDefinitionReason(), definition };
+        return { ...entry, action: 'merge', configured: true, replaceExisting: true, supported: true, definition };
     }
     if (!entry.exists) return { ...entry, action: 'create', configured: false, supported: true, definition };
-    try { const target = jsonTarget(JSON.parse(fs.readFileSync(entry.path, 'utf8'))); return { ...entry, action: !target.supported ? 'manual' : target.configured ? 'skip' : 'merge', configured: target.configured, supported: target.supported, reason: target.reason, definition }; } catch (error) { return { ...entry, action: 'manual', configured: false, supported: false, reason: `JSON 无法解析：${error.message}`, definition }; }
+    try {
+        const target = jsonTarget(JSON.parse(fs.readFileSync(entry.path, 'utf8')));
+        if (!target.supported) return { ...entry, action: 'manual', configured: false, supported: false, reason: target.reason, definition };
+        if (!target.configured) return { ...entry, action: 'merge', configured: false, supported: true, definition };
+        if (isDeepStrictEqual(target.existing, definition)) return { ...entry, action: 'skip', configured: true, supported: true, definition };
+        if (!force) return { ...entry, action: 'manual', configured: true, supported: true, reason: staleDefinitionReason(), definition };
+        return { ...entry, action: 'merge', configured: true, supported: true, definition };
+    } catch (error) {
+        return { ...entry, action: 'manual', configured: false, supported: false, reason: `JSON 无法解析：${error.message}`, definition };
+    }
 }
-function jsonWithServer(file, definition) { const parsed = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : {}; return `${JSON.stringify({ ...parsed, mcpServers: { ...(parsed.mcpServers || {}), actspan: definition } }, null, 2)}\n`; }
+function jsonWithServer(file, definition) {
+    const parsed = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : {};
+    const existingServers = parsed?.mcpServers;
+    // 写入边界再守一次：非普通对象绝不展开，避免把数组/字符串写成数字键。
+    if (Object.prototype.hasOwnProperty.call(parsed, 'mcpServers')
+        && (!existingServers || typeof existingServers !== 'object' || Array.isArray(existingServers))) {
+        throw new Error('mcpServers 不是普通对象，拒绝改写');
+    }
+    return `${JSON.stringify({ ...parsed, mcpServers: { ...(existingServers || {}), actspan: definition } }, null, 2)}\n`;
+}
 function tomlQuote(value) { return JSON.stringify(String(value)); }
 function tomlBlock(definition) { const lines = ['[mcp_servers.actspan]', `command = ${tomlQuote(definition.command)}`, `args = [${definition.args.map(tomlQuote).join(', ')}]`, '[mcp_servers.actspan.env]']; for (const [key, value] of Object.entries(definition.env || {})) lines.push(`${key} = ${tomlQuote(value)}`); return `${lines.join('\n')}\n`; }
+const isTomlHeader = (line) => /^\s*\[/.test(line);
+const isActspanParentHeader = (line) => /^\s*\[mcp_servers\.actspan\]\s*(?:#.*)?$/.test(line);
+// env 是安装器自己写入的子表，必须和父表视为同一段；否则二次安装会误判为“旧配置”，
+// --force 时还会留下旧 env 表，写出重复表头的非法 TOML。
+const isActspanEnvHeader = (line) => /^\s*\[mcp_servers\.actspan\.env\]\s*(?:#.*)?$/.test(line);
+function actspanSectionEnd(lines, start) {
+    let end = lines.length;
+    for (let i = start + 1; i < lines.length; i += 1) {
+        if (isTomlHeader(lines[i]) && !isActspanEnvHeader(lines[i])) { end = i; break; }
+    }
+    return end;
+}
+/** 截取现有 actspan TOML 段（父表 + env 子表），用于判断是否需要 --force 更新。 */
+function extractTomlSection(source) {
+    const lines = source.split('\n');
+    const start = lines.findIndex(isActspanParentHeader);
+    if (start < 0) return '';
+    return lines.slice(start, actspanSectionEnd(lines, start)).join('\n').trim();
+}
+function replaceTomlSection(source, block) {
+    const lines = source.split('\n');
+    const start = lines.findIndex(isActspanParentHeader);
+    if (start < 0) return `${source}${source && !source.endsWith('\n') ? '\n' : ''}${block}`;
+    const end = actspanSectionEnd(lines, start);
+    const merged = [...lines.slice(0, start), ...block.trimEnd().split('\n'), ...lines.slice(end)];
+    return `${merged.join('\n').replace(/\n{3,}/g, '\n\n')}${merged.length && merged[merged.length - 1] === '' ? '' : '\n'}`;
+}
 function backupPath(file, now = Date.now()) { return `${file}.bak-${now}`; }
+function writeFileAtomic(file, content) {
+    // dotfiles 里的配置常是指向仓库的符号链接；改写必须落到真实目标，不能把链接替换成普通文件。
+    let target = file;
+    try { if (fs.lstatSync(file).isSymbolicLink()) target = fs.realpathSync(file); } catch { /* 新文件或链接失效 */ }
+    let mode = 0o600;
+    try { mode = fs.statSync(target).mode & 0o777; } catch { /* 新文件用 0600 */ }
+    const temp = `${target}.tmp-${process.pid}-${Date.now()}`;
+    try {
+        fs.writeFileSync(temp, content, { mode });
+        fs.renameSync(temp, target);
+    } catch (error) {
+        try { fs.rmSync(temp, { force: true }); } catch { /* 清理失败不掩盖原始错误 */ }
+        throw error;
+    }
+}
 export function applyPlan(plan, { now = Date.now() } = {}) {
     if (!plan.supported || plan.action === 'manual' || plan.action === 'skip') return { applied: false, skipped: plan.action === 'skip', reason: plan.reason || 'unsupported format' };
     fs.mkdirSync(path.dirname(plan.path), { recursive: true });
     if (plan.exists) fs.copyFileSync(plan.path, backupPath(plan.path, now));
-    if (plan.format === 'toml') { const source = plan.exists ? fs.readFileSync(plan.path, 'utf8') : ''; fs.writeFileSync(plan.path, `${source}${source && !source.endsWith('\n') ? '\n' : ''}${tomlBlock(plan.definition)}`, { mode: 0o600 }); } else fs.writeFileSync(plan.path, jsonWithServer(plan.path, plan.definition), { mode: 0o600 });
+    if (plan.format === 'toml') {
+        const source = plan.exists ? fs.readFileSync(plan.path, 'utf8') : '';
+        const next = plan.replaceExisting ? replaceTomlSection(source, tomlBlock(plan.definition))
+            : `${source}${source && !source.endsWith('\n') ? '\n' : ''}${tomlBlock(plan.definition)}`;
+        writeFileAtomic(plan.path, next);
+    } else writeFileAtomic(plan.path, jsonWithServer(plan.path, plan.definition));
     return { applied: true, backup: plan.exists ? backupPath(plan.path, now) : null };
 }
 function redactDefinition(definition) { return { ...definition, env: Object.fromEntries(Object.entries(definition.env || {}).map(([key, value]) => [key, /token|key|secret|authorization/i.test(key) ? '[redacted]' : value])) }; }
@@ -127,7 +207,7 @@ export function openWelcome({ port } = {}) {
     try { const command = process.platform === 'win32' ? 'cmd' : process.platform === 'darwin' ? 'open' : 'xdg-open'; const args = process.platform === 'win32' ? ['/c', 'start', '', target] : [target]; const child = spawn(command, args, { detached: true, stdio: 'ignore', windowsHide: true }); child.unref(); } catch { /* best effort */ }
 }
 export function versionReport() { return { package: VERSION, extension: EXTENSION_VERSION, consistent: VERSION === EXTENSION_VERSION }; }
-export async function runInstall({ apply = false, yes = false, dryRun = false, extensionId, fromNpm = false, client = 'actspan', apiUrl, apiKey } = {}) {
+export async function runInstall({ apply = false, yes = false, dryRun = false, extensionId, fromNpm = false, client = 'actspan', apiUrl, apiKey, includeUnknown = false, force = false, pairTimeoutMs } = {}) {
     if (apply && !yes) throw new Error('不会覆盖用户配置：请同时传 --yes 明确确认；否则使用 --dry-run 预览');
     const report = versionReport(); if (!report.consistent) throw new Error(`版本不一致：MCP ${report.package} / 扩展 ${report.extension}`);
     // Local-only install is the default: the Bridge never calls the control plane, so API URL/key are
@@ -140,12 +220,55 @@ export async function runInstall({ apply = false, yes = false, dryRun = false, e
     // pairing page proved. A caller-supplied ID that disagrees is drift, not a preference.
     const canonicalId = extensionIdFromKey();
     if (extensionId && extensionId !== canonicalId) throw new Error(`扩展 ID 不匹配：传入 ${extensionId}，但当前 manifest key 推导出的规范 ID 是 ${canonicalId}。请勿手写扩展 ID；加载构建产物后由配对页自动写入。`);
-    const paired = extensionId ? { extensionId } : apply ? await pairExtension() : null;
+    // 非交互环境没有人能完成浏览器里的配对；固定等 120s 只会让 CI 空转。
+    if (apply && !extensionId && !process.stdin.isTTY && pairTimeoutMs === undefined) {
+        throw new Error('非交互环境无法完成扩展配对：请传 --extension-id <manifest 推导的 ID>，或显式传 --pair-timeout <秒数> 后手动完成配对');
+    }
+    const waitMs = Number.isFinite(pairTimeoutMs) && pairTimeoutMs > 0 ? pairTimeoutMs : 120000;
+    const paired = extensionId ? { extensionId } : apply ? await pairExtension({ timeoutMs: waitMs }) : null;
     const definition = serverDefinition({ client, extensionId: paired?.extensionId, fromNpm, apiUrl: controlPlaneUrl, apiKey: controlPlaneKey });
-    const plans = targets.map((entry) => planConfig(entry, definition)); plans.forEach((plan) => printPlan(plan));
+    const plans = targets.map((entry) => planConfig(entry, definition, { unknownAllowed: includeUnknown, force })); plans.forEach((plan) => printPlan(plan));
     const preview = plans.map((plan) => ({ ...plan, definition: redactDefinition(plan.definition) }));
     if (!apply || dryRun) return { report, plans: preview, paired: paired ? { extensionId: paired.extensionId } : null };
     return { report, plans: preview, results: plans.filter((plan) => plan.action !== 'manual').map((plan) => applyPlan(plan)), paired: paired ? { extensionId: paired.extensionId } : null };
 }
-function parseArgs(argv) { const options = { apply: false, yes: false, dryRun: false, fromNpm: false }; for (let i = 0; i < argv.length; i += 1) { const arg = argv[i]; if (arg === '--apply') options.apply = true; else if (arg === '--yes') options.yes = true; else if (arg === '--dry-run') options.dryRun = true; else if (arg === '--from-npm') options.fromNpm = true; else if (arg === '--extension-id') options.extensionId = argv[++i]; else if (arg === '--client') options.client = argv[++i]; else if (arg === '--help') options.help = true; } return options; }
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) { const options = parseArgs(process.argv.slice(2)); if (options.help) console.log('Usage: actspan-install [--dry-run] [--apply --yes] [--extension-id ID] [--from-npm] [--client NAME]\n默认写入本地 Bridge 配置（ACTSPAN_BRIDGE_URL + ACTSPAN_EXTENSION_IDS）。仅当启用控制面 API 时才需要 ACTSPAN_API_URL（HTTPS）与 ACTSPAN_API_KEY；密钥只放环境变量，不要写在命令行参数里。'); else runInstall(options).catch((error) => { process.stderr.write(`actspan install: ${error.message}\n`); process.exitCode = 1; }); }
+function parseArgs(argv) {
+    const options = { apply: false, yes: false, dryRun: false, fromNpm: false, includeUnknown: false, force: false };
+    for (let i = 0; i < argv.length; i += 1) {
+        const arg = argv[i];
+        if (arg === '--apply') options.apply = true;
+        else if (arg === '--yes') options.yes = true;
+        else if (arg === '--dry-run') options.dryRun = true;
+        else if (arg === '--from-npm') options.fromNpm = true;
+        else if (arg === '--include-unknown') options.includeUnknown = true;
+        else if (arg === '--force' || arg === '--update') options.force = true;
+        else if (arg === '--extension-id') options.extensionId = argv[++i];
+        else if (arg === '--client') options.client = argv[++i];
+        else if (arg === '--pair-timeout') {
+            const raw = argv[++i];
+            const seconds = Number(raw);
+            if (!Number.isInteger(seconds) || seconds <= 0 || seconds > 3600) {
+                options.error = `Invalid --pair-timeout: ${raw ?? '(missing)'}（需要 1–3600 秒）`;
+                return options;
+            }
+            options.pairTimeoutMs = seconds * 1000;
+        } else if (arg === '--help') options.help = true;
+    }
+    return options;
+}
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+    const options = parseArgs(process.argv.slice(2));
+    if (options.error) {
+        process.stderr.write(`actspan install: ${options.error}\n`);
+        process.exitCode = 1;
+    } else if (options.help) console.log('Usage: actspan-install [--dry-run] [--apply --yes] [--include-unknown] [--force] [--extension-id ID] [--pair-timeout SECONDS] [--from-npm] [--client NAME]\n默认只写已知宿主配置；--include-unknown 才会处理扫描到的未知 JSON 配置；--force 更新与当前安装不一致的旧 actspan 配置。非交互环境必须传 --extension-id 或 --pair-timeout。仅当启用控制面 API 时才需要 ACTSPAN_API_URL（HTTPS）与 ACTSPAN_API_KEY；密钥只放环境变量，不要写在命令行参数里。');
+    else runInstall(options).then((result) => {
+        if (!options.apply || options.dryRun) return;
+        // 只打印 manual、实际 0 写入不是成功：自动化必须能感知需要人工处理。
+        const manual = result.plans.filter((plan) => plan.action === 'manual');
+        if (manual.length > 0 && result.results.every((item) => !item.applied && !item.skipped)) {
+            process.stderr.write(`actspan install: 没有写入任何配置；${manual.length} 个目标需要人工处理或使用 --force\n`);
+            process.exitCode = 1;
+        }
+    }).catch((error) => { process.stderr.write(`actspan install: ${error.message}\n`); process.exitCode = 1; });
+}

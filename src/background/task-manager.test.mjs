@@ -173,8 +173,11 @@ test('direct tab.open creates an owned task and rejects a second client before s
   let effects = 0;
   executor.registerCapabilityHandler('tab.open', async () => { effects++; return { tabId: 21 }; });
   const first = { clientId: 'one', requestId: 'r1', taskId: 'direct-1', sessionId: 's1', owner: 'ide-agent' };
+  // tab.open 已纳入 tabScoped：即使没有 tabId 也必须先显式批准
+  executor.approve('r1', 'one', 'direct-1');
   await executor.execute(first, 'tab.open', {});
   assert.equal(tasks.get('direct-1')?.ownedTabIds.includes(21), true);
+  executor.approve('r2', 'two', 'direct-1');
   await assert.rejects(() => executor.execute({ ...first, clientId: 'two', requestId: 'r2' }, 'tab.open', {}), /client|session|任务/);
   assert.equal(effects, 1);
   assert.equal(await executor.cancel('direct-1'), false);
@@ -438,4 +441,69 @@ test('task cancellation aborts registered workflow controllers', () => {
   assert.equal(controller.signal.aborted, false);
   assert.equal(tasks.cancel(task.taskId), true);
   assert.equal(controller.signal.aborted, true);
+});
+
+// 取消是终态，但终态必须可读：task.status / task.result / task.cancel 是取消后的唯一
+// 观测入口，若它们也走「任务已取消」门禁，客户端永远读不到终态，重试取消也会报错。
+test('cancelled task still reports terminal state and repeated cancel is idempotent', async () => {
+  const leases = new TabLeaseManager();
+  const tasks = new TaskManager(leases);
+  const task = tasks.create({ taskId: 'cancelled-read-1', sessionId: 's', owner: 'ide-agent', clientId: 'c' });
+  tasks.markRunning(task.taskId);
+  const executor = new PolicyExecutor(tasks, leases);
+  assert.equal(await executor.cancel(task.taskId), true);
+
+  const status = await executor.execute(context(task), 'task.status', {});
+  assert.equal(status.taskId, task.taskId);
+  assert.equal(status.state, 'cancelled');
+
+  const result = await executor.execute(context(task), 'task.result', {});
+  assert.deepEqual(result, { taskId: task.taskId, state: 'cancelled', result: undefined, error: undefined });
+
+  const again = await executor.execute(context(task), 'task.cancel', {});
+  assert.deepEqual(again, { taskId: task.taskId, cancelled: false });
+  assert.equal(tasks.get(task.taskId).state, 'cancelled');
+});
+
+// 只有本次调用自建的单动作任务才由执行器收尾；agent 任务的 state 归 runner 与 workflow
+// 执行器管理，一次旁路能力调用不能把它提前标成 succeeded。
+test('a running task is not finalized by unrelated capabilities', async () => {
+  const leases = new TabLeaseManager();
+  const tasks = new TaskManager(leases);
+  const task = tasks.create({ taskId: 'running-bystander-1', sessionId: 's', owner: 'ide-agent', clientId: 'c' });
+  tasks.markRunning(task.taskId);
+  const executor = new PolicyExecutor(tasks, leases);
+  executor.registerCapabilityHandler('ping', async () => 'pong');
+  executor.registerCapabilityHandler('tabs.list', async () => []);
+  executor.registerCapabilityHandler('feishu.push', async () => ({ ok: true }));
+
+  assert.equal(await executor.execute(context(task), 'ping', {}), 'pong');
+  assert.deepEqual(await executor.execute(context(task), 'tabs.list', {}), []);
+  assert.deepEqual(await executor.execute(context(task), 'feishu.push', {}), { ok: true });
+
+  assert.equal(tasks.get(task.taskId).state, 'running');
+  assert.equal(tasks.get(task.taskId).result, undefined);
+});
+
+// data.* 与 tab.open / page.read 一样是单动作入口：没有任务时应当自建任务，而不是要求
+// 调用方先凭空拥有一个任务。
+test('data capabilities create their own task when none exists', async () => {
+  const leases = new TabLeaseManager();
+  const tasks = new TaskManager(leases);
+  const executor = new PolicyExecutor(tasks, leases);
+  const calls = [];
+  executor.registerCapabilityHandler('data.fetch', async () => { calls.push('fetch'); return { ok: 'fetch' }; }, 'read');
+  executor.registerCapabilityHandler('data.paginate', async () => { calls.push('paginate'); return { ok: 'paginate' }; }, 'read');
+  executor.registerCapabilityHandler('data.download', async () => { calls.push('download'); return { ok: 'download' }; }, 'interact');
+
+  for (const capability of ['data.fetch', 'data.paginate', 'data.download']) {
+    const taskId = `data-${capability}`;
+    const dataContext = { clientId: 'data-client', requestId: `r-${capability}`, taskId, sessionId: 'data-session', owner: 'ide-agent' };
+    assert.deepEqual(await executor.execute(dataContext, capability, {}), { ok: capability.slice(5) });
+  }
+
+  assert.deepEqual(calls, ['fetch', 'paginate', 'download']);
+  assert.equal(tasks.get('data-data.fetch').state, 'succeeded');
+  assert.equal(tasks.get('data-data.paginate').state, 'succeeded');
+  assert.equal(tasks.get('data-data.download').state, 'succeeded');
 });

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { build } from 'esbuild';
 import test from 'node:test';
 
@@ -6,6 +7,14 @@ const bundle = await build({
   stdin: { contents: `
     export { buildSkillContext, skillFunction } from './src/functions/skill.ts';
     export { registryService } from './src/functions/skill-registry.ts';
+    export { isWorkflowPlanActionAllowed, isWorkflowPlanSubActionAllowed, registerBuiltinFunctionResolver } from './src/functions/remote-workflow.ts';
+    export { pageFunction } from './src/functions/page.ts';
+    export { tabNavigateFunction } from './src/functions/tab-navigate.ts';
+    export { screenshotFunction } from './src/functions/screenshot.ts';
+    export { extractDataFunction } from './src/functions/extract-data.ts';
+    export { cdpDomFunction } from './src/functions/cdp-dom.ts';
+    export { cdpFrameFunction } from './src/functions/cdp-frame.ts';
+    export { cdpInputFunction } from './src/functions/cdp-input.ts';
   `, resolveDir: process.cwd(), loader: 'ts' },
   bundle: true, write: false, format: 'esm', platform: 'node',
 });
@@ -28,8 +37,21 @@ globalThis.chrome = {
   alarms: { onAlarm: { addListener() {} }, create() {} },
 };
 
-const { buildSkillContext, skillFunction, registryService } = await import(
+const {
+  buildSkillContext, skillFunction, registryService,
+  isWorkflowPlanActionAllowed, isWorkflowPlanSubActionAllowed, registerBuiltinFunctionResolver,
+  pageFunction, tabNavigateFunction, screenshotFunction, extractDataFunction,
+  cdpDomFunction, cdpFrameFunction, cdpInputFunction,
+} = await import(
   `data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].contents).toString('base64')}`
+);
+
+// plan 白名单按解析后的内置工具名收窄；这里照 registry 的方式只接线 plan 相关工具。
+const planBuiltins = [pageFunction, tabNavigateFunction, screenshotFunction, extractDataFunction,
+  cdpDomFunction, cdpFrameFunction, cdpInputFunction];
+registerBuiltinFunctionResolver(
+  (name) => planBuiltins.find((tool) => tool.name === name),
+  () => planBuiltins.map((tool) => tool.name),
 );
 
 await buildSkillContext('https://unmatched.example/');
@@ -103,3 +125,58 @@ test('unmatched URLs still receive a dynamic schema whose list action does not r
   assert.deepEqual(context.schema.parameters.required, undefined);
   assert.deepEqual(context.schema.parameters.properties.action.enum, ['run', 'detail', 'list']);
 });
+
+// 内置技能 plan 必须整体落在 plan 白名单内：任何一步越界都会在 workflow_run 时被 E_POLICY_DENIED 拒绝，
+// 保存时也不会警告，所以只能在离线阶段把 (action, subAction) 全部过一遍。
+test('builtin domain skill plans stay inside the workflow-plan allowlist', async () => {
+  const manifest = JSON.parse(await readFile('public/skills/domains/manifest.json', 'utf8'));
+  for (const name of ['taobao', 'tophub', 'boss-zhipin']) {
+    const skill = manifest.skills.find((item) => item.name === name);
+    assert.ok(skill, `builtin domain manifest is missing ${name}`);
+    for (const workflow of skill.workflows) {
+      for (const [index, step] of workflow.plan.steps.entries()) {
+        const action = String(step.action || '').trim();
+        const rawSubAction = step.params && typeof step.params === 'object' ? step.params.action : undefined;
+        const subAction = typeof rawSubAction === 'string' ? rawSubAction.trim().toLowerCase() : '';
+        const label = `${name}/${workflow.name} step ${index + 1}`;
+        assert.equal(isWorkflowPlanActionAllowed(action), true, `${label} action ${action} is not allowlisted`);
+        assert.equal(isWorkflowPlanSubActionAllowed(action, subAction), true,
+          `${label} sub-action ${action}.${subAction} is not allowlisted`);
+      }
+    }
+  }
+});
+
+// cdp_frame 主 frame 的 evaluate 结果是 { result, type, message }；模板与 resultPath 必须穿过这层信封，
+// 否则 when / fill 会静默拿到 undefined（Boss 自动回复永远不触发）。
+test('builtin domain skill plan templates read saved steps through the result envelope', async () => {
+  const manifest = JSON.parse(await readFile('public/skills/domains/manifest.json', 'utf8'));
+  for (const name of ['taobao', 'tophub', 'boss-zhipin']) {
+    const skill = manifest.skills.find((item) => item.name === name);
+    assert.ok(skill, `builtin domain manifest is missing ${name}`);
+    for (const workflow of skill.workflows) {
+      const savedActions = new Map();
+      for (const [index, step] of workflow.plan.steps.entries()) {
+        const label = `${name}/${workflow.name} step ${index + 1}`;
+        for (const match of JSON.stringify(step).matchAll(/{{\s*steps\.([^.}\s]+)\.?([^}\s]*)}}/g)) {
+          const [, saveAs, tail] = match;
+          assert.ok(savedActions.has(saveAs), `${label} references steps.${saveAs} before it is saved`);
+          if (savedActions.get(saveAs) === 'cdp_frame') {
+            assert.equal(tail.split('.')[0], 'result',
+              `${label} must read steps.${saveAs}.result.* because cdp_frame nests its value under data.result`);
+          }
+        }
+        if (step.saveAs) savedActions.set(step.saveAs, step.action);
+      }
+      const resultPath = String(workflow.plan.resultPath || '').replace(/^steps\./, '');
+      if (!resultPath) continue;
+      const [saveAs, ...segments] = resultPath.split('.');
+      assert.ok(savedActions.has(saveAs), `${name}/${workflow.name} resultPath ${workflow.plan.resultPath} has no matching saved step`);
+      if (savedActions.get(saveAs) === 'cdp_frame') {
+        assert.equal(segments[0], 'result',
+          `${name}/${workflow.name} resultPath must include .result because cdp_frame nests its value under data.result`);
+      }
+    }
+  }
+});
+

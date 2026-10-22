@@ -64,6 +64,11 @@ export class MCPServer {
     return this.tools.has(name);
   }
 
+  /** 读取已注册工具定义（含动态工具），供权限判定使用 */
+  getTool(name: string): FunctionDefinition | undefined {
+    return this.tools.get(name);
+  }
+
   /**
    * 处理 MCP 请求
    * @param method 请求方法（tools/list 或 tools/call）

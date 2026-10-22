@@ -6,7 +6,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { log } from './bridge.js';
 import { createLazyBridgeDaemonClient } from './daemon-rpc.js';
 import { ensureBridgeDaemon } from './bridge-lock.js';
-import { createStableSessionId, normalizeHostIdentity } from './identity.js';
+import { createStableClientId, createStableSessionId, normalizeHostIdentity } from './identity.js';
 import { readUsage } from './usage.js';
 import registerActTool from './act-tool.js';
 import { registerInteractionTools } from './interaction-tools.js';
@@ -36,11 +36,16 @@ const fail = (error) => ({
 });
 
 async function main(config) {
-    const clientId = randomUUID();
     const fallbackIndex = process.argv.indexOf('--client');
     const fallbackClient = fallbackIndex < 0 ? '' : process.argv[fallbackIndex + 1] || '';
     let host = normalizeHostIdentity('', fallbackClient);
-    let sessionId = createStableSessionId(host.slug, process.pid);
+    // D009：clientId/sessionId 是宿主级身份，不是进程级身份。每次启动随机生成会让
+    // policy-executor 的 task.clientId / task.sessionId 归属校验在 MCP 重启后必然失败，
+    // 之前创建的任务就永久不可读——必须按 host slug 持久复用。
+    // clientId 懒解析：只有连桥那一刻才知道最终 host slug，提前按 --client 兜底值落盘会留下废桶。
+    let clientId = '';
+    const resolveClientId = () => (clientId ||= createStableClientId(host.slug));
+    let sessionId = createStableSessionId(host.slug);
     // 零环境契约：daemon 与元数据在任何 MCP 握手之前就位，`actspan_status` 才有真状态可报。
     try {
         await ensureBridgeDaemon({ port: config.bridgePort, pairOrigins: config.pairOrigins });
@@ -50,8 +55,10 @@ async function main(config) {
         return;
     }
     // K2：label 连上就冻结，所以 IPC 连接推迟到 `oninitialized` 之后——那时自报身份已压过 --client。
+    // clientId 也在 connect 那一刻才被读走，用 getter 让落盘桶跟随最终 host slug，
+    // 而不是握手前的 --client 兜底值（否则无 --client 的客户端会挤进同一个 unknown-host 桶）。
     const hub = createLazyBridgeDaemonClient({ port: config.bridgePort, pairOrigins: config.pairOrigins,
-        clientId, sessionId, label: host.slug });
+        get clientId() { return resolveClientId(); }, sessionId, label: host.slug });
     const defaultTaskId = randomUUID();
     const usageForHost = (slug) => {
         const entry = readUsage().hosts[slug];
@@ -65,7 +72,7 @@ async function main(config) {
     const callBridge = (method, params = {}, timeoutMs = 60000, task = {}) => {
         const taskId = task.taskId || params.taskId || defaultTaskId;
         const requestSessionId = task.sessionId || params.sessionId || sessionId;
-        return hub.call(method, params, timeoutMs, createRequestContext({ clientId, taskId, sessionId: requestSessionId, host: host.slug }));
+        return hub.call(method, params, timeoutMs, createRequestContext({ clientId: resolveClientId(), taskId, sessionId: requestSessionId, host: host.slug }));
     };
 
     const run = (fn) => async (args) => {
@@ -90,7 +97,8 @@ async function main(config) {
     const server = new McpServer({ name: 'actspan-mcp', version: '1.0.0' });
     server.server.oninitialized = () => {
         host = normalizeHostIdentity(server.server.getClientVersion()?.name, fallbackClient);
-        sessionId = createStableSessionId(host.slug, process.pid);
+        clientId = createStableClientId(host.slug);
+        sessionId = createStableSessionId(host.slug);
         hub.label = host.slug;
         hub.sessionId = sessionId;
         void hub.connect().catch((error) => log(`bridge connect failed: ${safeError(error)}`));
@@ -298,12 +306,12 @@ async function main(config) {
 
     registerTool('actspan_skills_list', {
         title: 'List skills and workflows', description: 'Read the current Actspan registry revision and skill summaries.', inputSchema: {},
-    }, run(() => catalog.list(createRequestContext({ clientId, taskId: defaultTaskId, sessionId, host: host.slug }))));
+    }, run(() => catalog.list(createRequestContext({ clientId: resolveClientId(), taskId: defaultTaskId, sessionId, host: host.slug }))));
 
     registerTool('actspan_skill_detail', {
         title: 'Get skill detail', description: 'Read a complete skill and its structured workflow contracts.',
         inputSchema: { name: z.string().min(1) },
-    }, run((args) => catalog.detail(args.name, createRequestContext({ clientId, taskId: defaultTaskId, sessionId, host: host.slug }))));
+    }, run((args) => catalog.detail(args.name, createRequestContext({ clientId: resolveClientId(), taskId: defaultTaskId, sessionId, host: host.slug }))));
 
     // 任务→会话映射：本进程新建的任务可能自带合成 session；外部（如 tab.open）建的任务属于当前 session。
     // 后续只带 taskId 的调用必须复用它，不能把 taskId 当成 sessionId。

@@ -13,13 +13,18 @@ const CONTEXT_COMPACT_TAG = '[context-compacted]';
 /**
  * 从 content 中提取纯文字内容
  * 兼容 string 和 ContentPart[] 两种格式
+ *
+ * 注意：assistant 消息由 Responses API 返回时使用 `output_text`，
+ * 而输入侧使用 `input_text`。两种都必须识别，否则助手回复会被当成空字符串。
  */
 export const getTextContent = (content: string | ContentPart[]): string => {
   if (typeof content === 'string') return content;
   if (!Array.isArray(content)) return String(content || '');
   return content
-    .filter((part): part is { type: 'input_text'; text: string } => part.type === 'input_text')
-    .map(part => part.text)
+    .filter(part =>
+      typeof (part as { text?: unknown }).text === 'string' &&
+      (part.type === 'input_text' || (part as { type?: string }).type === 'output_text'))
+    .map(part => (part as { text: string }).text)
     .join('\n');
 };
 
@@ -32,9 +37,11 @@ export const stripImagesFromContent = (content: string | ContentPart[]): string 
   if (!Array.isArray(content)) return String(content || '');
   const parts: string[] = [];
   for (const part of content) {
-    if (part.type === 'input_text') {
-      parts.push(part.text);
-    } else if (part.type === 'input_image') {
+    const partType = (part as { type?: string }).type;
+    if (partType === 'input_text' || partType === 'output_text') {
+      const text = (part as { text?: unknown }).text;
+      if (typeof text === 'string') parts.push(text);
+    } else if (partType === 'input_image') {
       parts.push('[图片已省略]');
     }
   }
@@ -64,8 +71,16 @@ export const compactContext = (
   const firstUserMessage = firstUserIndex >= 0 ? context[firstUserIndex] : null;
 
   // 计算要丢弃的部分
-  const dropEnd = context.length - keepTail;
+  let dropEnd = context.length - keepTail;
   const dropStart = firstUserMessage ? firstUserIndex + 1 : 0;
+
+  // 不能把 function_call 与 function_call_output 拆开：若 tail 以孤立 output 开头，
+  // 下一轮 Responses API 会因找不到对应 call_id 直接 400。向前吞掉整个 output。
+  while (dropEnd < context.length) {
+    const item = context[dropEnd];
+    if ('type' in item && item.type === 'function_call_output') dropEnd += 1;
+    else break;
+  }
 
   if (dropEnd <= dropStart) return false;
 
@@ -261,9 +276,11 @@ export const estimateContextTokens = (context: InputItem[]): number => {
         totalTokens += estimateStringTokens(msg.content);
       } else if (Array.isArray(msg.content)) {
         for (const part of msg.content) {
-          if (part.type === 'input_text') {
-            totalTokens += estimateStringTokens(part.text);
-          } else if (part.type === 'input_image') {
+          const partType = (part as { type?: string }).type;
+          if (partType === 'input_text' || partType === 'output_text') {
+            const text = (part as { text?: unknown }).text;
+            if (typeof text === 'string') totalTokens += estimateStringTokens(text);
+          } else if (partType === 'input_image') {
             totalTokens += 300;
           }
         }

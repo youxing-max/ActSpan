@@ -20,6 +20,10 @@ export interface TimerTask {
   action: string;
   /** 创建时的标签页 ID */
   tabId: number;
+  /** 创建者的任务/会话身份，用于跨会话隔离 */
+  taskId?: string;
+  sessionId?: string;
+  owner?: string;
   /** 创建时间戳 */
   createdAt: number;
   /** 周期间隔（分钟），仅 interval 类型 */
@@ -42,6 +46,14 @@ export interface TimerTask {
   scheduleRule?: string;
 }
 
+/** 串行化所有读改写，避免并发 set/clear 互相覆盖或复活已删除任务。 */
+let mutationQueue: Promise<unknown> = Promise.resolve();
+const serializeMutation = <T>(operation: () => Promise<T>): Promise<T> => {
+  const run = mutationQueue.then(operation, operation);
+  mutationQueue = run.then(() => undefined, () => undefined);
+  return run;
+};
+
 export const TimerStore = {
   /** 获取所有定时器 */
   async getAll(): Promise<TimerTask[]> {
@@ -60,25 +72,32 @@ export const TimerStore = {
 
   /** 保存定时器 */
   async save(task: TimerTask): Promise<void> {
-    const tasks = await this.getAll();
-    tasks.push(task);
-    await chrome.storage.local.set({ [STORAGE_KEY]: tasks });
+    return serializeMutation(async () => {
+      const tasks = await this.getAll();
+      if (tasks.some(t => t.id === task.id)) return;
+      tasks.push(task);
+      await chrome.storage.local.set({ [STORAGE_KEY]: tasks });
+    });
   },
 
   /** 更新定时器 */
   async update(id: string, updates: Partial<TimerTask>): Promise<void> {
-    const tasks = await this.getAll();
-    const index = tasks.findIndex(t => t.id === id);
-    if (index !== -1) {
-      tasks[index] = { ...tasks[index], ...updates };
-      await chrome.storage.local.set({ [STORAGE_KEY]: tasks });
-    }
+    return serializeMutation(async () => {
+      const tasks = await this.getAll();
+      const index = tasks.findIndex(t => t.id === id);
+      if (index !== -1) {
+        tasks[index] = { ...tasks[index], ...updates };
+        await chrome.storage.local.set({ [STORAGE_KEY]: tasks });
+      }
+    });
   },
 
   /** 删除定时器 */
   async remove(id: string): Promise<void> {
-    const tasks = await this.getAll();
-    const filtered = tasks.filter(t => t.id !== id);
-    await chrome.storage.local.set({ [STORAGE_KEY]: filtered });
+    return serializeMutation(async () => {
+      const tasks = await this.getAll();
+      const filtered = tasks.filter(t => t.id !== id);
+      await chrome.storage.local.set({ [STORAGE_KEY]: filtered });
+    });
   },
 };

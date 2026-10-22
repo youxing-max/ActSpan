@@ -16,6 +16,17 @@ export type ChannelHandler = (data: any, sender?: chrome.runtime.MessageSender, 
 /** Port 连接名称标识，用于区分 extension page 的 port */
 const EXTENSION_PAGE_PORT_NAME = '__channel_extension_page';
 
+/** 调试/动态工具/会话控制等内部接口，只允许扩展自身来源调用。 */
+const SENSITIVE_CHANNEL_TYPES = new Set<string>([
+    '__debug_run_plan', '__debug_call_tool', '__debug_tools_catalog',
+    '__dynamic_tools_import_manifest', '__dynamic_tools_list', '__dynamic_tools_remove', '__dynamic_tools_upsert',
+    '__clipboard_ops', '__session_clear', '__session_create', '__session_continue', '__session_resume',
+    '__session_replay', '__session_replay_request', '__session_rollback',
+    '__recorder_start', '__recorder_stop', '__recorder_submit', '__recorder_transfer',
+    '__fetch_page_title', '__parse_page_content',
+    '__page_grounding_action', '__page_grounding_assert', '__page_grounding_snapshot',
+]);
+
 class Channel {
     private static handlers: Map<string, Set<ChannelHandler>> = new Map();
     // 仅background用：已注册tabId集合
@@ -82,6 +93,17 @@ class Channel {
         (this as any)._listening = true;
         chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             const { type, data, __channel_tab_register, __channel_tab_unregister } = message || {};
+
+            // 只接受本扩展产生的消息；即使将来新增 external 中继，也不能直接触达内部处理器。
+            const runtimeId = chrome.runtime?.id;
+            if (sender?.id !== undefined && runtimeId && sender.id !== runtimeId) return;
+
+            // 调试/动态工具/会话控制等内部接口只允许扩展页面或本扩展的 content script 调用。
+            if (SENSITIVE_CHANNEL_TYPES.has(type)) {
+                const extensionUrl = typeof chrome.runtime?.getURL === 'function' ? chrome.runtime.getURL('') : '';
+                const fromExtensionPage = !!extensionUrl && typeof sender?.url === 'string' && sender.url.startsWith(extensionUrl);
+                if (!sender?.tab && !fromExtensionPage) return;
+            }
 
             // content注册tabId
             if (__channel_tab_register && sender.tab && sender.tab.id !== undefined) {

@@ -24,3 +24,43 @@
 | R6 | useGlobalEvents.ts:60 过期注释「closed Shadow DOM」 | resolved | agent | S-N2 修复：注释改 closed→open（float-ball-react.tsx:25 已 mode:open） | 2026-10-21 |
 | R7 | actspan_tab_close 属 sensitive，无人值守收不掉靶场标签页 | open | agent | 下轮处理：tab_close 保持 sensitive（policy.js:7 / policy-executor.ts:10），待 D003 无人值守审批通道落地后靶场可自动收标签页 | 2026-10-21 |
 | R8 | D11 声明值过滤未接线生产调用点 | resolved | agent | SP-B 接线：status-tool.js userInputs schema + status-bridge.ts 透传 → parseStatusUpdate 消费 | 2026-10-21 |
+
+## Wave 1 修复残留（2026-10-21）
+
+| ID | 风险 | 严重级 | 状态 | owner | 缓解/去向 | 日期 |
+|---|---|---|---|---|---|---|
+| W1-R1 | task.status/result 带 tabId 终态仍不可读 | Minor | open | agent | 下轮处理（mcp-server 链不触发） | 2026-10-21 |
+| W1-R2 | tab-lease disconnected 集合残留可抢占原主存活标签页 | Major | open | agent | 下轮处理：认证帧时 setSessionConnected(true) | 2026-10-21 |
+| W1-R3 | gap-matrix.md:180 createStableSessionId 签名文档漂移 | Minor | open | agent | 文档同步任务 | 2026-10-21 |
+| W1-R4 | data.fetch_chunk/paginate_page 未自建任务 | Minor | open | agent | 下轮评估 | 2026-10-21 |
+| W1-R5 | save_workflow 缺 subAction 不告警 | Minor | open | agent | 另开单 | 2026-10-21 |
+
+## Wave 2 修复残留（2026-10-21）
+
+| ID | 风险 | 严重级 | 状态 | owner | 缓解/去向 | 日期 |
+|---|---|---|---|---|---|---|
+| W2-R1 | screenshot snapshot_id 未进工具文档（tools.md:14），模型不知需传 | Minor | open | agent | 文档同步任务 | 2026-10-21 |
+| W2-R2 | page.skeleton / cdp_dom 等其他出口未过 redactSensitive，仍可能回传明文 value | Minor | open | agent | 另开单（全出口脱敏收口） | 2026-10-21 |
+| W2-R3 | 租约续租后长任务持续 authorize 永久持租约；放弃但仍轮询的任务持租约不 lapse | Minor | open | agent | 依赖 release-on-cancel/finish 回收；观察 | 2026-10-21 |
+
+## Wave 3 修复残留（2026-10-21）
+
+| ID | 风险 | 严重级 | 状态 | owner | 缓解/去向 | 日期 |
+|---|---|---|---|---|---|---|
+| W3-R1 | chat_completions 模式丢弃 input_image（截图退化为文本摘要），多模态 image_url 映射未做 | Minor | open | agent | 后续补齐多模态映射 | 2026-10-21 |
+| W3-R2 | 未对真实 Ollama/LM Studio 端点验证（mock fetch 只断言 wire 形状） | Minor | open | agent | 真实端点冒烟 | 2026-10-21 |
+| W3-R3 | LLMSettingsPage 描述/endpoint hint 仍写「Responses API」，未随双模式更新 | Minor | open | agent | 文档/文案同步 | 2026-10-21 |
+
+## W4-R1 · T025 tab_navigate keep_alive 租约语义（residual）
+- 来源：T025
+- 级别：P2
+- 内容：open 动作现在 acquire 新 tab 租约，keep_alive 标签页也归任务租约；若未来 agent 路径出现 taskManager.cancel / 扩展重启恢复中断任务，会连带关闭 keep_alive tab。当前 agent 路径无 taskManager.cancel 调用点（取消走 signal + TabTracker.closeAll），故暂不触发。
+
+## W4-R2 · T018 方案 A 落地残留（residuals）
+- 来源：T018
+- 级别：P2
+- 内容：
+  1. skill.run 路径（skill.ts:304→runRemotePlan:544）不经 PolicyExecutor，不做逐 step 审批（改动前即如此，与直接调 cdp_input 同语义）。统一需另开单让 skill.run 走 workflow.plan.*。
+  2. public/workflows/manifest.json 仍是旧 plan（徽标/press_key/click+selector），但 src 无引用，属遗留数据。
+  3. jd/baidu plan 用 cdp_dom.query（白名单只有 query_selector/_all），仍会 E_POLICY_DENIED——「已合规」判断不成立，本次非目标。
+  4. cdp_frame 主 frame 返回 result、子 frame 返回 value 不一致，plan 侧显式穿过 .result 规避。

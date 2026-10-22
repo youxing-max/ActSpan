@@ -42,6 +42,7 @@ import { statusFunction } from './status';
 import { siteExperienceFunction } from './site-experience-tool';
 import { adoptFunction } from './adopt';
 import { registerBuiltinFunctionResolver } from './remote-workflow';
+import { isBlockedFetchUrl } from '../lib/ssrf-guard';
 
 const DYNAMIC_TOOL_STORAGE_KEY = 'actspan_dynamic_tools_v1';
 const LEGACY_DYNAMIC_TOOL_STORAGE_KEY = 'mole_dynamic_tools_v1';
@@ -49,6 +50,40 @@ const DYNAMIC_TOOL_DEFAULT_TIMEOUT_MS = 15_000;
 const DYNAMIC_TOOL_MAX_TIMEOUT_MS = 60_000;
 const DYNAMIC_TOOL_NAME_PATTERN = /^[a-z][a-z0-9_:-]{1,63}$/;
 const DYNAMIC_TOOL_HTTP_METHOD_SET = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']);
+/** 动态工具/清单响应体上限，防止超大响应耗尽 Service Worker 内存 */
+const DYNAMIC_TOOL_MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
+const DYNAMIC_TOOL_MANIFEST_MAX_BYTES = 1 * 1024 * 1024;
+
+/** 流式读取响应并截断到 maxBytes；返回是否发生截断 */
+const readResponseTextLimited = async (
+  response: Response,
+  maxBytes: number,
+): Promise<{ text: string; truncated: boolean }> => {
+  if (!response.body) {
+    const text = await response.text();
+    return { text: text.slice(0, maxBytes), truncated: text.length > maxBytes };
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let text = '';
+  let bytes = 0;
+  let truncated = false;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    bytes += value.byteLength;
+    if (bytes > maxBytes) {
+      const keep = Math.max(0, value.byteLength - (bytes - maxBytes));
+      text += decoder.decode(value.subarray(0, keep), { stream: true });
+      truncated = true;
+      await reader.cancel().catch(() => undefined);
+      break;
+    }
+    text += decoder.decode(value, { stream: true });
+  }
+  text += decoder.decode();
+  return { text, truncated };
+};
 
 export interface DynamicToolSpec {
   name: string;
@@ -60,6 +95,10 @@ export interface DynamicToolSpec {
   headers?: Record<string, string>;
   timeoutMs?: number;
   enabled?: boolean;
+  /** 动态工具自身声明的权限等级；缺省按 sensitive 处理 */
+  permissionLevel?: 'read' | 'interact' | 'sensitive' | 'dangerous';
+  /** action 级权限覆盖，与内置工具语义一致 */
+  actionPermissions?: Record<string, 'read' | 'interact' | 'sensitive' | 'dangerous'>;
 }
 
 interface DynamicToolStoreShape {
@@ -129,6 +168,11 @@ registerBuiltinFunctionResolver(
 /** 按名称查找内置工具定义 */
 export const getBuiltinFunction = (name: string): FunctionDefinition | undefined => {
   return builtinToolMap.get(name);
+};
+
+/** 按名称查找任意已注册工具（内置 + 动态），用于权限元数据查询 */
+export const getRegisteredFunction = (name: string): FunctionDefinition | undefined => {
+  return builtinToolMap.get(name) || mcpServer.getTool(name);
 };
 
 /** 获取所有内置工具名称列表 */
@@ -211,6 +255,10 @@ const normalizeDynamicToolSpec = (
   if (!/^https?:\/\//i.test(endpoint) && !/^mock:\/\//i.test(endpoint)) {
     return { ok: false, message: 'endpoint 必须是 http/https URL 或 mock:// 协议' };
   }
+  // 动态工具由清单提供，不能把用户参数发往本机/内网（含云元数据地址）。
+  if (/^https?:\/\//i.test(endpoint) && isBlockedFetchUrl(endpoint)) {
+    return { ok: false, message: 'endpoint 不允许指向本地/内网地址' };
+  }
   const method = String(source.method || 'POST').trim().toUpperCase();
   if (!DYNAMIC_TOOL_HTTP_METHOD_SET.has(method)) {
     return { ok: false, message: `不支持的 method: ${method}` };
@@ -219,6 +267,21 @@ const normalizeDynamicToolSpec = (
   const timeoutMs = Number.isFinite(timeoutRaw)
     ? Math.max(500, Math.min(DYNAMIC_TOOL_MAX_TIMEOUT_MS, Math.floor(timeoutRaw)))
     : DYNAMIC_TOOL_DEFAULT_TIMEOUT_MS;
+
+  const ALLOWED_PERMISSION_LEVELS = new Set(['read', 'interact', 'sensitive', 'dangerous']);
+  // 动态工具本质是任意 HTTP 调用，清单只能把权限“上调”到 dangerous，
+  // 不能自声明 read/interact 来绕过默认审批。
+  const rawPermission = String(source.permissionLevel || '').trim();
+  const permissionLevel: DynamicToolSpec['permissionLevel'] = rawPermission === 'dangerous' ? 'dangerous' : 'sensitive';
+  const actionPermissions: Record<string, 'read' | 'interact' | 'sensitive' | 'dangerous'> = {};
+  if (source.actionPermissions && typeof source.actionPermissions === 'object' && !Array.isArray(source.actionPermissions)) {
+    for (const [key, value] of Object.entries(source.actionPermissions)) {
+      const level = String(value || '').trim();
+      if (key.trim() && ALLOWED_PERMISSION_LEVELS.has(level)) {
+        actionPermissions[key.trim()] = level === 'dangerous' ? 'dangerous' : 'sensitive';
+      }
+    }
+  }
 
   const headers: Record<string, string> = {};
   if (source.headers && typeof source.headers === 'object' && !Array.isArray(source.headers)) {
@@ -242,6 +305,8 @@ const normalizeDynamicToolSpec = (
       headers,
       timeoutMs,
       enabled: source.enabled !== false,
+      permissionLevel,
+      ...(Object.keys(actionPermissions).length > 0 ? { actionPermissions } : {}),
     },
   };
 };
@@ -349,6 +414,8 @@ const executeDynamicHttpTool = async (
 
   try {
     let requestUrl = spec.endpoint;
+    // 存储中的 spec 可能来自旧版本或手动写入，执行前再做一次字面量校验。
+    if (isBlockedFetchUrl(requestUrl)) throw new Error('endpoint 不允许指向本地/内网地址');
     let body: string | undefined;
     if (method === 'GET') {
       const query = encodeURIComponent(JSON.stringify(payload));
@@ -363,8 +430,14 @@ const executeDynamicHttpTool = async (
       body,
       signal: controller.signal,
       cache: 'no-store',
+      // 不跟随重定向：否则公网 endpoint 可 302 到内网，绕过上面的字面量校验。
+      redirect: 'manual',
     });
-    const text = await response.text();
+    if (response.type === 'opaqueredirect' || response.status === 0
+      || (response.status >= 300 && response.status < 400)) {
+      throw new Error('动态工具 endpoint 不允许重定向');
+    }
+    const { text, truncated } = await readResponseTextLimited(response, DYNAMIC_TOOL_MAX_RESPONSE_BYTES);
 
     let parsed: any = null;
     if (text) {
@@ -393,7 +466,9 @@ const executeDynamicHttpTool = async (
 
     return {
       success: true,
-      data: parsed ?? text ?? null,
+      data: truncated
+        ? { truncated: true, limitBytes: DYNAMIC_TOOL_MAX_RESPONSE_BYTES, content: parsed ?? text }
+        : (parsed ?? text ?? null),
     };
   } catch (err: any) {
     if (controller.signal.aborted) {
@@ -414,12 +489,20 @@ const executeDynamicHttpTool = async (
   }
 };
 
+const clampDynamicPermission = (level?: string): 'sensitive' | 'dangerous' =>
+  level === 'dangerous' ? 'dangerous' : 'sensitive';
+
 const toFunctionDefinition = (spec: DynamicToolSpec): FunctionDefinition => {
+  const actionPermissions = spec.actionPermissions
+    ? Object.fromEntries(Object.entries(spec.actionPermissions).map(([key, level]) => [key, clampDynamicPermission(level)]))
+    : undefined;
   return {
     name: spec.name,
     description: spec.description,
     parameters: spec.parameters,
     supportsParallel: spec.supportsParallel === true,
+    permissionLevel: clampDynamicPermission(spec.permissionLevel),
+    ...(actionPermissions ? { actionPermissions } : {}),
     execute: (params, context) => executeDynamicHttpTool(spec, params, context),
   };
 };
@@ -512,9 +595,28 @@ export const importDynamicToolsFromManifest = async (
       skipped: 0,
     };
   }
+  if (isBlockedFetchUrl(manifestUrl)) {
+    return {
+      success: false,
+      message: 'manifest URL 不允许指向本地/内网地址',
+      imported: 0,
+      removed: 0,
+      skipped: 0,
+    };
+  }
 
   try {
-    const response = await fetch(manifestUrl, { cache: 'no-store' });
+    const response = await fetch(manifestUrl, { cache: 'no-store', redirect: 'manual' });
+    if (response.type === 'opaqueredirect' || response.status === 0
+      || (response.status >= 300 && response.status < 400)) {
+      return {
+        success: false,
+        message: 'manifest URL 不允许重定向',
+        imported: 0,
+        removed: 0,
+        skipped: 0,
+      };
+    }
     if (!response.ok) {
       return {
         success: false,
@@ -525,7 +627,28 @@ export const importDynamicToolsFromManifest = async (
       };
     }
 
-    const payload = await response.json();
+    const manifestText = await readResponseTextLimited(response, DYNAMIC_TOOL_MANIFEST_MAX_BYTES);
+    if (manifestText.truncated) {
+      return {
+        success: false,
+        message: `manifest 超过 ${Math.floor(DYNAMIC_TOOL_MANIFEST_MAX_BYTES / 1024)}KB 限制`,
+        imported: 0,
+        removed: 0,
+        skipped: 0,
+      };
+    }
+    let payload: any;
+    try {
+      payload = JSON.parse(manifestText.text);
+    } catch {
+      return {
+        success: false,
+        message: 'manifest 不是合法 JSON',
+        imported: 0,
+        removed: 0,
+        skipped: 0,
+      };
+    }
     const rawTools = Array.isArray(payload)
       ? payload
       : (Array.isArray(payload?.tools) ? payload.tools : []);
@@ -542,6 +665,7 @@ export const importDynamicToolsFromManifest = async (
     let imported = 0;
     let skipped = 0;
     const incomingNames = new Set<string>();
+    const incomingEndpoints = new Set<string>();
     for (const rawSpec of rawTools) {
       const normalized = normalizeDynamicToolSpec(rawSpec);
       if (!normalized.ok) {
@@ -550,6 +674,12 @@ export const importDynamicToolsFromManifest = async (
       }
       const spec = normalized.spec;
       incomingNames.add(spec.name);
+      try {
+        const url = new URL(spec.endpoint);
+        incomingEndpoints.add(`${url.origin}${url.pathname}`);
+      } catch {
+        incomingEndpoints.add(spec.endpoint);
+      }
       dynamicToolSpecs.set(spec.name, spec);
       mcpServer.registerTool(toFunctionDefinition(spec));
       imported += 1;
@@ -567,9 +697,12 @@ export const importDynamicToolsFromManifest = async (
     }
 
     await persistDynamicToolStore();
+    const endpointList = [...incomingEndpoints];
+    const endpointSummary = endpointList.slice(0, 5).join('、')
+      + (endpointList.length > 5 ? ` 等 ${endpointList.length} 个` : '');
     return {
       success: true,
-      message: `manifest 导入完成：新增/更新 ${imported}，移除 ${removed}，跳过 ${skipped}`,
+      message: `manifest 导入完成：新增/更新 ${imported}，移除 ${removed}，跳过 ${skipped}。endpoint：${endpointSummary || '无'}`,
       imported,
       removed,
       skipped,

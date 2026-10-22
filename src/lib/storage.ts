@@ -16,24 +16,55 @@ const get = <T>(key: string): Promise<T | undefined> => {
     });
 };
 
+/** 读取 chrome.runtime.lastError（无错误时返回 undefined） */
+const readRuntimeLastError = (): string | undefined => {
+    try {
+        return chrome.runtime?.lastError?.message;
+    } catch {
+        return undefined;
+    }
+};
+
 // 存入数据
 const save = (key: string, data: any): Promise<void> => {
-    return new Promise((resolve) => {
-        chrome.storage.local.set({ [key]: data }, resolve);
+    return new Promise((resolve, reject) => {
+        chrome.storage.local.set({ [key]: data }, () => {
+            const lastError = readRuntimeLastError();
+            if (lastError) {
+                console.error(`[Actspan] 保存 ${key} 失败:`, lastError);
+                reject(new Error(lastError));
+                return;
+            }
+            resolve();
+        });
     });
 };
 
 // 清除所有存储
 const clear_all = (): Promise<void> => {
-    return new Promise((resolve) => {
-        chrome.storage.local.clear(resolve);
+    return new Promise((resolve, reject) => {
+        chrome.storage.local.clear(() => {
+            const lastError = readRuntimeLastError();
+            if (lastError) {
+                reject(new Error(lastError));
+                return;
+            }
+            resolve();
+        });
     });
 };
 
 // 清除日志
 const clearLogs = (): Promise<void> => {
-    return new Promise((resolve) => {
-        chrome.storage.local.remove('log_data', resolve);
+    return new Promise((resolve, reject) => {
+        chrome.storage.local.remove('log_data', () => {
+            const lastError = readRuntimeLastError();
+            if (lastError) {
+                reject(new Error(lastError));
+                return;
+            }
+            resolve();
+        });
     });
 };
 

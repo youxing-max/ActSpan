@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Build · Typecheck · Lint · Test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [20.x]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+      - name: Install root dependencies
+        run: npm ci
+      - name: Install mcp-server dependencies
+        working-directory: mcp-server
+        run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Build
+        run: npm run build
+      - name: Build docs
+        run: npm run docs:build
+      - name: Lint
+        run: npm run lint
+      - name: Unit & integration tests
+        run: npm test
+      - name: mcp-server tests
+        working-directory: mcp-server
+        run: npm test
+      - name: Tool docs drift check
+        working-directory: mcp-server
+        run: npm run check:docs
+
+  security:
+    name: Dependency & Secret Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+      - name: Audit runtime dependencies (critical)
+        run: npm audit --audit-level=critical
+      - name: Audit mcp-server dependencies (critical)
+        working-directory: mcp-server
+        run: npm audit --audit-level=critical
+      - name: Scan for secrets
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  license:
+    name: License Compliance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify AGPL-3.0 license present
+        run: |
+          test -f LICENSE || { echo "LICENSE file missing"; exit 1; }
+          grep -q "GNU AFFERO GENERAL PUBLIC LICENSE" LICENSE || { echo "AGPL-3.0 header not found in LICENSE"; exit 1; }
+          echo "AGPL-3.0 license verified"

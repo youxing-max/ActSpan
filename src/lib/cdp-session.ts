@@ -63,6 +63,10 @@ interface NetworkListeningState {
   startedAt: number;
   /** pending 表中的单请求滞留上限（毫秒），超时即驱逐 */
   pendingTimeoutMs: number;
+  /** 单次监听最长时间，防止客户端忘记 stop 导致 debugger 永久附着 */
+  maxDurationMs: number;
+  /** 上一次惰性清理 pending 的时间（节流） */
+  lastEvictAt: number;
 }
 
 /** 控制台消息 */
@@ -149,6 +153,7 @@ const frameContexts = new Map<number, Map<string, number>>();
 // --- 网络 ---
 const networkEvents = new Map<number, CDPNetworkEvent[]>();
 const networkListening = new Map<number, NetworkListeningState>();
+const networkExpiryTimers = new Map<number, ReturnType<typeof setTimeout>>();
 /** 网络请求临时数据（用于关联 requestWillBeSent 和后续事件） */
 const networkPendingRequests = new Map<number, Map<string, CDPNetworkEvent>>();
 
@@ -178,12 +183,22 @@ const notifyCommandIdle = (tabId: number): void => {
   scheduleIdleDetach(tabId);
 };
 
+const hasActiveListeners = (tabId: number): boolean => {
+  return networkListening.get(tabId)?.active === true
+    || consoleListening.get(tabId)?.active === true
+    || fetchInterception.get(tabId)?.active === true;
+};
+
 const scheduleIdleDetach = (tabId: number): void => {
   clearIdleTimer(tabId);
-  if (!sessions.has(tabId) || networkListening.get(tabId)?.active === true) return;
+  if (!sessions.has(tabId)) return;
+  // 控制台/Fetch/网络监听期间必须保持 attach，否则约 5 秒后捕获会静默失效。
+  if (hasActiveListeners(tabId)) return;
   idleTimers.set(tabId, setTimeout(() => {
     idleTimers.delete(tabId);
     if ((inFlightCommands.get(tabId) || 0) > 0) { scheduleIdleDetach(tabId); return; }
+    // attach 与激活监听之间可能已经排入定时器，回调时再检查一次。
+    if (hasActiveListeners(tabId)) return;
     void detach(tabId);
   }, L2_IDLE_MS));
 };
@@ -405,6 +420,8 @@ const clearFrameContexts = (tabId: number): void => {
 /** 单个请求允许在 pending 表中滞留的上限：SSE / 长轮询 / chunked 永远等不到
  *  loadingFinished / loadingFailed，没有上限时 pending map 会随请求数无限累积。 */
 export const NETWORK_PENDING_TIMEOUT_MS = 60_000;
+/** 网络监听最大时长：到期自动停止并 detach，避免忘记 stop 时 debugger 常驻 */
+export const NETWORK_MAX_LISTEN_MS = 30 * 60_000;
 /** 被驱逐请求写入事件队列时使用的标记，与真实网络错误区分 */
 const PENDING_TIMEOUT_ERROR = 'pending timeout';
 
@@ -427,10 +444,40 @@ const matchesNetworkFilter = (tabId: number, url: string): boolean => {
   return state.urlPatterns.some((p) => matchUrlPattern(url, p));
 };
 
+/** 按 startedAt + maxDurationMs 注册到期停止，空闲监听也不会永久附着调试器。 */
+const scheduleNetworkExpiry = (tabId: number): void => {
+  const state = networkListening.get(tabId);
+  const existingTimer = networkExpiryTimers.get(tabId);
+  if (existingTimer !== undefined) clearTimeout(existingTimer);
+  networkExpiryTimers.delete(tabId);
+  if (!state?.active) return;
+  const remaining = Math.max(0, state.startedAt + state.maxDurationMs - Date.now());
+  const timer = setTimeout(() => {
+    networkExpiryTimers.delete(tabId);
+    if (networkListening.get(tabId)?.startedAt === state.startedAt) {
+      void stopNetworkListening(tabId);
+    }
+  }, remaining);
+  // Node 测试环境：容忍 30 分钟的到期定时器不应吊住进程。
+  (timer as unknown as { unref?: () => void }).unref?.();
+  networkExpiryTimers.set(tabId, timer);
+};
+
 /** 向事件队列中追加，超过上限时丢弃最旧的 */
 const pushNetworkEvent = (tabId: number, event: CDPNetworkEvent): void => {
   const state = networkListening.get(tabId);
   if (!state) return;
+  const now = Date.now();
+  // 惰性清理 pending：每次事件都全表扫描太贵，节流到 5 秒一次
+  if (now - state.lastEvictAt >= 5_000) {
+    state.lastEvictAt = now;
+    evictStalePendingRequests(tabId);
+  }
+  // 超过最大监听时长后自动停止，避免调试器永久附着
+  if (now - state.startedAt > state.maxDurationMs) {
+    void stopNetworkListening(tabId);
+    return;
+  }
   let events = networkEvents.get(tabId);
   if (!events) {
     events = [];
@@ -481,16 +528,25 @@ const startNetworkListening = async (
 
   const maxEvents = Math.max(20, Math.min(5000, Math.floor(options?.maxEvents || 500)));
   const pendingTimeoutMs = Math.max(50, Math.floor(options?.pendingTimeoutMs || NETWORK_PENDING_TIMEOUT_MS));
+  const existing = networkListening.get(tabId);
+  const alreadyActive = existing?.active === true;
+  // 已在监听时保留既有捕获，避免第二个调用方清空第一个客户端的数据
+  if (!alreadyActive) {
+    networkEvents.set(tabId, []);
+    networkPendingRequests.set(tabId, new Map());
+  }
   networkListening.set(tabId, {
     active: true,
-    urlPatterns: options?.urlPatterns || [],
+    urlPatterns: options?.urlPatterns || existing?.urlPatterns || [],
     maxEvents,
-    startedAt: Date.now(),
+    // 重复 start 不重置计时，防止无限续期绕过最大时长
+    startedAt: alreadyActive ? existing.startedAt : Date.now(),
     pendingTimeoutMs,
+    maxDurationMs: existing?.maxDurationMs ?? NETWORK_MAX_LISTEN_MS,
+    lastEvictAt: Date.now(),
   });
-  networkEvents.set(tabId, []);
-  networkPendingRequests.set(tabId, new Map());
   scheduleIdleDetach(tabId);
+  scheduleNetworkExpiry(tabId);
 
   return { success: true };
 };
@@ -518,17 +574,23 @@ const ensureNetworkListening = async (tabId: number): Promise<{ success: boolean
       maxEvents: 2000,
       startedAt: Date.now(),
       pendingTimeoutMs: NETWORK_PENDING_TIMEOUT_MS,
+      maxDurationMs: NETWORK_MAX_LISTEN_MS,
+      lastEvictAt: Date.now(),
     });
   }
   if (!networkEvents.has(tabId)) networkEvents.set(tabId, []);
   if (!networkPendingRequests.has(tabId)) networkPendingRequests.set(tabId, new Map());
   scheduleIdleDetach(tabId);
+  scheduleNetworkExpiry(tabId);
 
   return { success: true };
 };
 
 /** 停止网络监听（禁用 Network 域） */
 const stopNetworkListening = async (tabId: number): Promise<void> => {
+  const expiryTimer = networkExpiryTimers.get(tabId);
+  if (expiryTimer !== undefined) clearTimeout(expiryTimer);
+  networkExpiryTimers.delete(tabId);
   networkListening.delete(tabId);
   networkPendingRequests.delete(tabId);
 
@@ -650,6 +712,7 @@ const startConsoleListening = async (
 /** 停止控制台捕获 */
 const stopConsoleListening = (tabId: number): void => {
   consoleListening.delete(tabId);
+  if (sessions.has(tabId)) scheduleIdleDetach(tabId);
 };
 
 const isConsoleListening = (tabId: number): boolean => {
@@ -778,6 +841,7 @@ const stopFetchInterception = async (tabId: number): Promise<void> => {
     await sendCommand(tabId, 'Fetch.disable', {}).catch(() => { /* 忽略 */ });
     entry.domainsEnabled.delete('Fetch');
   }
+  if (sessions.has(tabId)) scheduleIdleDetach(tabId);
 };
 
 const isFetchIntercepting = (tabId: number): boolean => {

@@ -16,6 +16,19 @@ import { buildToolIntentText, buildUserFacingActionSummary } from '../text-utils
 import { reconcileSessionSyncTask } from '../session-sync';
 import { FUNCTION_ICONS, FUNCTION_LABELS } from '../icons';
 
+/** 流式告警是内部诊断数据，不能把原始 JSON 直接当成进度文案展示。 */
+const toUserFacingStreamWarning = (raw: unknown): string => {
+  const text = String(raw ?? '').trim();
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed?.code === 'E_SSE_UNRECOGNIZED') {
+      return '模型流式响应中有少量数据未能解析，已跳过并继续处理。';
+    }
+    if (typeof parsed?.message === 'string' && parsed.message.trim()) return parsed.message.trim();
+  } catch { /* 普通文本告警原样展示 */ }
+  return text;
+};
+
 export const useAIStream = (_resultRef: React.RefObject<HTMLDivElement | null>) => {
   const { state, dispatch } = useActspan();
   const stateRef = useRef(state);
@@ -200,12 +213,22 @@ export const useAIStream = (_resultRef: React.RefObject<HTMLDivElement | null>) 
         break;
 
       case 'planning':
-      case 'warning':
         dispatch({
           type: 'UPDATE_TASK',
           payload: { liveStatusText: content },
         });
         break;
+
+      case 'warning': {
+        const warningText = toUserFacingStreamWarning(content);
+        if (warningText) {
+          dispatch({
+            type: 'UPDATE_TASK',
+            payload: { liveStatusText: warningText },
+          });
+        }
+        break;
+      }
 
       case 'task_lifecycle':
         // 任务生命周期事件

@@ -11,6 +11,7 @@ const bundle = await build({
     export { getTaskExecutor } from './src/background/policy-executor.ts';
     export { tabLeaseManager } from './src/background/tab-lease-manager.ts';
     export { CDPSessionManager } from './src/lib/cdp-session.ts';
+    export { DATA_CAPABILITY_POLICIES } from './src/background/mcp-data.ts';
   `, resolveDir: process.cwd(), loader: 'ts' },
   bundle: true, write: false, format: 'esm', platform: 'node',
   plugins: [{ name: 'bridge-test-exports', setup(build) {
@@ -20,7 +21,7 @@ const bundle = await build({
   } }],
 });
 const { filterTabsForContext, getWorkflowPlanForExecution, registerWorkflowPlanHandlers, executeBridgeRequest, dispatch, handleOffscreenRequest,
-  wrapUntrustedPageContent, buildActionTarget, requestConfirmationFunction, taskManager, tabLeaseManager, getTaskExecutor, CDPSessionManager } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].contents).toString('base64')}`);
+  wrapUntrustedPageContent, buildActionTarget, requestConfirmationFunction, taskManager, tabLeaseManager, getTaskExecutor, CDPSessionManager, DATA_CAPABILITY_POLICIES } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].contents).toString('base64')}`);
 
 test('accepts recorder-shaped plan-only workflows without structured steps', () => {
   const plan = {
@@ -84,8 +85,8 @@ test('rejects empty and oversized recorder plans', () => {
   );
 });
 
-test('rejects raw cdp_frame evaluate, cdp_input mutation, and unallowlisted builtins in plans', () => {
-  const rejected = ['cdp_frame', 'js_execute', 'cdp_input', 'page_action', 'cdp_network', 'cdp_debug',
+test('rejects unallowlisted builtins and out-of-scope cdp sub-actions in plans', () => {
+  const rejected = ['cdp_network', 'cdp_debug',
     'cdp_dialog', 'cdp_emulation', 'fetch_url', 'storage_kv', 'timer', 'data_pipeline', 'adopt',
     'webhook', 'notification', 'download_file', 'site_experience', 'load_tools', 'ask_user'];
   for (const action of rejected) {
@@ -99,9 +100,28 @@ test('rejects raw cdp_frame evaluate, cdp_input mutation, and unallowlisted buil
     /不支持的工作流步骤: cdp_dom\.storage_get_items/,
   );
   assert.throws(
+    () => getWorkflowPlanForExecution({ plan: { steps: [{ action: 'cdp_frame', params: { action: 'snapshot' } }] } }),
+    /不支持的工作流步骤: cdp_frame\.snapshot/,
+  );
+  assert.throws(
+    () => getWorkflowPlanForExecution({ plan: { steps: [{ action: 'cdp_input', params: { action: 'type', text: 'hi' } }] } }),
+    /不支持的工作流步骤: cdp_input\.type/,
+  );
+  assert.throws(
     () => getWorkflowPlanForExecution({ plan: { steps: [{ action: 'page', params: { action: 'eval' } }] } }),
     /不支持的工作流步骤: page\.eval/,
   );
+});
+
+test('accepts the migrated read-only cdp_frame evaluate and cdp_input write steps', () => {
+  const plan = { steps: [
+    { action: 'cdp_frame', params: { action: 'evaluate', code: 'return document.title' } },
+    { action: 'cdp_input', params: { action: 'wait_for_element', selector: 'main' } },
+    { action: 'cdp_input', params: { action: 'click_text', text: '张三' } },
+    { action: 'cdp_input', params: { action: 'fill', selector: '#box', value: 'hi' } },
+    { action: 'cdp_input', params: { action: 'key_press', key: 'Enter' } },
+  ] };
+  assert.deepEqual(getWorkflowPlanForExecution({ plan }), plan);
 });
 
 test('registers workflow plan capabilities only for the allowlist', async () => {
@@ -109,8 +129,7 @@ test('registers workflow plan capabilities only for the allowlist', async () => 
   const fixture = browserFixture();
   try {
     const context = { ...fixture.context, owner: 'ide-agent' };
-    for (const method of ['workflow.plan.cdp_frame', 'workflow.plan.cdp_input', 'workflow.plan.cdp_network',
-      'workflow.plan.fetch_url', 'workflow.plan.skill']) {
+    for (const method of ['workflow.plan.cdp_network', 'workflow.plan.fetch_url', 'workflow.plan.skill']) {
       // 未注册的能力没有 plan 策略，只能落到默认 dangerous 并要求确认，执行时直接报未注册。
       assert.equal(getTaskExecutor().check(context, method, { action: 'evaluate' }).level, 'dangerous');
       await assert.rejects(
@@ -120,11 +139,19 @@ test('registers workflow plan capabilities only for the allowlist', async () => 
       );
     }
     for (const method of ['workflow.plan.tab_navigate', 'workflow.plan.page', 'workflow.plan.cdp_dom',
-      'workflow.plan.extract_data', 'workflow.plan.screenshot']) {
+      'workflow.plan.extract_data', 'workflow.plan.screenshot', 'workflow.plan.cdp_frame', 'workflow.plan.cdp_input']) {
       // 白名单动作注册了 plan 策略，因此不会落到默认 dangerous。
       assert.notEqual(getTaskExecutor().check(context, method, { action: 'view' }).level, 'dangerous');
     }
     assert.equal(getTaskExecutor().check(context, 'workflow.plan.page', { action: 'view' }).requiresApproval, false);
+    // cdp_frame.evaluate 可读取 cookie/storage，按 sensitive 计权，必须显式批准。
+    assert.equal(getTaskExecutor().check(context, 'workflow.plan.cdp_frame',
+      { action: 'evaluate', tabId: fixture.context.tabId }).level, 'sensitive');
+    assert.equal(getTaskExecutor().check(context, 'workflow.plan.cdp_frame',
+      { action: 'evaluate', tabId: fixture.context.tabId }).requiresApproval, true);
+    // 写动作仍是 interact：指定标签页时必须先审批，plan 侧再取写租约。
+    assert.equal(getTaskExecutor().check(context, 'workflow.plan.cdp_input',
+      { action: 'click', tabId: fixture.context.tabId }).requiresApproval, true);
     assert.equal(getTaskExecutor().check(context, 'workflow.plan.tab_navigate',
       { action: 'navigate', tabId: fixture.context.tabId }).requiresApproval, true);
   } finally { fixture.restore(); }
@@ -145,21 +172,65 @@ test('plan execution rejects a disallowed cdp_dom sub-action before any page eff
   } finally { fixture.restore(); }
 });
 
-test('owned checkout tab cannot be mutated through a raw cdp_input plan step', async () => {
+test('workflow plan cdp_frame evaluate requires approval and is gated by the challenge check', async () => {
   registerWorkflowPlanHandlers();
-  const fixture = browserFixture({ label: 'Pay now', nearby: 'Pay now $66.00' });
+  const fixture = browserFixture();
+  const originalQuerySelectorAll = globalThis.document.querySelectorAll;
   try {
-    assert.throws(
-      () => getWorkflowPlanForExecution({ plan: { steps: [{ action: 'cdp_input', params: { action: 'click', selector: '#target' } }] } }),
-      /不支持的工作流步骤: cdp_input/,
-    );
+    globalThis.chrome.runtime = { lastError: undefined };
+    // evaluate 可能读取 cookie/storage，必须走敏感审批；批准后仍只做只读评估。
+    getTaskExecutor().approve('plan-frame-read', fixture.context.clientId, fixture.context.taskId, fixture.context.tabId);
+    const read = await executeBridgeRequest('workflow.plan.cdp_frame',
+      { action: 'evaluate', expression: 'document.title.length', tab_id: fixture.context.tabId },
+      { ...fixture.context, requestId: 'plan-frame-read' });
+    assert.equal(read.result, 7);
+    // sensitive 能力会先弹一次审批（此处 stub 返回 approved），再消费预先批准的凭证执行。
+    assert.ok(fixture.effects.prompts[0]?.includes('workflow.plan.cdp_frame'));
+    // 写副作用被 Runtime.evaluate 的 throwOnSideEffect 拦下，页面上零点击。
+    getTaskExecutor().approve('plan-frame-write', fixture.context.clientId, fixture.context.taskId, fixture.context.tabId);
     await assert.rejects(
-      () => executeBridgeRequest('workflow.plan.cdp_input', { action: 'click', selector: '#target', tabId: fixture.context.tabId },
-        { ...fixture.context, requestId: 'raw-cdp-input' }),
-      /未注册能力/,
+      () => executeBridgeRequest('workflow.plan.cdp_frame',
+        { action: 'evaluate', expression: "document.querySelector('#target').click()", tab_id: fixture.context.tabId },
+        { ...fixture.context, requestId: 'plan-frame-write' }),
+      /side effect|副作用/,
     );
     assert.equal(fixture.effects.clicks, 0);
+    // 读页面内容的验证页闸门同样覆盖 cdp_frame.evaluate。
+    globalThis.document.querySelectorAll = (selector) => selector === 'iframe'
+      ? [{ src: 'https://newassets.hcaptcha.com/captcha/v1/abc/hcaptcha.html' }] : [];
+    getTaskExecutor().approve('plan-frame-challenge', fixture.context.clientId, fixture.context.taskId, fixture.context.tabId);
+    await assert.rejects(
+      () => executeBridgeRequest('workflow.plan.cdp_frame',
+        { action: 'evaluate', expression: 'document.title', tab_id: fixture.context.tabId },
+        { ...fixture.context, requestId: 'plan-frame-challenge' }),
+      /检测到站点验证，需要用户完成/,
+    );
+    assert.ok(fixture.effects.prompts.some((message) => message.includes('检测到站点验证，需要用户完成')));
+  } finally {
+    globalThis.document.querySelectorAll = originalQuerySelectorAll;
+    fixture.restore();
+  }
+});
+
+test('plan cdp_input writes stay behind approval and never touch the page when denied', async () => {
+  registerWorkflowPlanHandlers();
+  const fixture = browserFixture({ label: 'Pay now', nearby: 'Pay now $66.00', approved: false });
+  try {
+    // 写子动作进入 plan 白名单：保存/执行边界不再以「cdp_input 一律禁止」拒绝。
+    assert.doesNotThrow(
+      () => getWorkflowPlanForExecution({ plan: { steps: [{ action: 'cdp_input', params: { action: 'click', element_id: 'el-1' } }] } }),
+    );
+    // 但执行层仍要审批：未获批时在产生任何页面副作用之前终止。
+    await assert.rejects(
+      () => executeBridgeRequest('workflow.plan.cdp_input', { action: 'click', element_id: 'el-1', tabId: fixture.context.tabId },
+        { ...fixture.context, requestId: 'raw-cdp-input' }),
+      /用户未批准/,
+    );
+    assert.equal(fixture.effects.prompts.length, 1);
+    assert.equal(fixture.effects.clicks, 0);
+    assert.equal(fixture.effects.realMouse, 0);
     assert.equal(fixture.effects.evaluations, 0);
+    // 支付页的 page.click 仍然先做金额确认，拒绝后零点击。
     requestConfirmationFunction.execute = async ({ message }) => {
       fixture.effects.prompts.push(message);
       return { success: true, data: { approved: false } };
@@ -228,7 +299,7 @@ function browserFixture({ label = 'Continue', nearby = label, approved = true, f
   // 双调试器管理器互相踩的缺陷在测试里永远是绿的。
   const debuggerAttached = new Set();
   globalThis.chrome = {
-    storage: { local: { async set() {} } },
+    storage: { local: { async get() { return {}; }, async set() {} } },
     tabs: { sendMessage() {}, async get(tabId) { return { id: tabId, url, title: 'Shop', status: 'complete' }; },
       async query() { return [...knownTabs]; },
       onCreated: { addListener(fn) { createdListeners.add(fn); }, removeListener(fn) { createdListeners.delete(fn); } },
@@ -359,6 +430,65 @@ test('tab.open waits for created tab and returns its resolved data', async () =>
     assert.equal(result.url, 'https://shop.test/checkout');
     assert.deepEqual(fixture.effects.removed, []);
   } finally { fixture.restore(); }
+});
+
+test('MCP data capabilities keep outbound operations at sensitive', () => {
+  assert.equal(DATA_CAPABILITY_POLICIES['data.fetch'], 'sensitive');
+  assert.equal(DATA_CAPABILITY_POLICIES['data.paginate'], 'sensitive');
+  assert.equal(DATA_CAPABILITY_POLICIES['data.paginate_page'], 'sensitive');
+  assert.equal(DATA_CAPABILITY_POLICIES['data.download'], 'sensitive');
+});
+
+test('tab.open and tab.navigate reject loopback targets before creating or navigating', async () => {
+  const fixture = browserFixture();
+  try {
+    fixture.context.tabId = undefined;
+    await assert.rejects(
+      () => dispatch('tab.open', { url: 'http://127.0.0.1:9/admin' }, { ...fixture.context, owner: 'ide-agent' }),
+      /本机或内网/,
+    );
+    await assert.rejects(
+      () => dispatch('tab.open', { url: 'https://evil.nip.io/' }, { ...fixture.context, owner: 'ide-agent' }),
+      /本机或内网/,
+    );
+    await assert.rejects(
+      () => dispatch('tab.navigate', { tabId: fixture.context.tabId, url: 'http://169.254.169.254/latest' }, { ...fixture.context, owner: 'ide-agent' }),
+      /本机或内网/,
+    );
+  } finally { fixture.restore(); }
+});
+
+test('page.snapshot reads only the main frame unless include_frames is explicit', async () => {
+  const fixture = browserFixture();
+  const originalSend = globalThis.chrome.tabs.sendMessage;
+  const originalNavigation = globalThis.chrome.webNavigation;
+  const framesSeen = [];
+  try {
+    globalThis.chrome.runtime = { lastError: undefined };
+    globalThis.chrome.webNavigation = { getAllFrames: async () => [
+      { frameId: 0, parentFrameId: -1, url: 'https://shop.test/checkout' },
+      { frameId: 7, parentFrameId: 0, url: 'https://bank.test/account' },
+    ] };
+    globalThis.chrome.tabs.sendMessage = (_tabId, message, optionsOrCallback, callback) => {
+      const options = typeof optionsOrCallback === 'function' ? undefined : optionsOrCallback;
+      const respond = typeof optionsOrCallback === 'function' ? optionsOrCallback : callback;
+      framesSeen.push(options?.frameId);
+      respond?.({ success: true, data: { elements: [] } });
+    };
+    const mainFrame = await dispatch('page.snapshot', { tabId: fixture.context.tabId }, { ...fixture.context, owner: 'ide-agent' });
+    assert.deepEqual(framesSeen, [0]);
+    assert.equal(mainFrame.frames.length, 1);
+    assert.equal(mainFrame.frames[0].error, undefined);
+    framesSeen.length = 0;
+    const allFrames = await dispatch('page.snapshot', { tabId: fixture.context.tabId, include_frames: true }, { ...fixture.context, owner: 'ide-agent' });
+    assert.deepEqual(framesSeen.sort(), [0, 7]);
+    assert.equal(allFrames.frames.length, 2);
+    assert.equal(allFrames.frames.every((frame) => frame.error === undefined), true);
+  } finally {
+    globalThis.chrome.tabs.sendMessage = originalSend;
+    globalThis.chrome.webNavigation = originalNavigation;
+    fixture.restore();
+  }
 });
 
 test('forged skip flags do not bypass payment guard, and a changed target is rechecked before click', async () => {
@@ -717,4 +847,134 @@ test('click returns and leases a genuinely opened child tab; no child does not i
     assert.equal(opened.tabId, fixture.context.tabId + 900);
     assert.equal(tabLeaseManager.get(opened.tabId).taskId, fixture.context.taskId);
   } finally { fixture.restore(); }
+});
+
+test('page.snapshot redacts sensitive element values and inline text without losing locator fields', async () => {
+  const fixture = browserFixture();
+  const originalSend = globalThis.chrome.tabs.sendMessage;
+  let request = null;
+  try {
+    globalThis.chrome.runtime = { lastError: undefined };
+    // content script 侧的原始快照：真实页面会把输入框明文值和可见文案原样回传。
+    globalThis.chrome.tabs.sendMessage = (_tabId, message, optionsOrCallback, maybeCallback) => {
+      const callback = typeof optionsOrCallback === 'function' ? optionsOrCallback : maybeCallback;
+      if (message?.type === '__page_grounding_snapshot') request = message;
+      callback?.({ success: true, data: { elements: [
+        { element_id: 'ec-login-1', tag: 'input', type: 'text', text: '我的手机号 13812345678',
+          value: 'sk-abc123', placeholder: '手机号', selector_candidates: ['#login-form input[name=phone]'],
+          rect: { x: 12, y: 34, width: 56, height: 78 }, score: 9 },
+      ] } });
+    };
+    const snapshot = await dispatch('page.snapshot', { tabId: fixture.context.tabId }, { ...fixture.context, owner: 'ide-agent' });
+    assert.equal(request?.data?.snapshot_id, snapshot.snapshot_id);
+    assert.equal(snapshot.total_candidates, 1);
+    const [element] = snapshot.elements;
+    assert.equal(element.value, '[REDACTED]');
+    assert.equal(element.text, '我的手机号 [REDACTED PHONE]');
+    // 定位字段必须原样保留，否则 agent 拿到快照也无法再操作元素。
+    assert.equal(element.element_id, 'ec-login-1');
+    assert.equal(element.snapshot_id, snapshot.snapshot_id);
+    assert.deepEqual(element.rect, { x: 12, y: 34, width: 56, height: 78 });
+    assert.deepEqual(element.selector_candidates, ['#login-form input[name=phone]']);
+    assert.doesNotMatch(JSON.stringify(snapshot), /sk-abc123|13812345678/);
+  } finally {
+    globalThis.chrome.tabs.sendMessage = originalSend;
+    fixture.restore();
+  }
+});
+
+test('a valid bridge frame clears a stale disconnect marker so a live tab stays owned', async () => {
+  const fixture = browserFixture();
+  const sent = [];
+  globalThis.chrome.runtime = { sendMessage(message) { sent.push(message); return Promise.resolve(); } };
+  const foreignTask = () => ({ taskId: 'foreign-task', sessionId: 'foreign-session', clientId: 'foreign-client',
+    owner: 'ide-agent', ownedTabIds: [], activeTabId: undefined });
+  const foreign = { taskId: 'foreign-task', sessionId: 'foreign-session', clientId: 'foreign-client' };
+  try {
+    const tabId = fixture.context.tabId;
+    const owner = { clientId: fixture.context.clientId, sessionId: fixture.context.sessionId };
+    // 在线时：selectTab 报告冲突，其他会话既不能选中也不能抢占该标签页。
+    assert.match(tabLeaseManager.selectTab(foreign, tabId).warning || '', /仍被其他会话占用/);
+    assert.throws(() => tabLeaseManager.acquire(foreignTask(), tabId, 'foreign-client'), /仍被其他会话占用/);
+    tabLeaseManager.setSessionConnected(owner, false);
+    // 已断线的原主，其标签页允许被显式接管；重连后必须恢复保护。
+    assert.equal(tabLeaseManager.selectTab(foreign, tabId).warning, undefined);
+    // 任何通过认证的有效请求帧都证明该会话在线；不带 tabId 的帧不会经过租约 authorize 清理。
+    await handleOffscreenRequest({ id: fixture.context.requestId, method: 'ping',
+      params: {}, context: { ...fixture.context, tabId: undefined, host: 'bridge-test' } });
+    assert.ok(sent.some((message) => message.type === 'actspan_mcp_response'));
+    assert.match(tabLeaseManager.selectTab(foreign, tabId).warning || '', /仍被其他会话占用/);
+    assert.throws(() => tabLeaseManager.acquire(foreignTask(), tabId, 'foreign-client'), /仍被其他会话占用/);
+  } finally { fixture.restore(); }
+});
+
+test('page.snapshot refuses to read a challenge page instead of returning its elements', async () => {
+  const fixture = browserFixture();
+  const originalSend = globalThis.chrome.tabs.sendMessage;
+  const originalQuerySelectorAll = globalThis.document.querySelectorAll;
+  try {
+    globalThis.chrome.runtime = { lastError: undefined };
+    globalThis.chrome.tabs.sendMessage = (_tabId, _message, optionsOrCallback, maybeCallback) => {
+      const callback = typeof optionsOrCallback === 'function' ? optionsOrCallback : maybeCallback;
+      callback?.({ success: true, data: { elements: [] } });
+    };
+    globalThis.document.querySelectorAll = (selector) => selector === 'iframe'
+      ? [{ src: 'https://newassets.hcaptcha.com/captcha/v1/abc/hcaptcha.html' }] : [];
+    await assert.rejects(
+      () => dispatch('page.snapshot', { tabId: fixture.context.tabId }, { ...fixture.context, owner: 'ide-agent' }),
+      /检测到站点验证，需要用户完成/,
+    );
+    assert.deepEqual(fixture.effects.prompts, ['检测到站点验证，需要用户完成']);
+  } finally {
+    globalThis.document.querySelectorAll = originalQuerySelectorAll;
+    globalThis.chrome.tabs.sendMessage = originalSend;
+    fixture.restore();
+  }
+});
+
+test('workflow plan cdp_dom read query is gated by the same challenge check', async () => {
+  registerWorkflowPlanHandlers();
+  const fixture = browserFixture();
+  const originalQuerySelectorAll = globalThis.document.querySelectorAll;
+  const requestId = 'plan-dom-challenge';
+  try {
+    globalThis.chrome.runtime = { lastError: undefined };
+    getTaskExecutor().approve(requestId, fixture.context.clientId, fixture.context.taskId, fixture.context.tabId);
+    globalThis.document.querySelectorAll = (selector) => selector === 'iframe'
+      ? [{ src: 'https://newassets.hcaptcha.com/captcha/v1/abc/hcaptcha.html' }] : [];
+    await assert.rejects(
+      () => executeBridgeRequest('workflow.plan.cdp_dom', { action: 'query_selector', selector: 'main', tab_id: fixture.context.tabId },
+        { ...fixture.context, requestId }),
+      /检测到站点验证，需要用户完成/,
+    );
+  } finally {
+    globalThis.document.querySelectorAll = originalQuerySelectorAll;
+    fixture.restore();
+  }
+});
+
+test('workflow plan page.view is gated by the same challenge check as page.read', async () => {
+  registerWorkflowPlanHandlers();
+  const fixture = browserFixture();
+  const originalSend = globalThis.chrome.tabs.sendMessage;
+  const originalQuerySelectorAll = globalThis.document.querySelectorAll;
+  try {
+    globalThis.chrome.runtime = { lastError: undefined };
+    globalThis.chrome.tabs.sendMessage = (_tabId, _message, optionsOrCallback, maybeCallback) => {
+      const callback = typeof optionsOrCallback === 'function' ? optionsOrCallback : maybeCallback;
+      callback?.({ success: true, data: { url: 'https://shop.test/checkout', title: 'Shop', content: 'Ordinary page content' } });
+    };
+    globalThis.document.querySelectorAll = (selector) => selector === 'iframe'
+      ? [{ src: 'https://challenges.cloudflare.com/turnstile/v0/api.js' }] : [];
+    await assert.rejects(
+      () => executeBridgeRequest('workflow.plan.page', { action: 'view', tab_id: fixture.context.tabId },
+        { ...fixture.context, requestId: 'plan-view-challenge' }),
+      /检测到站点验证，需要用户完成/,
+    );
+    assert.deepEqual(fixture.effects.prompts, ['检测到站点验证，需要用户完成']);
+  } finally {
+    globalThis.document.querySelectorAll = originalQuerySelectorAll;
+    globalThis.chrome.tabs.sendMessage = originalSend;
+    fixture.restore();
+  }
 });

@@ -1,6 +1,6 @@
 import os from 'node:os';
 import path from 'node:path';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import WebSocket from 'ws';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -50,6 +50,7 @@ const transport = new StdioClientTransport({
         ACTSPAN_BRIDGE_URL: url,
         ACTSPAN_EXTENSION_IDS: extensionId,
         MOLE_MCP_LOG: path.join(home, 'server.log'),
+        ACTSPAN_STATE_DIR: home,
     },
 });
 const client = new Client({ name: 'actspan-e2e', version: '1.0.0' });
@@ -180,5 +181,10 @@ const bad = await handshake({ headers: { Origin: `chrome-extension://${extension
 check('wrong token is rejected', bad.close === 4001);
 
 await client.close();
+// 退出前停掉本用例拉起的桥并清理临时状态，避免遗留守护进程与日志。
+process.env.ACTSPAN_STATE_DIR = home;
+const { stopBridgeDaemon } = await import('../bridge-lock.js');
+await stopBridgeDaemon({ port });
+rmSync(home, { recursive: true, force: true });
 console.log(failures ? `\n${failures} e2e checks failed` : '\nall e2e checks passed');
 process.exit(failures ? 1 : 0);

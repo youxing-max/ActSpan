@@ -414,6 +414,15 @@ export const agenticLoop = async (
   loadedOnDemandTools?: Set<string>,
   parentTaskDeadline?: DeadlineSignal,
 ): Promise<InputItem[]> => {
+  const executionContext = options?.disallowTools?.length
+    ? {
+        ...options.toolContext,
+        disallowedTools: new Set([
+          ...(options.toolContext?.disallowedTools || []),
+          ...options.disallowTools,
+        ]),
+      }
+    : options?.toolContext;
   const ownsTaskDeadline = !parentTaskDeadline;
   const taskDeadline = parentTaskDeadline || createDeadlineSignal(
     signal,
@@ -421,10 +430,16 @@ export const agenticLoop = async (
     '任务级墙钟预算已到期',
   );
   const loopSignal = taskDeadline.signal;
-  let round = 0;
-  let totalToolCalls = 0;
-  let emptyRetries = 0;
-  const signatureCount = new Map<string, number>();
+  const usage = budget.sharedUsage ?? {
+    rounds: 0,
+    toolCalls: 0,
+    emptyRetries: 0,
+    sameSignatureCounts: new Map<string, number>(),
+  };
+  let round = usage.rounds;
+  let totalToolCalls = usage.toolCalls;
+  let emptyRetries = usage.emptyRetries;
+  const signatureCount = usage.sameSignatureCounts;
   let roundsSinceTodoOp = 0;
   let timeoutReported = false;
   let imageInjectionCount = 0;
@@ -484,6 +499,7 @@ export const agenticLoop = async (
 
     // ── 机制：调用 LLM ──
     round++;
+    usage.rounds = round;
     emitCheckpoint(options, 'act', round, `第 ${round} 轮`, context);
 
     let fullText: string;
@@ -522,6 +538,7 @@ export const agenticLoop = async (
     // ── 路径 A：模型调用了工具 ──
     if (functionCalls.length > 0) {
       emptyRetries = 0;
+      usage.emptyRetries = 0;
 
       // ── 边界：死循环检测 ──
       // 达到上限的调用只能保留上下文中的调用/结果记录，不能再次执行。
@@ -547,9 +564,10 @@ export const agenticLoop = async (
 
       // ── 边界：总调用数检查 ──
       totalToolCalls += functionCalls.length;
+      usage.toolCalls = totalToolCalls;
       if (totalToolCalls >= budget.maxToolCalls) {
         const results = executableCalls.length > 0
-          ? await executeToolCalls(executableCalls, tabId, loopSignal, emit, undefined, options?.toolContext)
+          ? await executeToolCalls(executableCalls, tabId, loopSignal, emit, undefined, executionContext)
           : [];
         for (const r of results) context.push(r);
         if (tabTracker) scanTabNavigateResults(executableCalls, results, tabTracker);
@@ -606,17 +624,25 @@ export const agenticLoop = async (
           const subTools = buildAgentToolSet(tools, allTools, config.toolFilter);
 
           const mergedBudget: Partial<LoopBudget> = {};
-          for (const [key, value] of Object.entries(config.budget)) {
-            const budgetKey = key as keyof LoopBudget;
+          const numericBudgetKeys = [
+            'maxRounds', 'maxToolCalls', 'maxSameSignature', 'maxContextItems',
+            'maxSubtaskDepth', 'taskDeadlineMs',
+          ] as const;
+          for (const budgetKey of numericBudgetKeys) {
+            const value = config.budget[budgetKey];
             if (typeof value !== 'number') continue;
             const parentValue = budget[budgetKey];
             mergedBudget[budgetKey] = parentValue === undefined ? value : Math.min(parentValue, value);
           }
-          const subBudget: LoopBudget = { ...budget, ...mergedBudget };
+          // 子代理独立计数，避免与父循环共享可变计数器造成轮次回退。
+          const subBudget: LoopBudget = { ...budget, ...mergedBudget, sharedUsage: undefined };
 
           const resultContext = await agenticLoop(
             subContext, subTools, config.buildPrompt(), subBudget,
-            effectiveTabId, runnerSignal || loopSignal, emit, undefined, depth + 1,
+            effectiveTabId, runnerSignal || loopSignal, emit,
+            // 子代理继承父级 toolContext（含执行器禁用集合），敏感信任按同一会话作用域收敛
+            options ? { toolContext: executionContext } : undefined,
+            depth + 1,
             undefined, undefined, undefined, tabTracker,
             effectiveRegistry, undefined, undefined, taskDeadline,
           );
@@ -750,7 +776,7 @@ export const agenticLoop = async (
 
       // 执行剩余常规工具
       if (regularCalls.length > 0) {
-        const results = await executeToolCalls(regularCalls, tabId, loopSignal, emit, agentRunner, options?.toolContext);
+        const results = await executeToolCalls(regularCalls, tabId, loopSignal, emit, agentRunner, executionContext);
         for (const r of results) context.push(r);
         if (tabTracker) scanTabNavigateResults(regularCalls, results, tabTracker);
         imageInjectionCount = await injectScreenshotImages(regularCalls, results, context, imageInjectionCount);
@@ -817,6 +843,7 @@ export const agenticLoop = async (
     // ── 边界：空响应重试 ──
     if (!fullText.trim()) {
       emptyRetries++;
+      usage.emptyRetries = emptyRetries;
       if (emptyRetries <= MAX_EMPTY_RETRIES) {
         if (context.length > 0) {
           const last = context[context.length - 1];
@@ -844,7 +871,7 @@ export const agenticLoop = async (
   // ── 边界：轮数耗尽 ──
   if (round >= budget.maxRounds) {
     const lastItem = context[context.length - 1];
-    const hasReply = 'role' in lastItem && lastItem.role === 'assistant' &&
+    const hasReply = Boolean(lastItem) && 'role' in lastItem && lastItem.role === 'assistant' &&
                      'content' in lastItem && getTextContent(lastItem.content).trim();
     if (!hasReply) {
       context.push({

@@ -50,7 +50,7 @@ const workflow = {
   description: '帮助用户快速搜索商品',
   triggers: ['搜索商品', '查找商品'],
   parameters: { type: 'object', properties: {} },
-  plan: { steps: [{ action: 'page', params: { action: 'read' } }] },
+  plan: { steps: [{ action: 'page', params: { action: 'view' } }] },
 };
 
 const save = (overrides = {}) => saveWorkflowFunction.execute({
@@ -214,6 +214,21 @@ test('an unknown plan action is saved as-is and named with its step number', asy
   });
   assert.match(result.data.warnings.join(' | '), /step 2 action "delete_everything"/);
   assert.match(result.data.warnings.join(' | '), /saved as-is/);
+});
+
+test('a legal action with an illegal sub-action is named as failing at run time', async () => {
+  const result = await saveWithWarnings({
+    plan: {
+      steps: [
+        { action: 'page', params: { action: 'read' } },
+        { action: 'cdp_dom', params: { action: 'query' } },
+      ],
+    },
+  });
+  const joined = result.data.warnings.join(' | ');
+  assert.match(joined, /step 1 page\.read/);
+  assert.match(joined, /step 2 cdp_dom\.query/);
+  assert.match(joined, /will fail when the workflow runs/);
 });
 
 test('a step without an action is named as empty', async () => {

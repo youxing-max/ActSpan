@@ -39,17 +39,6 @@ export interface SavedPosition {
 
 // ============ 悬浮球内核常量 ============
 
-export const AGENT_PHASE_LABELS: Record<string, string> = {
-  idle: '待机',
-  plan: '规划',
-  act: '执行',
-  observe: '观察',
-  verify: '校验',
-  finalize: '完成',
-};
-
-export const SHOW_AGENT_STATE_PANEL = false;
-
 export const INTERNAL_STATUS_HINT =
   /(子代理切换|你现在扮演|当前扮演|round\s*\d+|post_tool_execution_verify|router_initial_route|offering_instead_of_doing|调用链|检查点|调度状态|当前轮次|执行约束|当前优先子目标|下一步优先|本轮首选|优先使用|严格按当前策略推进|工具已执行完毕|不要反问用户|不要说|代理角色|tool calls?|tool_choice|function_call(?:_output)?)/i;
 

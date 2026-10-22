@@ -19,6 +19,8 @@ export const AI_CONFIG = {
   MAX_SAME_TOOL_CALLS: 5,
   /** OMP anyrouter 的 OpenAI Responses 完整请求地址 */
   DEFAULT_ENDPOINT: 'https://ai-api-gateway.app.baizhi.cloud/api/openai/v1/responses',
+  /** 设置页 Endpoint 输入框的占位示例（不是实际默认请求地址） */
+  ENDPOINT_PLACEHOLDER: 'https://example/api/openai/v1/responses',
   /** OMP anyrouter 当前默认模型 */
   DEFAULT_MODEL: 'gpt-6.1-sol',
 };

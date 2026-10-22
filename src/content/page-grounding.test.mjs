@@ -479,6 +479,15 @@ test('snapshot folds nested decorations and labels but keeps weak candidates', (
   assert.ok(response.data.elements.find((el) => el.tag === 'span').element_id, '弱候选必须保留');
 });
 
+test('sanitizeElementValue hides password, OTP, card and hidden values', () => {
+  assert.equal(sanitizeElementValue('password', 'hunter2'), undefined);
+  assert.equal(sanitizeElementValue('hidden', 'csrf-token'), undefined);
+  assert.equal(sanitizeElementValue('text', '123456', { autocomplete: 'one-time-code' }), undefined);
+  assert.equal(sanitizeElementValue('text', '4111111111111111', { name: 'cc-number' }), undefined);
+  assert.equal(sanitizeElementValue('text', '123456', { id: 'verification_code' }), undefined);
+  assert.equal(sanitizeElementValue('text', 'normal note', { name: 'message' }), 'normal note');
+});
+
 test('actspan root host is excluded from the page snapshot', () => {
   const ball = domNode('div', { attrs: { id: 'actspan-root' }, text: 'floating-ball-ui' });
   const real = domNode('button', { text: 'real-button' });

@@ -4,6 +4,7 @@
  */
 
 import Channel from '../lib/channel';
+import { isSensitiveRecordedField } from '../lib/recorder-redaction';
 import { detectObstruction, getElementCenter, withVirtualCursorBeforeObstruction } from './virtual-cursor';
 
 /**
@@ -32,11 +33,14 @@ export interface FindTarget {
 }
 
 interface ElementHandleActionParams {
-  action: 'click' | 'fill' | 'focus' | 'get_info' | 'press_key' | 'scroll_into_view' | 'select' | 'hover' | 'inspect' | 'observe' | 'read';
+  action: 'click' | 'fill' | 'focus' | 'get_info' | 'press_key' | 'scroll_into_view' | 'select' | 'hover' | 'inspect' | 'observe' | 'read' | 'classify';
   element_id?: string;
   snapshot_id?: string;
   selector?: string;
   find?: FindTarget;
+  /** classify 按可见文本定位时使用 */
+  text?: string;
+  match_mode?: 'contains' | 'exact';
   value?: string;
   key?: string;
   modifiers?: string[];
@@ -330,7 +334,20 @@ export const pruneDetachedHandles = (): void => {
     elementHandleMap.delete(id);
     elementHandleSnapshotMap.delete(id);
   }
+  // 仍在文档中的超大页面仍会吊住大量 DOM：超过上限时优先释放旧快照与无元数据
+  // （标注路径）的强引用；句柄删除时同步删除元数据，避免元数据表无限增长。
+  for (const [id] of elementHandleMap) {
+    if (elementHandleMap.size <= MAX_TRACKED_HANDLES) break;
+    const metadata = elementHandleSnapshotMap.get(id);
+    if (!metadata || metadata.snapshotId !== latestSnapshotId) {
+      elementHandleMap.delete(id);
+      elementHandleSnapshotMap.delete(id);
+    }
+  }
 };
+
+const MAX_TRACKED_HANDLES = 4000;
+let latestSnapshotId = '';
 
 // ponytail: 固定 256 阈值换 O(1) 摊还；页面元素数极多时单次清理会变慢，届时改成按快照边界清理。
 const PRUNE_EVERY = 256;
@@ -391,8 +408,18 @@ const buildSelectorCandidates = (el: Element): string[] => {
   return Array.from(new Set(selectors)).slice(0, 2);
 };
 
-export const sanitizeElementValue = (type: unknown, raw: unknown): string | undefined => {
-  if (String(type || '').toLowerCase() === 'password') return undefined;
+export const sanitizeElementValue = (
+  type: unknown,
+  raw: unknown,
+  meta?: { name?: string | null; id?: string | null; autocomplete?: string | null },
+): string | undefined => {
+  const inputType = String(type || '').toLowerCase();
+  if (inputType === 'password' || inputType === 'hidden') return undefined;
+  if (isSensitiveRecordedField({
+    inputType,
+    autocomplete: meta?.autocomplete || undefined,
+    selector: [meta?.name, meta?.id].filter(Boolean).join(' '),
+  })) return undefined;
   return clipText(raw || '', 120);
 };
 
@@ -404,13 +431,18 @@ const buildElementDescriptor = (el: Element, score: number = 0, matchReasons?: s
   const htmlEl = el as HTMLElement;
   const handleId = getOrCreateElementHandle(el);
   if (snapshotId) {
+    latestSnapshotId = snapshotId;
     elementHandleSnapshotMap.set(handleId, { snapshotId, fingerprint: getElementFingerprint(el) });
   }
   const placeholder = el.getAttribute('placeholder') || undefined;
   const href = el instanceof HTMLAnchorElement ? el.href || undefined : undefined;
   const role = el.getAttribute('role') || undefined;
   const value = el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement
-    ? sanitizeElementValue(el.getAttribute('type'), el.value)
+    ? sanitizeElementValue(el.getAttribute('type'), el.value, {
+      name: el.getAttribute('name'),
+      id: el.getAttribute('id'),
+      autocomplete: el.getAttribute('autocomplete'),
+    })
     : undefined;
 
   // 有缓存时复用缓存数据，避免重复调用昂贵 DOM API
@@ -1181,6 +1213,32 @@ const initElementHandleAction = () => {
         return true;
       }
 
+      // 分类只回传 payment/deletion/ordinary 与签名，不读取文本或值。
+      if (action === 'classify') {
+        let target: Element | null = null;
+        if (data.text) {
+          const wanted = normalizeText(data.text);
+          const candidates = collectDeepElements(document, 'button, a, [role="button"], input[type="submit"], input[type="button"], label');
+          target = candidates.find((element) => {
+            const text = normalizeText((element as HTMLElement).innerText || element.textContent || '');
+            return data.match_mode === 'exact' ? text === wanted : text.includes(wanted);
+          }) || null;
+        } else {
+          const resolved = resolveActionTarget(data);
+          if (resolved.error) {
+            sendResponse?.({ success: false, error: resolved.error });
+            return true;
+          }
+          target = resolved.target;
+        }
+        if (!target) {
+          sendResponse?.({ success: false, error: '未找到目标元素' });
+          return true;
+        }
+        sendResponse?.({ success: true, data: classifySensitiveTarget(target, data.submit === true) });
+        return true;
+      }
+
       const resolved = resolveActionTarget(data);
       if (resolved.error) {
         sendResponse?.({
@@ -1247,8 +1305,13 @@ const initElementHandleAction = () => {
       // submit 必须与即将执行的动作一致，否则检查的对象和执行的对象不是同一个。
       const approvalError = (submit: boolean): string | null => {
         const approved = data.approved_signature;
-        if (!approved) return null;
-        return classifySensitiveTarget(target, submit).signature === approved ? null : '确认后目标已变化，请重新确认';
+        const current = classifySensitiveTarget(target, submit);
+        if (!approved) {
+          // 普通目标不需要签名；但如果审批期间被改成支付/删除目标，必须 fail-closed。
+          return current.kind === 'payment' || current.kind === 'deletion'
+            ? '目标已变为敏感操作，请重新确认' : null;
+        }
+        return current.signature === approved ? null : '确认后目标已变化，请重新确认';
       };
 
       switch (action) {

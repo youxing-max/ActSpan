@@ -2,7 +2,7 @@ import type { FunctionDefinition, FunctionResult } from './types';
 import { registryService } from './skill-registry';
 import { normalizeWorkflow } from './registry-service';
 import type { SkillSpec } from './skill-types';
-import { isSupportedRemotePlanAction } from './remote-workflow';
+import { isSupportedRemotePlanAction, isWorkflowPlanSubActionAllowed } from './remote-workflow';
 import { isPlainObject } from '../lib/guards';
 
 // F4：剧本体检。好剧本零警告；坏形状照存但逐条点名——经验不阻塞，话要说清。
@@ -105,6 +105,15 @@ export const saveWorkflowFunction: FunctionDefinition = {
       const action = isPlainObject(step) ? step.action : undefined;
       if (typeof action !== 'string' || !isSupportedRemotePlanAction(action)) {
         warnings.push(`step ${i + 1} action ${JSON.stringify(action ?? null)} is not a valid built-in tool name; saved as-is`);
+        continue;
+      }
+      // action 合法不等于可执行：page / cdp_dom 在 plan 层按 (action, subAction) 再收窄一次。
+      // 只校验 action 时这些步骤零警告入库，跑到 workflow_run 才撞 E_POLICY_DENIED——保存时先点名。
+      const rawSubAction = isPlainObject(step) && isPlainObject(step.params) ? step.params.action : undefined;
+      if (typeof rawSubAction !== 'string' || rawSubAction.includes('{{')) continue;
+      const subAction = rawSubAction.trim().toLowerCase();
+      if (!isWorkflowPlanSubActionAllowed(action.trim(), subAction)) {
+        warnings.push(`step ${i + 1} ${action.trim()}.${subAction} is not an allowed workflow-plan sub-action; saved as-is and will fail when the workflow runs`);
       }
     }
 

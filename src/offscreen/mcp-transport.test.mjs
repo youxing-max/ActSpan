@@ -175,12 +175,13 @@ test('pair_ok persists the auto token through the service worker, not chrome.sto
     transport.start();
     await settle();
     const socket = sockets.at(-1);
-    socket.onmessage({ data: JSON.stringify({ type: 'pair_ok', token: 'fresh-token', port: 30121 }) });
+    socket.onmessage({ data: JSON.stringify({ type: 'pair_ok', token: 'fresh-token', port: 30121, pairingSecret: 'proof-1' }) });
     await settle();
     const persist = sent.find((message) => message.type === 'actspan_mcp_settings_set_auto');
     assert.ok(persist, 'the paired token must be handed to the service worker to persist');
     assert.equal(persist.value.token, 'fresh-token');
     assert.equal(persist.value.port, 30121);
+    assert.equal(persist.value.pairingSecret, 'proof-1', 'the pairing proof must survive restarts');
   } finally {
     transport.stop();
   }

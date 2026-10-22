@@ -108,6 +108,8 @@ before(async () => {
   }
   try {
     if (hostError) throw new Error('fixture host unavailable');
+    // 真机用例会等待人工审批（最长 15s）且依赖已配对扩展：默认快速跳过，显式开启才运行。
+    if (process.env.ACTSPAN_LIVE !== '1') throw new Error('live suite disabled; set ACTSPAN_LIVE=1 to run');
     if (!(await bridgeListening())) throw new Error(`ActSpan bridge is not listening at ${BRIDGE_URL}; the live acceptance suite needs a paired extension and never fakes one`);
     // 扩展 ID 由 manifest key 推导，和 install/acceptance 用同一事实源，不需要人手填环境变量。
     if (!process.env.ACTSPAN_EXTENSION_IDS && !process.env.ACTSPAN_EXTENSION_ID) {

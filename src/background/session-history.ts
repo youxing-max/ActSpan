@@ -236,6 +236,15 @@ function extractAgentTransitions(eventLog: SessionEventLogItem[]): SessionAgentT
 
 // ============ 历史记录构建与持久化 ============
 
+/** 历史记录里最终回复的最大长度：防止整页文本/日志把 storage 撑爆 */
+const MAX_ASSISTANT_REPLY_CHARS = 8_000;
+
+const truncateAssistantReply = (reply: string | undefined): string | undefined => {
+    if (!reply) return reply;
+    if (reply.length <= MAX_ASSISTANT_REPLY_CHARS) return reply;
+    return `${reply.slice(0, MAX_ASSISTANT_REPLY_CHARS)}\n…（已截断 ${reply.length - MAX_ASSISTANT_REPLY_CHARS} 字）`;
+};
+
 /** 构建会话历史记录 */
 function buildSessionHistoryRecord(session: Session): SessionHistoryRecord {
     const updatedAt = Date.now();
@@ -252,7 +261,9 @@ function buildSessionHistoryRecord(session: Session): SessionHistoryRecord {
         durationMs,
         failureCode: session.failureCode,
         lastError: session.lastError,
-        assistantReply: extractTurnCompletedReply(session.eventLog) || extractAssistantReply(session.eventLog),
+        assistantReply: truncateAssistantReply(
+            extractTurnCompletedReply(session.eventLog) || extractAssistantReply(session.eventLog),
+        ),
         toolCalls: extractToolCalls(session.eventLog),
         toolCallChain: extractToolCallChain(session.eventLog),
         agentTransitions: extractAgentTransitions(session.eventLog),
@@ -262,6 +273,24 @@ function buildSessionHistoryRecord(session: Session): SessionHistoryRecord {
 
 /** 会话历史写入队列，避免并发覆盖 */
 let sessionHistoryPersistQueue: Promise<void> = Promise.resolve();
+
+/** 删除指定会话的历史记录（会话“清除”后必须真正消失） */
+export function removeSessionHistory(sessionId: string) {
+    sessionHistoryPersistQueue = sessionHistoryPersistQueue
+        .then(async () => {
+            const history = (await readMigratedStorage<SessionHistoryRecord[]>(
+                chrome.storage.local,
+                SESSION_HISTORY_STORAGE_KEY,
+                LEGACY_SESSION_HISTORY_STORAGE_KEY,
+            )) || [];
+            const nextHistory = history.filter(item => item.sessionId !== sessionId);
+            if (nextHistory.length === history.length) return;
+            await setLocalStorage({ [SESSION_HISTORY_STORAGE_KEY]: nextHistory });
+        })
+        .catch((err) => {
+            console.error('[Actspan] 删除会话历史失败:', err);
+        });
+}
 
 /** 写入/更新会话历史 */
 export function persistSessionHistory(session: Session) {

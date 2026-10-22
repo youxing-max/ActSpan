@@ -5,6 +5,7 @@
  */
 
 import type { FunctionDefinition, FunctionResult } from './types';
+import { sanitizeFilename } from './download-file';
 
 /** 数据缓冲区结构 */
 export interface DataBuffer {
@@ -186,6 +187,8 @@ export const dataPipelineFunction: FunctionDefinition = {
   description: 'Data pipeline tool: buffering, transformation (filter/sort/deduplicate/field selection) and export (JSON/CSV/Markdown/TSV)',
   supportsParallel: false,
   permissionLevel: 'read',
+  actionPermissions: { export: 'sensitive' },
+  approvalMessageTemplate: { export: 'AI 正在请求把数据导出到本地文件' },
   parameters: {
     type: 'object',
     properties: {
@@ -495,7 +498,17 @@ export const dataPipelineFunction: FunctionDefinition = {
           const format = params.format || 'json';
           const formatted = formatData(buffer.items, format);
           const defaultFilename = `${buffer.name.replace(/[^\w\u4e00-\u9fff-]/g, '_')}.${formatted.ext}`;
-          const filename = params.filename || defaultFilename;
+          const sanitized = sanitizeFilename(params.filename || defaultFilename);
+          if (sanitized.error || !sanitized.name) {
+            return { success: false, error: sanitized.error || '导出文件名不合法' };
+          }
+          let filename = sanitized.name;
+          const extension = filename.includes('.') ? filename.split('.').pop()!.toLowerCase() : '';
+          if (!extension) {
+            filename = `${filename}.${formatted.ext}`;
+          } else if (!['json', 'csv', 'md', 'markdown', 'tsv', 'txt'].includes(extension)) {
+            return { success: false, error: `不允许导出 .${extension} 文件，仅支持 json/csv/md/tsv` };
+          }
 
           // 使用 base64 data URL 方式下载（参考 download-file.ts）
           const base64 = btoa(unescape(encodeURIComponent(formatted.content)));

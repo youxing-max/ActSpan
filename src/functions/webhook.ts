@@ -77,25 +77,31 @@ export const saveWebhookConfig = async (entries: WebhookEntry[]): Promise<void> 
 
 /* ---------- 发送逻辑 ---------- */
 
-/** 构建 Bark 推送请求 */
+/** 构建 Bark 推送请求：正文走 POST body，避免消息进入 URL 路径、代理与网关日志 */
 const buildBarkRequest = (
   bark: BarkConfig,
   body: { title: string; message: string },
 ): { url: string; init: RequestInit } => {
   const server = bark.server.replace(/\/+$/, '');
-  const pushUrl = `${server}/${encodeURIComponent(bark.deviceKey)}/${encodeURIComponent(body.title)}/${encodeURIComponent(body.message)}`;
+  const payload: Record<string, string> = {
+    device_key: bark.deviceKey,
+    title: body.title,
+    body: body.message,
+  };
+  if (bark.group) payload.group = bark.group;
+  if (bark.icon) payload.icon = bark.icon;
+  if (bark.sound) payload.sound = bark.sound;
+  if (bark.clickUrl) payload.url = bark.clickUrl;
+  if (bark.level) payload.level = bark.level;
 
-  const params = new URLSearchParams();
-  if (bark.group) params.set('group', bark.group);
-  if (bark.icon) params.set('icon', bark.icon);
-  if (bark.sound) params.set('sound', bark.sound);
-  if (bark.clickUrl) params.set('url', bark.clickUrl);
-  if (bark.level) params.set('level', bark.level);
-
-  const qs = params.toString();
-  const finalUrl = qs ? `${pushUrl}?${qs}` : pushUrl;
-
-  return { url: finalUrl, init: { method: 'GET' } };
+  return {
+    url: `${server}/push`,
+    init: {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json; charset=utf-8' },
+      body: JSON.stringify(payload),
+    },
+  };
 };
 
 /** 判断是否为飞书/Lark 机器人 Webhook */
@@ -237,9 +243,28 @@ export const sendWebhookEntries = async (
     },
   };
 };
+/** 自动推送开关：默认开启；用户可在 Webhook 设置页关闭，避免页面内容在不知情时外发。 */
+const AUTO_PUSH_KEY = 'actspan_feishu_auto_push';
+
+export const isFeishuAutoPushEnabled = async (): Promise<boolean> => {
+  try {
+    const stored = await new Promise<Record<string, unknown>>((resolve) => {
+      chrome.storage.local.get(AUTO_PUSH_KEY, (result) => resolve(result || {}));
+    });
+    return stored[AUTO_PUSH_KEY] !== false;
+  } catch {
+    return true;
+  }
+};
+
+export const setFeishuAutoPushEnabled = async (enabled: boolean): Promise<void> => {
+  await new Promise<void>((resolve) => {
+    chrome.storage.local.set({ [AUTO_PUSH_KEY]: enabled }, resolve);
+  });
+};
+
 /** 向已启用的飞书 Webhook 推送 AI 完成结果 */
-export const sendFeishuCompletion = async (message: string): Promise<FunctionResult> => {
-  const entries = selectFeishuWebhooks(await readWebhookConfig());
+export const sendFeishuCompletion = async (message: string): Promise<FunctionResult> => {  const entries = selectFeishuWebhooks(await readWebhookConfig());
   if (entries.length === 0) {
     return {
       success: false,
@@ -273,7 +298,8 @@ export const webhookFunction: FunctionDefinition = {
     'The user must configure at least one enabled webhook in Options > Webhook before this tool works.\n\n' +
     '⚠️ Do NOT use this tool for browser desktop notifications — use the "notification" tool instead.',
   supportsParallel: true,
-  permissionLevel: 'interact',
+  // webhook 可把任意文本 POST 到外部平台，属于数据外带通道
+  permissionLevel: 'sensitive',
   parameters: {
     type: 'object',
     properties: {

@@ -8,7 +8,64 @@
 import type { FunctionDefinition, FunctionResult, ToolExecutionContext } from './types';
 import { CDPSessionManager } from '../lib/cdp-session';
 import { sendToTabWithRetry } from './tab-message';
+import { requestConfirmationFunction } from './request-confirmation';
 import { sleep } from './tab-utils';
+
+type SensitiveTargetKind = 'payment' | 'deletion' | 'ordinary';
+interface TargetClassification {
+  kind: SensitiveTargetKind;
+  amount?: string;
+  label?: string;
+  signature?: string;
+}
+
+/** 执行前用真实元素做敏感分类；页面无 content script 或超时时返回 null。 */
+const classifyTargetBeforeAction = async (
+  tabId: number,
+  params: Record<string, unknown>,
+  signal?: AbortSignal,
+): Promise<TargetClassification | null> => {
+  const action = String(params.action || '');
+  if (!['click', 'double_click', 'right_click', 'click_text', 'fill'].includes(action)) return null;
+  const message: Record<string, unknown> = { action: 'classify' };
+  if (action === 'click_text') {
+    if (!params.text) return null;
+    message.text = params.text;
+    message.match_mode = params.match_mode || 'contains';
+  } else if (params.element_id) {
+    message.element_id = params.element_id;
+    message.snapshot_id = params.snapshot_id;
+  } else if (params.selector) {
+    message.selector = params.selector;
+  } else {
+    return null;
+  }
+  try {
+    const result = await sendToTabWithRetry<{ success: boolean; data?: TargetClassification }>(
+      tabId, '__page_grounding_action', message,
+      { signal, deadlineMs: 3000, timeoutMessage: '目标元素分类超时', injectContentScript: false });
+    return result?.success ? result.data || null : null;
+  } catch {
+    return null;
+  }
+};
+
+/** 支付/删除目标即使处于“本次不再询问”信任期也必须单独确认。 */
+const requireSensitiveTargetApproval = async (
+  tabId: number,
+  params: Record<string, unknown>,
+  signal?: AbortSignal,
+): Promise<string | null> => {
+  const classification = await classifyTargetBeforeAction(tabId, params, signal);
+  if (!classification || (classification.kind !== 'payment' && classification.kind !== 'deletion')) return null;
+  const label = classification.kind === 'payment' ? '支付/扣款' : '删除';
+  const approval = await requestConfirmationFunction.execute({
+    message: `AI 正在请求${label}操作：${classification.label || '目标元素'}${classification.amount ? `，金额 ${classification.amount}` : ''}。是否允许？`,
+  }, { tabId, signal });
+  if (!approval.success) return approval.error || '请求确认失败';
+  if (approval.data?.approved !== true) return `用户未批准${label}操作`;
+  return null;
+};
 
 // ============ 辅助函数 ============
 
@@ -1287,6 +1344,8 @@ export const cdpInputFunction: FunctionDefinition = {
       case 'click':
       case 'double_click':
       case 'right_click': {
+        const approvalError = await requireSensitiveTargetApproval(tabId, params, signal);
+        if (approvalError) return { success: false, error: approvalError };
         const coords = await resolveTargetCoords(tabId, params, signal);
         if (!coords.success) return { success: false, error: coords.error };
 
@@ -1332,6 +1391,8 @@ export const cdpInputFunction: FunctionDefinition = {
       }
 
       case 'fill': {
+        const approvalError = await requireSensitiveTargetApproval(tabId, params, signal);
+        if (approvalError) return { success: false, error: approvalError };
         return performFill(tabId, { element_id: params.element_id, snapshot_id: params.snapshot_id, selector: params.selector, value: params.value! }, signal);
       }
 
@@ -1344,6 +1405,8 @@ export const cdpInputFunction: FunctionDefinition = {
       }
 
       case 'click_text': {
+        const approvalError = await requireSensitiveTargetApproval(tabId, params, signal);
+        if (approvalError) return { success: false, error: approvalError };
         return performClickText(tabId, params.text!, params.match_mode || 'contains', signal);
       }
 

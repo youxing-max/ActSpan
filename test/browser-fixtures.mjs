@@ -66,18 +66,27 @@ export async function createMcpHarness() {
   const bridgeUrl = process.env.ACTSPAN_BRIDGE_URL || 'ws://127.0.0.1:30121';
   const transport = new StdioClientTransport({ command, args, cwd: join(root, '..', 'mcp-server'), env: { ...getDefaultEnvironment(), ...process.env, ACTSPAN_API_URL: process.env.ACTSPAN_API_URL || 'https://acceptance.invalid', ACTSPAN_API_KEY: process.env.ACTSPAN_API_KEY || 'acceptance-only-key', ...(extensionId ? { ACTSPAN_EXTENSION_IDS: extensionId } : {}), ACTSPAN_BRIDGE_URL: bridgeUrl, ACTSPAN_MCP_LOG: join(logDir, 'mcp-server.log'), MOLE_MCP_LOG: join(logDir, 'mcp-server.log') }, stderr: 'pipe' });
   const client = new Client({ name: 'actspan-scenarios', version: '1.0.0' });
-  try { await client.connect(transport); } catch (error) { throw new Error(`Actspan MCP server did not start. Inspect ${join(logDir, 'mcp-server.log')}: ${error.message}`); }
-  const callRaw = (name, args = {}) => client.callTool({ name, arguments: args });
-  const call = async (name, args = {}) => {
-    const result = await callRaw(name, args);
-    if (result?.isError) throw new Error(`${name}: ${result.content?.map((item) => item.text || '').join('\n') || 'tool failed'}`);
-    return parseMcpText(result);
-  };
-  const listed = await client.listTools(); const tools = new Map(listed.tools.map((tool) => [tool.name, tool]));
-  const requireTool = (name) => { if (!tools.has(name)) throw new Error(`Actspan contract unavailable: MCP tool ${name} is not registered; refusing to skip/pass.`); return tools.get(name); };
-  const status = await call('actspan_status');
-  if (status?.connected !== true) throw new Error(`Actspan extension is not connected through the existing bridge: ${JSON.stringify(status)}. This suite never fakes a bridge or launches Chrome.`);
-  return { client, tools, call, callRaw, requireTool, async close() { await client.close(); } };
+  try { await client.connect(transport); } catch (error) {
+    await client.close().catch(() => undefined);
+    throw new Error(`Actspan MCP server did not start. Inspect ${join(logDir, 'mcp-server.log')}: ${error.message}`);
+  }
+  try {
+    const callRaw = (name, args = {}) => client.callTool({ name, arguments: args });
+    const call = async (name, args = {}) => {
+      const result = await callRaw(name, args);
+      if (result?.isError) throw new Error(`${name}: ${result.content?.map((item) => item.text || '').join('\n') || 'tool failed'}`);
+      return parseMcpText(result);
+    };
+    const listed = await client.listTools(); const tools = new Map(listed.tools.map((tool) => [tool.name, tool]));
+    const requireTool = (name) => { if (!tools.has(name)) throw new Error(`Actspan contract unavailable: MCP tool ${name} is not registered; refusing to skip/pass.`); return tools.get(name); };
+    const status = await call('actspan_status');
+    if (status?.connected !== true) throw new Error(`Actspan extension is not connected through the existing bridge: ${JSON.stringify(status)}. This suite never fakes a bridge or launches Chrome.`);
+    return { client, tools, call, callRaw, requireTool, async close() { await client.close(); } };
+  } catch (error) {
+    // 子进程不关掉会一直占着 stdio 管道，node --test 的事件循环永远清不空，整个进程吊死。
+    await client.close().catch(() => undefined);
+    throw error;
+  }
 }
 
 export async function waitForPageValue(read, expression, expected, timeoutMs = 5000) {

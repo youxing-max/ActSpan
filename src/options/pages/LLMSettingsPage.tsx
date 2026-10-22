@@ -5,17 +5,31 @@
  */
 
 import { useEffect, useState } from 'react';
-import { Button, Form, Input, Modal, Space, Typography, App } from 'antd';
+import { Button, Form, Input, Modal, Space, Typography, App, Select } from 'antd';
 import { CheckCircleOutlined } from '@ant-design/icons';
-import { getAISettings, saveAISettings } from '../../ai/llm-client';
+import { getAISettings, saveAISettings, validateEndpoint } from '../../ai/llm-client';
 import { AI_CONFIG } from '../../config';
 import { OptionsPageLayout, OptionsSectionCard } from '../components/PageLayout';
 
 const { Title, Text, Paragraph } = Typography;
 
-/** 检查设置是否已配置（至少有 endpoint 和 apiKey） */
+const API_MODE_OPTIONS = [
+  { value: 'responses', label: 'OpenAI Responses' },
+  { value: 'chat_completions', label: 'Chat Completions' },
+];
+
+/** 检查设置是否已配置（合法 endpoint + apiKey） */
 const isConfigured = (s: { endpoint?: string; apiKey?: string }): boolean =>
-  !!(s.endpoint?.trim() && s.apiKey?.trim());
+  !!s.apiKey?.trim() && validateEndpoint(String(s.endpoint || '')).ok;
+
+/** endpoint 校验规则：阻止 http 公网地址泄露 API Key */
+const endpointRule = {
+  validator: async (_rule: unknown, value: unknown) => {
+    if (!value) return;
+    const result = validateEndpoint(String(value));
+    if (!result.ok) throw new Error(result.error);
+  },
+};
 
 export function LLMSettingsPage() {
   const { message } = App.useApp();
@@ -32,16 +46,20 @@ export function LLMSettingsPage() {
   useEffect(() => {
     const load = async () => {
       const settings = await getAISettings();
+      // 首次配置时不预填内置网关地址，避免用户误以为这就是自己的服务地址。
+      const hasSavedConnection = isConfigured(settings);
       form.setFieldsValue({
-        endpoint: settings.endpoint || AI_CONFIG.DEFAULT_ENDPOINT,
+        endpoint: hasSavedConnection ? settings.endpoint : '',
         apiKey: settings.apiKey || '',
         model: settings.model || AI_CONFIG.DEFAULT_MODEL,
+        apiMode: settings.apiMode || 'responses',
       });
-      if (!isConfigured(settings)) {
+      if (!hasSavedConnection) {
         setupForm.setFieldsValue({
-          endpoint: AI_CONFIG.DEFAULT_ENDPOINT,
+          endpoint: '',
           apiKey: '',
-          model: AI_CONFIG.DEFAULT_MODEL,
+          model: settings.model || AI_CONFIG.DEFAULT_MODEL,
+          apiMode: settings.apiMode || 'responses',
         });
         setShowSetup(true);
       }
@@ -54,17 +72,21 @@ export function LLMSettingsPage() {
   const doSave = async (values: Record<string, any>, fromSetup = false) => {
     setSaving(true);
     try {
+      const endpointValue = String(values.endpoint || '').trim();
+      if (!endpointValue) throw new Error('请填写 API Endpoint');
       await saveAISettings({
-        endpoint: String(values.endpoint || AI_CONFIG.DEFAULT_ENDPOINT).trim(),
+        endpoint: endpointValue,
         apiKey: String(values.apiKey || '').trim(),
         model: String(values.model || AI_CONFIG.DEFAULT_MODEL).trim(),
+        apiMode: values.apiMode || 'responses',
       });
       if (fromSetup) {
         setShowSetup(false);
         form.setFieldsValue({
-          endpoint: values.endpoint || AI_CONFIG.DEFAULT_ENDPOINT,
+          endpoint: endpointValue,
           apiKey: values.apiKey,
           model: values.model || AI_CONFIG.DEFAULT_MODEL,
+          apiMode: values.apiMode || 'responses',
         });
       }
       void message.success('设置已保存，Actspan 准备就绪');
@@ -77,8 +99,12 @@ export function LLMSettingsPage() {
 
   /* 主表单保存 */
   const handleSave = async () => {
-    const values = form.getFieldsValue();
-    await doSave(values);
+    try {
+      const values = await form.validateFields();
+      await doSave(values);
+    } catch {
+      /* 表单校验不通过时由 Form 展示字段错误 */
+    }
   };
 
   /* 引导浮层保存 */
@@ -91,10 +117,18 @@ export function LLMSettingsPage() {
     }
   };
 
+  /* 重置只清空输入，不把内置网关地址填回去 */
+  const handleReset = () => {
+    form.resetFields();
+    form.setFieldsValue({ endpoint: '' });
+  };
+
   if (!loaded) return null;
 
   const configured = isConfigured({ endpoint, apiKey });
   const endpointLabel = endpoint ? String(endpoint).replace(/^https?:\/\//, '') : '未配置';
+  const endpointCheck = validateEndpoint(String(endpoint || ''));
+  const endpointWarning = endpointCheck.ok ? endpointCheck.warning : undefined;
 
   return (
     <>
@@ -104,7 +138,7 @@ export function LLMSettingsPage() {
         description="配置与 OMP anyrouter 一致的 OpenAI Responses API 连接，也可以填写其他兼容服务。"
         extra={
           <Space>
-            <Button onClick={() => form.resetFields()}>重置表单</Button>
+            <Button onClick={handleReset}>重置表单</Button>
             <Button type="primary" loading={saving} onClick={() => void handleSave()}>
               保存设置
             </Button>
@@ -139,9 +173,12 @@ export function LLMSettingsPage() {
             <Form.Item
               label="Endpoint URL"
               name="endpoint"
-              extra="填写完整 Responses API 地址；OMP anyrouter 对应默认地址"
+              rules={[{ required: true, message: '请填写 API Endpoint' }, endpointRule]}
+              extra={endpointWarning
+                ? <Text type="warning">{endpointWarning}</Text>
+                : '填写完整 Responses API 地址；默认只允许 https'}
             >
-              <Input placeholder={AI_CONFIG.DEFAULT_ENDPOINT} />
+              <Input placeholder={AI_CONFIG.ENDPOINT_PLACEHOLDER} />
             </Form.Item>
             <Form.Item
               label="API Key"
@@ -156,6 +193,13 @@ export function LLMSettingsPage() {
               extra="默认使用 OMP anyrouter 中配置的 gpt-6.1-sol，也可填写该 provider 下的其他模型"
             >
               <Input placeholder={AI_CONFIG.DEFAULT_MODEL} />
+            </Form.Item>
+            <Form.Item
+              label="API 模式"
+              name="apiMode"
+              extra="Responses 或 Chat Completions；本地模型（Ollama/LM Studio）选 Chat Completions"
+            >
+              <Select options={API_MODE_OPTIONS} />
             </Form.Item>
             <Form.Item style={{ marginBottom: 0 }}>
               <Button type="primary" loading={saving} onClick={() => void handleSave()}>
@@ -196,10 +240,10 @@ export function LLMSettingsPage() {
           <Form.Item
             label={<span style={{ fontWeight: 500 }}>API 地址</span>}
             name="endpoint"
-            rules={[{ required: true, message: '请填写 API Endpoint' }]}
-            extra="填写完整 Responses API 地址；OMP anyrouter 对应默认地址"
+            rules={[{ required: true, message: '请填写 API Endpoint' }, endpointRule]}
+            extra="填写完整 API 地址；默认只允许 https（本机调试可用 localhost）"
           >
-            <Input placeholder={AI_CONFIG.DEFAULT_ENDPOINT} />
+            <Input placeholder={AI_CONFIG.ENDPOINT_PLACEHOLDER} />
           </Form.Item>
           <Form.Item
             label={<span style={{ fontWeight: 500 }}>API 密钥</span>}
@@ -211,6 +255,13 @@ export function LLMSettingsPage() {
           </Form.Item>
           <Form.Item label={<span style={{ fontWeight: 500 }}>模型</span>} name="model">
             <Input placeholder={AI_CONFIG.DEFAULT_MODEL} />
+          </Form.Item>
+          <Form.Item
+            label={<span style={{ fontWeight: 500 }}>API 模式</span>}
+            name="apiMode"
+            extra="本地模型（Ollama/LM Studio）请选择 Chat Completions"
+          >
+            <Select options={API_MODE_OPTIONS} />
           </Form.Item>
 
           <Button

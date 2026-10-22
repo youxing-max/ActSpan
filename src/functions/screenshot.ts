@@ -10,6 +10,9 @@ import { CDPSessionManager } from '../lib/cdp-session';
 import Channel from '../lib/channel';
 import { sendToTabWithRetry } from './tab-message';
 import { sleep, waitForTabComplete } from './tab-utils';
+import { isBlockedFetchUrl, isSafeNavigableUrl } from '../lib/ssrf-guard';
+import { taskManager } from '../background/task-manager';
+import { tabLeaseManager } from '../background/tab-lease-manager';
 
 const waitUntilTabReady = async (tabId: number, timeoutMs: number, signal?: AbortSignal): Promise<void> => {
   try {
@@ -26,9 +29,15 @@ const resolveElementRect = async (
   tabId: number,
   elementId: string,
   signal?: AbortSignal,
+  snapshotId?: string,
 ): Promise<{ x: number; y: number; width: number; height: number } | null> => {
   try {
-    const resp = await sendToTabWithRetry(tabId, '__get_element_rect', { element_id: elementId }, { signal });
+    const resp = await sendToTabWithRetry(
+      tabId,
+      '__get_element_rect',
+      { element_id: elementId, ...(snapshotId ? { snapshot_id: snapshotId } : {}) },
+      { signal },
+    );
     if (resp?.success && resp.rect) {
       return resp.rect;
     }
@@ -94,6 +103,10 @@ export const screenshotFunction: FunctionDefinition = {
         type: 'string',
         description: 'Element handle returned by page_snapshot, automatically captures that element region. Uses CDP.',
       },
+      snapshot_id: {
+        type: 'string',
+        description: 'The snapshot_id returned by page_snapshot, used together with element_id.',
+      },
       annotate: {
         type: 'boolean',
         description: 'Whether to annotate interactive elements with numbered labels on the screenshot. When enabled, element number markers are displayed on the screenshot and a mapping from numbers to element_id is returned. Useful when first entering a complex page to precisely locate elements. Only effective for visible area screenshots. Default false.',
@@ -113,6 +126,7 @@ export const screenshotFunction: FunctionDefinition = {
       clip?: { x: number; y: number; width: number; height: number };
       full_page?: boolean;
       element_id?: string;
+      snapshot_id?: string;
       annotate?: boolean;
     },
     context?: ToolExecutionContext,
@@ -128,6 +142,7 @@ export const screenshotFunction: FunctionDefinition = {
       clip,
       full_page = false,
       element_id,
+      snapshot_id,
       annotate = false,
     } = params;
     const normalizedWaitMs = Math.max(3_000, Math.floor(wait_ms));
@@ -161,11 +176,23 @@ export const screenshotFunction: FunctionDefinition = {
       }
 
       if (url) {
+        // 新开页面同样要有协议/主机白名单与任务租约，避免截取本地、内网或 file:// 页面。
+        if (!isSafeNavigableUrl(url) || isBlockedFetchUrl(url)) {
+          return { success: false, error: 'url 只允许可公开访问的 http/https 页面' };
+        }
+        const task = context?.taskId ? taskManager.get(context.taskId) : undefined;
+        if (!task) {
+          return { success: false, error: '截图新开页面需要任务上下文' };
+        }
         targetTab = await chrome.tabs.create({
           url,
           active: !preserve_focus,
         });
         createdTempTab = true;
+        targetTabId = targetTab.id;
+        if (typeof targetTabId === 'number') {
+          tabLeaseManager.acquire(task, targetTabId);
+        }
       } else if (targetTab?.id && !targetTab.active && !preserve_focus) {
         targetTab = await chrome.tabs.update(targetTab.id, { active: true });
       }
@@ -179,6 +206,13 @@ export const screenshotFunction: FunctionDefinition = {
       }
 
       await waitUntilTabReady(targetTabId, normalizedWaitMs, signal);
+      // 初始 URL 可能 302 到 file:// 或内网；截图前以标签页最终地址为准再校验一次。
+      try {
+        const finalTab = await chrome.tabs.get(targetTabId);
+        if (finalTab.url && (!isSafeNavigableUrl(finalTab.url) || isBlockedFetchUrl(finalTab.url))) {
+          return { success: false, error: '目标页面重定向到本地/内网或非 http(s) 地址，已拒绝截图' };
+        }
+      } catch { /* tabs.get 不可用时依赖初始 URL 校验 */ }
       if (!useCDP) await sleep(260, signal);
 
       // 截图前临时隐藏悬浮球，避免遮挡页面内容
@@ -224,7 +258,7 @@ export const screenshotFunction: FunctionDefinition = {
         // element_id → 查询元素 rect → 转为 clip
         let resolvedClip = validClip;
         if (element_id && !resolvedClip) {
-          const rect = await resolveElementRect(targetTabId, element_id, signal);
+          const rect = await resolveElementRect(targetTabId, element_id, signal, snapshot_id);
           if (!rect) {
             return { success: false, error: `无法获取元素 ${element_id} 的位置信息，元素可能已不存在` };
           }
@@ -332,6 +366,7 @@ export const screenshotFunction: FunctionDefinition = {
       if (createdTempTab && close_after_capture && targetTabId) {
         try {
           await chrome.tabs.remove(targetTabId);
+          tabLeaseManager.releaseTab(targetTabId);
         } catch {
           // ignore
         }
