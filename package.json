@@ -30,7 +30,7 @@
     "docs:dev": "vitepress dev docs",
     "docs:build": "vitepress build docs",
     "docs:preview": "vitepress preview docs",
-    "test:live": "ACTSPAN_LIVE=1 node --test test/scenarios.test.mjs"
+    "test:live": "node scripts/test-live.mjs"
   },
   "dependencies": {
     "@ant-design/icons": "^5.6.1",
