@@ -320,6 +320,18 @@ export const chatComplete = async (
   }
 };
 
+/** Responses API 中不产生正文、也不影响结果的标准事件。 */
+const KNOWN_RESPONSE_LIFECYCLE_EVENTS = new Set<string>([
+  'response.created',
+  'response.in_progress',
+  'response.output_item.added',
+  'response.content_part.added',
+  'response.content_part.done',
+  'response.output_text.done',
+  'response.function_call_arguments.delta',
+  'response.function_call_arguments.done',
+]);
+
 /**
  * 流式调用 OpenAI Responses API（用于最终文本回复的流式输出）
  * @param input 输入项列表
@@ -500,6 +512,9 @@ export async function* chatStream(
               yield { ...terminalChunk(), done: true };
               return;
             }
+            // Responses API 的标准生命周期事件不携带正文，属于正常流的一部分；
+            // 计入 unrecognized 会让每次正常请求都报 E_SSE_UNRECOGNIZED（典型为 6 条）。
+            if (KNOWN_RESPONSE_LIFECYCLE_EVENTS.has(json.type)) recognized = true;
             const content = json.choices?.[0]?.delta?.content;
             if (typeof content === 'string') {
               recognized = true;
