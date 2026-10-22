@@ -736,6 +736,11 @@ export async function executeBridgeRequest(method: string, params: Record<string
             signal?.removeEventListener('abort', onAbort);
         }
     }
+    // 信任期内跳过了上面的审批块，但策略执行器仍要求该 requestId 的审批键被消费，
+    // 否则第二次调用会以 E_APPROVAL_REQUIRED 失败（比不点“不再询问”更糟）。
+    if (trustedByUser && decision.requiresApproval) {
+        executor.approve(context.requestId, context.clientId, context.taskId, tabId);
+    }
     assertSignalActive(signal);
     try {
         const result = await executor.execute(runContext, method, normalizedParams);

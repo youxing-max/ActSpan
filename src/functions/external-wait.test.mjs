@@ -206,6 +206,37 @@ test('request_confirmation times out, removes its listener, and broadcasts cance
   }
 });
 
+test('request_confirmation without a tabId targets the active tab instead of an empty broadcast', async () => {
+  const channel = captureChannel();
+  const originalTabs = globalThis.chrome.tabs;
+  const originalRuntime = globalThis.chrome.runtime;
+  const originalScripting = globalThis.chrome.scripting;
+  const sent = [];
+  // 扩展刚重载时 tabSet 是空的，broadcast 发进空气；没有 tabId 的审批必须落到当前活动标签页。
+  globalThis.chrome.tabs = {
+    query: (_info, callback) => callback([{ id: 42 }]),
+    get: async (tabId) => ({ id: tabId, url: 'https://example.test/' }),
+    sendMessage: (tabId, message, callback) => {
+      sent.push({ tabId, type: message?.type });
+      callback?.({});
+    },
+  };
+  globalThis.chrome.runtime = { lastError: null, onMessage: { addListener() {}, removeListener() {} } };
+  globalThis.chrome.scripting = { executeScript: async () => [{ result: true }] };
+  try {
+    const result = await withShortTimers(() => requestConfirmationFunction.execute({ message: 'Approve?' }));
+    assert.equal(result.success, false);
+    assert.ok(sent.some(({ tabId, type }) => tabId === 42 && type === '__approval_request'),
+      `approval must be delivered to the active tab, got ${JSON.stringify(sent)}`);
+    assert.deepEqual(channel.broadcasts.filter(({ type }) => type === '__approval_request'), []);
+  } finally {
+    globalThis.chrome.tabs = originalTabs;
+    globalThis.chrome.runtime = originalRuntime;
+    globalThis.chrome.scripting = originalScripting;
+    channel.restore();
+  }
+});
+
 test('chatStream aborts an idle response without a completion frame', async () => {
   const channel = captureChannel();
   const reader = {

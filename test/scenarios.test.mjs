@@ -117,7 +117,8 @@ before(async () => {
     }
     mcp = await createMcpHarness();
     pageUrl = host.url('playground.html');
-    const opened = await mcp.call('actspan_tab_open', { url: pageUrl, active: false });
+    // 真机套件需要人工在页面上点审批卡；后台标签页看不到卡片，所以前台打开。
+    const opened = await mcp.call('actspan_tab_open', { url: pageUrl, active: true });
     tabId = opened?.tabId;
     if (!Number.isInteger(tabId)) throw new Error(`actspan_tab_open returned no tabId: ${JSON.stringify(opened)}`);
     // 就绪探测只用 read 级能力：page_eval 属于 mutate，会卡在人工审批上。
