@@ -8,6 +8,7 @@ import {
   extractTaskText,
   splitReply,
   loadConfig,
+  inferExtensionIds,
 } from '../dingtalk-stream.js';
 
 test('strips leading @mentions from DingTalk text', () => {
@@ -34,6 +35,27 @@ test('splits long replies into bounded chunks and truncates extras', () => {
   assert.match(chunks.at(-1), /已截断/);
   assert.ok(chunks.every((chunk) => chunk.length < 3_600));
   assert.deepEqual(splitReply('短消息'), ['短消息']);
+});
+
+test('reuses the running Bridge extension allowlist from metadata', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'actspan-dingtalk-bridge-'));
+  const dir = path.join(home, '.actspan');
+  fs.mkdirSync(dir, { recursive: true });
+  const extensionId = 'kcmnglipboiheaicckjcinkdmpgjcgog';
+  fs.writeFileSync(path.join(dir, 'bridge-30121.json'), JSON.stringify({
+    origins: [`chrome-extension://${extensionId}`],
+  }));
+
+  try {
+    assert.equal(inferExtensionIds({}, home), extensionId);
+    assert.equal(
+      inferExtensionIds({ ACTSPAN_EXTENSION_IDS: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' }, home),
+      'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    );
+    assert.equal(inferExtensionIds({ ACTSPAN_BRIDGE_URL: 'ws://127.0.0.1:39999' }, home), '');
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
 });
 
 test('reads DingTalk credentials from env before config file', () => {

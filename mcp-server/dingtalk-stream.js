@@ -137,6 +137,37 @@ export const loadConfig = (env = process.env, options = {}) => {
   };
 };
 
+/**
+ * 复用已运行 Bridge 的扩展白名单。
+ *
+ * 本机 Bridge 由 IDE/其他 MCP 客户端启动时，白名单来自它们的
+ * ACTSPAN_EXTENSION_IDS。连接器从 shell 启动时拿不到这些环境变量，
+ * 直接拉起 MCP server 会遇到 allowlist 不兼容。从 bridge 元数据读取
+ * 现有 origins 即可复用同一个 daemon。
+ */
+export const inferExtensionIds = (env = process.env, home = os.homedir()) => {
+  const configured = String(env.ACTSPAN_EXTENSION_IDS || '').trim();
+  if (configured) return configured;
+
+  let port = 30121;
+  try {
+    const bridgeUrl = new URL(env.ACTSPAN_BRIDGE_URL || 'ws://127.0.0.1:30121');
+    if (bridgeUrl.port) port = Number(bridgeUrl.port);
+  } catch {
+    return '';
+  }
+
+  try {
+    const metadata = JSON.parse(fs.readFileSync(path.join(home, '.actspan', `bridge-${port}.json`), 'utf8'));
+    const ids = (metadata.origins || [])
+      .map((origin) => String(origin).replace(/^chrome-extension:\/\//, ''))
+      .filter((id) => /^[a-p]{32}$/.test(id));
+    return ids.join(',');
+  } catch {
+    return '';
+  }
+};
+
 const parseToolResult = (result) => {
   const text = (result?.content || [])
     .filter((item) => item?.type === 'text')
@@ -163,10 +194,13 @@ class ActspanSession {
     if (this.client) return this.client;
     if (this.connecting) return this.connecting;
     this.connecting = (async () => {
+      const env = { ...process.env };
+      const inferredExtensionIds = inferExtensionIds(env);
+      if (inferredExtensionIds) env.ACTSPAN_EXTENSION_IDS = inferredExtensionIds;
       const transport = new StdioClientTransport({
         command: process.execPath,
         args: [path.join(HERE, 'index.js'), '--client', 'dingtalk-stream'],
-        env: { ...process.env },
+        env,
         cwd: HERE,
         stderr: 'inherit',
       });
