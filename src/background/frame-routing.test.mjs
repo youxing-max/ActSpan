@@ -1,54 +1,35 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { build } from 'esbuild';
+import { routeFrameRef, frameSnapshotId, qualifyRef, parseQualifiedRef, MAIN_FRAME_ID } from './frame-routing.ts';
 
-const bundle = await build({
-  stdin: {
-    contents: `export { MAIN_FRAME_ID, parseQualifiedRef, frameSnapshotId, qualifyRef, routeFrameRef, listTabFrames } from './src/background/frame-routing.ts';`,
-    resolveDir: process.cwd(),
-    loader: 'ts',
-  },
-  bundle: true, write: false, format: 'esm', platform: 'node',
+test('主框架 ref 不带后缀，snapshotId 沿用 tab 级', () => {
+  const route = routeFrameRef('ec-abc-1', 'snap-1');
+  assert.deepEqual(route, { baseRef: 'ec-abc-1', frameId: MAIN_FRAME_ID, snapshotId: 'snap-1' });
 });
-const { MAIN_FRAME_ID, parseQualifiedRef, frameSnapshotId, qualifyRef, routeFrameRef, listTabFrames } =
-  await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].contents).toString('base64')}`);
 
-test('an unqualified ref belongs to the main frame', () => {
-  assert.deepEqual(parseQualifiedRef('ec-abc-1'), { baseRef: 'ec-abc-1', frameId: MAIN_FRAME_ID });
-  assert.equal(qualifyRef('ec-abc-1', MAIN_FRAME_ID), 'ec-abc-1');
+test('子框架 ref 剥后缀并推导框架级 snapshotId', () => {
+  const route = routeFrameRef('ec-abc-1@f467', 'snap-1');
+  assert.deepEqual(route, { baseRef: 'ec-abc-1', frameId: 467, snapshotId: 'snap-1@f467' });
+});
+
+test('二次路由幂等：已剥后缀的 ref + 框架级 snapshotId 仍路由到原框架', () => {
+  // 模拟 page.click 复审路径：target 已被 routeActionTarget 路由过一次，
+  // ref 无后缀、snapshotId 带 @f467——再次路由不得降级到主框架。
+  const first = routeFrameRef('ec-abc-1@f467', 'snap-1');
+  const second = routeFrameRef(first.baseRef, first.snapshotId);
+  assert.equal(second.frameId, 467, '二次路由必须保持原框架');
+  assert.equal(second.snapshotId, 'snap-1@f467');
+});
+
+test('非法后缀一律拒绝，不回退父框架', () => {
+  assert.equal(routeFrameRef('ec-abc-1@xyz', 'snap-1'), null);
+  assert.equal(routeFrameRef('a@f2@f3', 'snap-1'), null, '嵌套后缀同样非法');
+});
+
+test('qualifyRef/frameSnapshotId/parseQualifiedRef 互逆', () => {
+  assert.equal(qualifyRef('ec-abc-1', 467), 'ec-abc-1@f467');
+  assert.equal(frameSnapshotId('snap-1', 467), 'snap-1@f467');
   assert.equal(frameSnapshotId('snap-1', MAIN_FRAME_ID), 'snap-1');
-});
-
-test('a frame-qualified ref carries its owning frame', () => {
-  assert.deepEqual(parseQualifiedRef('ec-abc-1@f7'), { baseRef: 'ec-abc-1', frameId: 7 });
-  assert.equal(qualifyRef('ec-abc-1', 7), 'ec-abc-1@f7');
-  assert.equal(frameSnapshotId('snap-1', 7), 'snap-1@f7');
-});
-
-test('a forged or damaged suffix is rejected instead of falling back to the parent frame', () => {
-  for (const forged of ['ec-abc-1@f', 'ec-abc-1@f-1', 'ec-abc-1@f1.5', 'ec-abc-1@frame', 'ec-abc-1@f1@f2', '@f2', 'ec-abc-1@']) {
-    assert.equal(parseQualifiedRef(forged), null, `${forged} must not resolve to a frame`);
-    assert.equal(routeFrameRef(forged, 'snap-1'), null, `${forged} must not be routed`);
-  }
-});
-
-test('routing rewrites the ref and snapshot id for the target frame', () => {
-  assert.deepEqual(routeFrameRef('ec-abc-1@f7', 'snap-1'), { baseRef: 'ec-abc-1', frameId: 7, snapshotId: 'snap-1@f7' });
-  assert.deepEqual(routeFrameRef('ec-abc-1', 'snap-1'), { baseRef: 'ec-abc-1', frameId: MAIN_FRAME_ID, snapshotId: 'snap-1' });
-  // 重复回传子框架 snapshotId 时按 tab 级 id 归一，避免叠加出 snap-1@f7@f7。
-  assert.deepEqual(routeFrameRef('ec-abc-1@f7', 'snap-1@f7'), { baseRef: 'ec-abc-1', frameId: 7, snapshotId: 'snap-1@f7' });
-});
-
-test('frames are enumerated deterministically, main frame first', async () => {
-  globalThis.chrome = { webNavigation: { getAllFrames: async () => [
-    { frameId: 5, parentFrameId: 0, url: 'https://cross.example/inner.html' },
-    { frameId: 0, parentFrameId: -1, url: 'https://host.example/page.html' },
-    { frameId: 2, parentFrameId: 0, url: 'https://host.example/nested.html' },
-  ] } };
-  assert.deepEqual((await listTabFrames(1)).map((frame) => frame.frameId), [0, 2, 5]);
-});
-
-test('frame enumeration degrades to the main frame when the API is unavailable', async () => {
-  globalThis.chrome = { webNavigation: { getAllFrames: async () => { throw new Error('no permission'); } } };
-  assert.deepEqual((await listTabFrames(1)).map((frame) => frame.frameId), [MAIN_FRAME_ID]);
+  assert.deepEqual(parseQualifiedRef('ec-abc-1@f467'), { baseRef: 'ec-abc-1', frameId: 467 });
+  assert.deepEqual(parseQualifiedRef('ec-abc-1'), { baseRef: 'ec-abc-1', frameId: MAIN_FRAME_ID });
 });

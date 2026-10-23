@@ -61,11 +61,28 @@ export interface FrameRefRoute {
  * - 子框架：基 ref + 该框架自己的 snapshotId。
  * - 后缀非法（`@` 存在但不是 `@f<数字>`）：返回 null，绝不回退到父框架执行。
  */
+/**
+ * 把 agent 回传的 ref 路由到确切框架。
+ * - 主框架：只剥掉可能被重复带上的 `@f0` 后缀。
+ * - 子框架：基 ref + 该框架自己的 snapshotId。
+ * - 后缀非法（`@` 存在但不是 `@f<数字>`）：返回 null，绝不回退到父框架执行。
+ * - 幂等：已被路由过的 ref（无后缀）会携带框架级 snapshotId（带 `@f<N>` 后缀），
+ *   此时从 snapshotId 后缀还原框架归属，避免二次路由降级到主框架后找不到句柄。
+ */
 export const routeFrameRef = (ref: unknown, snapshotId: unknown): FrameRefRoute | null => {
     const parsed = parseQualifiedRef(ref);
     if (!parsed) return null;
-    const tabSnapshotId = String(snapshotId ?? '').trim().replace(/@f\d+$/, '');
-    return { baseRef: parsed.baseRef, frameId: parsed.frameId, snapshotId: frameSnapshotId(tabSnapshotId, parsed.frameId) };
+    const rawSnapshot = String(snapshotId ?? '').trim();
+    const tabSnapshotId = rawSnapshot.replace(/@f\d+$/, '');
+    let frameId = parsed.frameId;
+    if (frameId === MAIN_FRAME_ID) {
+        const snapMatch = /@f(\d+)$/.exec(rawSnapshot);
+        if (snapMatch) {
+            const fromSnapshot = Number(snapMatch[1]);
+            if (Number.isSafeInteger(fromSnapshot) && fromSnapshot > 0) frameId = fromSnapshot;
+        }
+    }
+    return { baseRef: parsed.baseRef, frameId, snapshotId: frameSnapshotId(tabSnapshotId, frameId) };
 };
 
 /**
