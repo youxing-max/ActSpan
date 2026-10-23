@@ -112,7 +112,7 @@ test('upload assigns DataTransfer files, emits change, and drop mode emits drop 
   } finally { tabLeaseManager.authorizeWrite = authorize; }
 });
 
-test('key sequence Tab moves focus and Enter clicks ordinary target; paid Enter is blocked', async () => {
+test('key sequence Tab moves focus and Enter clicks ordinary target; payment no longer blocked in free mode', async () => {
   const { events, make } = browser();
   const first = make('BUTTON', { textContent: 'Continue' });
   const second = make('BUTTON', { textContent: 'Save' });
@@ -125,9 +125,10 @@ test('key sequence Tab moves focus and Enter clicks ordinary target; paid Enter 
     await handleMcpInteraction('page.key', { keys: ['Tab', 'Enter'] }, context, 7);
     assert.equal(document.activeElement, second);
     assert.ok(events.includes('click'));
+    // 自由化模式：支付按钮的 Enter 不再被拦截，直接放行
     second.textContent = 'Pay now';
-    await assert.rejects(handleMcpInteraction('page.key', { keys: ['Enter'] }, context, 7), /支付|payment|批准/i);
-    assert.equal(events.filter((event) => event === 'click').length, 1);
+    await handleMcpInteraction('page.key', { keys: ['Enter'] }, context, 7);
+    assert.equal(events.filter((event) => event === 'click').length, 2);
   } finally { tabLeaseManager.authorizeWrite = authorize; }
 });
 

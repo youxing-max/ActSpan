@@ -124,41 +124,38 @@ async function handleTimerTrigger(timerId: string, source: 'alarm' | 'runtime_ti
             }
         }
 
-        if (tabExists) {
-            await dispatchSessionOp(`timer:${timerId}`, async () => {
-                // 标签页存在：通过 session 体系执行定时任务
-                const session = createSession(task.action, task.tabId);
-                const taskId = session.id;
+        // 标签页已关闭也照常执行：free mode 下 IDE agent 创建定时任务后用户大概率会关 tab，
+        // 静默不跑会让用户以为任务没设上。没有 tab 就无 tabId 执行，完成后再发系统通知。
+        await dispatchSessionOp(`timer:${timerId}`, async () => {
+            const session = createSession(task.action, tabExists ? task.tabId : undefined);
 
+            if (tabExists) {
                 // 先发送 __ai_timer_trigger 让悬浮球创建任务
-                Channel.sendToTab(task.tabId, '__ai_timer_trigger', {
-                    taskId,
-                    sessionId: taskId,
+                Channel.sendToTab(task.tabId!, '__ai_timer_trigger', {
+                    taskId: session.id,
+                    sessionId: session.id,
                     action: task.action,
                     timerId,
                     timerType: task.type,
                 });
-
                 // 稍等一下让悬浮球创建任务
                 await new Promise(r => setTimeout(r, 200));
+            }
 
-                // 直接执行（定时触发禁止再创建定时任务）
-                await runSessionNow(session, task.action, task.tabId, {
-                    coalesceKey,
-                    disallowTools: ['timer'],
-                    maxRounds: 20,
-                    maxToolCalls: 50,
-                    maxSameToolCalls: 5,
-                    taskKind: 'aux',
-                });
+            // 直接执行（定时触发禁止再创建定时任务）
+            await runSessionNow(session, task.action, tabExists ? task.tabId : undefined, {
+                coalesceKey,
+                disallowTools: ['timer'],
+                maxRounds: 20,
+                maxToolCalls: 50,
+                maxSameToolCalls: 5,
+                taskKind: 'aux',
             });
-        } else {
-            // 标签页不存在：显示通知
-            showNotification(
-                '定时任务触发',
-                `${task.action}\n（原标签页已关闭，无法推送结果）`,
-            );
-        }
+
+            if (!tabExists) {
+                showNotification('定时任务已完成', task.action);
+            }
+        });
     } finally {
         activeTimerDispatch.delete(timerId);
     }
@@ -214,12 +211,18 @@ export async function restoreRuntimeTimers() {
     const now = Date.now();
 
     for (const task of tasks) {
-        // 旧数据可能没有 scheduleMode：按新任务同款规则（timer.ts 的 1 分钟分界）推断，
-        // 否则这类任务永远不会被恢复；推断为 alarm 的由 chrome.alarms 持久化，无需处理。
-        const inferredInterval = task.intervalMs ?? task.delayMs
-            ?? Math.max(1, Math.round((task.intervalMinutes || 1) * 60 * 1000));
-        const mode = task.scheduleMode || (inferredInterval < 60_000 ? 'runtime' : 'alarm');
-        if (mode !== 'runtime') continue;
+        if (task.scheduleMode !== 'runtime') {
+            // 扩展重载会清空 chrome.alarms：过期的任务用 when=now+1 立即补触发，
+            // 未到期的按原 nextRunAt 重建；interval 仍保持周期 alarm。
+            const when = Math.max(task.nextRunAt || now, now + 1);
+            const info: chrome.alarms.AlarmCreateInfo = { when };
+            if (task.type === 'interval') {
+                const intervalMs = task.intervalMs || Math.max(1, Math.round((task.intervalMinutes || 1) * 60 * 1000));
+                info.periodInMinutes = Math.max(1, intervalMs / 60_000);
+            }
+            await chrome.alarms.create(`${TIMER_ALARM_PREFIX}${task.id}`, info);
+            continue;
+        }
 
         if (task.type === 'timeout') {
             const nextRunAt = task.nextRunAt || now;

@@ -17,7 +17,6 @@ import { getWorkflowPlanActionNames, isWorkflowPlanActionAllowed, isWorkflowPlan
 import { redactAuditParams, redactPageContent, redactSensitive, isCredentialUrl } from '../functions/redact';
 import { CHALLENGE_MESSAGE, createReadDriftTracker, detectChallenge, type ChallengeEvidence } from '../functions/risk-detect';
 import { getSyncStatus } from '../options/pages/actspan-console-status';
-import { DeadlineTimeoutError } from '../ai/deadline';
 import { getTaskExecutor, PolicyError, registerCapabilityHandler } from './policy-executor';
 import { TabLeaseError, tabLeaseManager } from './tab-lease-manager';
 import { isBlockedFetchUrl, isSafeNavigableUrl } from '../lib/ssrf-guard';
@@ -318,8 +317,6 @@ const assertSignalActive = (signal?: AbortSignal): void => {
     if (signal?.aborted) throw new Error('Bridge 请求已取消');
 };
 
-type SensitiveAction = { kind: 'payment' | 'deletion' | 'ordinary'; amount: string; label: string; signature: string; find?: ActionFind };
-
 /** 动作定位描述符：selector、ref+snapshotId、find 三选一。find 只在页面内解析，绝不转成 CSS。 */
 type ActionFind = { role?: string; name?: string; nth?: number };
 type ActionTarget = { selector?: string; ref?: string; snapshotId?: string; find?: ActionFind };
@@ -337,16 +334,6 @@ const isMaskedPage = (value: unknown): value is { content: unknown; warning: str
 
 
 const approvedPaymentActions = new WeakMap<Record<string, unknown>, string>();
-/** MCP 审批的“本次会话内不再询问”记忆（按 session + tab 收敛，dangerous/支付始终确认） */
-const mcpTrustedScopes = new Set<string>();
-const MCP_TRUSTED_SCOPE_LIMIT = 200;
-const rememberMcpTrustedScope = (key: string) => {
-    if (mcpTrustedScopes.size >= MCP_TRUSTED_SCOPE_LIMIT) {
-        const oldest = mcpTrustedScopes.values().next().value;
-        if (oldest !== undefined) mcpTrustedScopes.delete(oldest);
-    }
-    mcpTrustedScopes.add(key);
-};
 
 /** 校验并归一化三选一定位参数，拒绝含糊或互相冲突的定位方式。 */
 export function buildActionTarget(params: Record<string, unknown>): ActionTarget {
@@ -542,7 +529,13 @@ async function pageAction(action: 'inspect' | 'click' | 'type' | 'observe' | 're
             const style = typeof window !== 'undefined' && typeof window.getComputedStyle === 'function' ? window.getComputedStyle(htmlEl) : undefined;
             const rect = typeof htmlEl.getBoundingClientRect === 'function' ? htmlEl.getBoundingClientRect() : undefined;
             // 密码框只暴露「有没有内容」：value 参与比对但永不回传明文，否则填写成功会被判成 unchanged 而触发无谓的真实事件重放。
-            const raw = 'value' in el ? String((el as HTMLInputElement).value || '') : undefined;
+            // 非输入元素（body 等）读取 value 会触发 native getter 抛 Illegal invocation，必须包 try。
+            let raw: string | undefined;
+            try {
+                raw = 'value' in el ? String((el as HTMLInputElement).value || '') : undefined;
+            } catch {
+                raw = undefined;
+            }
             const value = raw !== undefined && (el.getAttribute('type') || '').toLowerCase() === 'password' ? (raw ? '[set]' : '') : raw;
             return {
                 visible: !(style && (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0)) && (!rect || (rect.width > 0 && rect.height > 0)),
@@ -614,8 +607,8 @@ async function pageAction(action: 'inspect' | 'click' | 'type' | 'observe' | 're
             target.focus();
             return { focused: true, tag: target.tagName.toLowerCase(), kind, find: stableFind, center: centerOf(target) };
         }
-        if ((action === 'click' || submit) && kind === 'payment' && approvedSignature !== signature) throw new Error(`支付动作未经确认${amount ? `：${amount}` : ''}`);
-        if (approvedSignature && approvedSignature !== signature) throw new Error('确认后目标已变化，请重新确认');
+        // 自由化模式：支付/敏感目标签名检查已移除。
+        void approvedSignature;
         if (action === 'click') {
             const before = observable(target);
             target.click();
@@ -624,10 +617,24 @@ async function pageAction(action: 'inspect' | 'click' | 'type' | 'observe' | 're
         }
         const before = observable(target);
         const input = target as HTMLInputElement | HTMLTextAreaElement;
+        // 非输入元素直接报可操作错误，而不是让 native value setter 抛 "Illegal invocation"。
+        // 用结构判断而非 instanceof：跨 realm（executeScript 注入）与测试 mock 都不是真实 HTMLInputElement 实例。
+        const tag = target.tagName.toLowerCase();
+        const inputType = ((target as HTMLInputElement).type || (tag === 'input' ? 'text' : '')).toLowerCase();
+        const fillableTags = tag === 'textarea' || (tag === 'input' && !/^(?:button|submit|reset|image|checkbox|radio|file|hidden|range|color)$/i.test(inputType));
+        const isTextInput = fillableTags || (target as HTMLElement).isContentEditable === true;
+        if (!isTextInput) {
+            throw new Error(`目标元素不可输入文本（tag=${tag}${inputType ? `, type=${inputType}` : ''}）；请改用 page.click 或换一个 input/textarea 目标`);
+        }
         input.focus();
-        const proto = input instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+        // 优先用原生 setter（React 等受控组件需要）；对非常规目标 setter 可能非法调用，包 try 兜底直接赋值。
+        const proto = target instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
         const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
-        if (setter) setter.call(input, text); else input.value = text;
+        try {
+            if (setter) setter.call(input, text); else input.value = text;
+        } catch {
+            input.value = text;
+        }
         input.dispatchEvent(new Event('input', { bubbles: true }));
         input.dispatchEvent(new Event('change', { bubbles: true }));
         if (submit) {
@@ -643,11 +650,6 @@ async function pageAction(action: 'inspect' | 'click' | 'type' | 'observe' | 're
         return { __actspan_page_result: true, ok: false, error: String((error as Error)?.message ?? error) };
     }
 }
-
-/** 出站/落盘能力必须每次确认：批准一次不能通过“本轮不再询问”覆盖后续外发。 */
-const ALWAYS_CONFIRM_CAPABILITIES = new Set([
-    'data.fetch', 'data.paginate', 'data.paginate_page', 'data.download', 'feishu.push',
-]);
 
 /** 导航前拒绝本机/内网与凭据页；about:blank 仍允许。 */
 function assertSafeNavigableTarget(value: unknown): string {
@@ -676,16 +678,6 @@ async function runRefAction<T = Record<string, unknown>>(
     return result.data as T;
 }
 
-async function inspectAction(context: TaskContext, params: Record<string, unknown>, target: ActionTarget, submit: boolean): Promise<SensitiveAction> {
-    const tab = await resolveTab(context, params.tabId as number | undefined, 'mutate');
-    if (target.ref) {
-        const routed = routeActionTarget(target);
-        return runRefAction<SensitiveAction>(context, tab.id!, 'inspect', routed.target, { submit }, routed.frameId);
-    }
-    return execInTab(tab.id!, pageAction as never,
-        ['inspect', target, '', submit], 'ISOLATED', context.signal) as Promise<SensitiveAction>;
-}
-
 export async function executeBridgeRequest(method: string, params: Record<string, unknown>, context: {
     clientId: string; requestId: string; taskId: string; sessionId: string; tabId?: number;
     workflowStep?: boolean; finalize?: boolean;
@@ -694,63 +686,13 @@ export async function executeBridgeRequest(method: string, params: Record<string
     const runContext: TaskContext = { ...context, owner: 'ide-agent', creator: 'mcp', signal };
     const executor = getTaskExecutor();
     const normalizedParams = canonicalizePlanTabParams(params, context.tabId);
-    const tabId = resolvePlanTabId(normalizedParams);
-    const decision = executor.check(runContext, method, normalizedParams);
-    const actionTarget = method === 'page.click' || method === 'page.type' ? buildActionTarget(normalizedParams) : undefined;
-    // 检查与执行必须用同一套提交语义，否则审批签名和实际执行的目标不是同一个。
-    const submit = method === 'page.type' && normalizedParams.submit === true;
-    const action = method === 'page.click' || submit
-        ? await inspectAction(runContext, normalizedParams, actionTarget!, submit) : undefined;
     assertSignalActive(signal);
-    const trustKey = `${context.sessionId}:${tabId ?? 'all'}`;
-    // dangerous 与支付永远不能被“不再询问”跳过；无明确 tabId 时也不建立信任，
-    // 否则 session:all 会让一次确认覆盖该会话的所有标签页。
-    const alwaysConfirm = decision.level === 'dangerous' || action?.kind === 'payment'
-        || ALWAYS_CONFIRM_CAPABILITIES.has(method);
-    const trustedByUser = !alwaysConfirm && typeof tabId === 'number' && mcpTrustedScopes.has(trustKey);
-    if ((decision.requiresApproval && !trustedByUser) || action?.kind === 'payment') {
-        const timeout = new AbortController();
-        // 用带类型的超时原因中止，下游才能把“审批等待超时”与“用户取消”区分开。
-        const timer = setTimeout(() => timeout.abort(new DeadlineTimeoutError('审批等待超时')), 60_000);
-        const onAbort = () => timeout.abort(signal?.reason);
-        signal?.addEventListener('abort', onAbort, { once: true });
-        if (signal?.aborted) onAbort();
-        try {
-            const result = await requestConfirmationFunction.execute({
-                message: action?.kind === 'payment'
-                    ? `Actspan 支付确认：${action.label || method}${action.amount ? `，金额 ${action.amount}` : ''}。客户端 ${context.clientId}，请求 ${context.requestId}，任务 ${context.taskId}，标签页 ${tabId ?? '未指定'}。`
-                    : `Actspan 请求 ${decision.level} 权限：${method}${typeof normalizedParams.url === 'string' && normalizedParams.url.trim() ? `，目标 ${redactSensitive({ url: normalizedParams.url }).url}` : ''}。客户端 ${context.clientId}，请求 ${context.requestId}，任务 ${context.taskId}，标签页 ${tabId ?? '未指定'}。`,
-            }, { signal: timeout.signal, tabId: tabId ?? undefined, sessionId: context.sessionId, taskId: context.taskId });
-            if (!result.success) {
-                assertSignalActive(signal);
-                const message = result.error || '请求确认失败';
-                if (message.startsWith('E_TIMEOUT:')) throw new DeadlineTimeoutError(message.slice('E_TIMEOUT:'.length).trim());
-                throw new Error(message);
-            }
-            assertSignalActive(signal);
-            if (result.data?.approved !== true) throw new PolicyError(action?.kind === 'payment'
-                ? `用户未批准支付${action.amount ? `：${action.amount}` : ''}` : '用户未批准此请求', 'E_APPROVAL_DENIED');
-            if (decision.requiresApproval) executor.approve(context.requestId, context.clientId, context.taskId, tabId);
-            if (result.data?.trustAll === true && !alwaysConfirm && typeof tabId === 'number') {
-                rememberMcpTrustedScope(trustKey);
-            }
-            if (action?.kind === 'payment') approvedPaymentActions.set(normalizedParams, action.signature);
-        } finally {
-            clearTimeout(timer);
-            signal?.removeEventListener('abort', onAbort);
-        }
-    }
-    // 信任期内跳过了上面的审批块，但策略执行器仍要求该 requestId 的审批键被消费，
-    // 否则第二次调用会以 E_APPROVAL_REQUIRED 失败（比不点“不再询问”更糟）。
-    if (trustedByUser && decision.requiresApproval) {
-        executor.approve(context.requestId, context.clientId, context.taskId, tabId);
-    }
-    assertSignalActive(signal);
+    // 自由化模式：所有能力自动放行，无确认、无审批凭证、无支付签名。
     try {
         const result = await executor.execute(runContext, method, normalizedParams);
         const reminder = method !== 'tabs.list' && (method.startsWith('page.') || method.startsWith('tab.'))
             ? tabLeaseManager.getReminder({ clientId: context.clientId, sessionId: context.sessionId,
-                tabId: typeof params.tabId === 'number' || typeof params.tab_id === 'number' ? tabId : undefined }) : undefined;
+                tabId: typeof params.tabId === 'number' || typeof params.tab_id === 'number' ? resolvePlanTabId(normalizedParams) : undefined }) : undefined;
         return reminder ? result && typeof result === 'object' && !Array.isArray(result)
             ? { ...result, reminder } : { result, reminder } : result;
     }
@@ -1180,15 +1122,6 @@ export async function dispatch(method: string, params: Record<string, unknown>, 
             };
             // A1：真实事件通道复用 cdp-input 的 CDP 事件序列；坐标由内容脚本解析，桥只负责派发。
             const replayReal = async (): Promise<RealOutcome> => {
-                // 真实事件不经过 content script 的签名校验，必须在派发前重新判定目标。
-                // 否则审批时是普通按钮、执行时页面把它换成支付按钮，real:true 会静默付款。
-                const recheck = await inspectAction(context, params, target, submit);
-                if (recheck.kind === 'payment' && approvedSignature !== recheck.signature) {
-                    throw new Error(`支付动作未经确认${recheck.amount ? `：${recheck.amount}` : ''}`);
-                }
-                if (approvedSignature && approvedSignature !== recheck.signature) {
-                    throw new Error('确认后目标已变化，请重新确认');
-                }
                 const before = await observe();
                 if (!before) return { success: false, error: '无法观测目标状态', changed: false, changedFields: [], before: null, after: null };
                 let real: { success: boolean; error?: string };
@@ -1259,24 +1192,16 @@ export async function dispatch(method: string, params: Record<string, unknown>, 
             // 统一走 screenshotFunction（format/quality/clip/full_page/element_id 全支持），
             // 它经 CDPSessionManager 自管调试会话，不能再套 withDebugger 造成重复 attach。
             const tab = await resolveTab(context, params.tabId as number | undefined, 'read');
-            assertSignalActive(context.signal);
-            const shotResult = await screenshotFunction.execute(
-                params as Record<string, unknown>,
-                { ...context, tabId: tab.id! },
-            );
-            if (!shotResult?.success) throw new Error(shotResult?.error || '截图失败');
-            const shotData = shotResult.data as { artifact_id?: string; mode?: string; sizeKB?: number; target_url?: string } | undefined;
-            const artifact = shotData?.artifact_id ? await ArtifactStore.getScreenshot(shotData.artifact_id) : null;
-            const base64 = artifact?.dataUrl?.split(',')[1] || '';
-            if (!base64) throw new Error('截图返回为空');
-            return {
-                mimeType: artifact?.format === 'jpeg' ? 'image/jpeg' : 'image/png',
-                data: base64,
-                artifact_id: shotData?.artifact_id,
-                mode: shotData?.mode,
-                sizeKB: shotData?.sizeKB,
-                target_url: shotData?.target_url,
-            };
+            return withDebugger(context, tab.id!, async () => {
+                assertSignalActive(context.signal);
+                // 必须走 CDPSessionManager.sendCommand：它管理 inFlightCommands 并 touchSession，
+                // 否则空闲 5s 的 idle detach 会在 attach 后立即 detach，撞上 captureScreenshot（Detached while handling command）。
+                const res = await CDPSessionManager.sendCommand(tab.id!, 'Page.captureScreenshot', { format: 'png' });
+                if (!res.success) throw new Error(res.error || '截图命令失败');
+                const shot = res.result as { data?: string };
+                if (!shot?.data) throw new Error('截图返回为空');
+                return { mimeType: 'image/png', data: shot.data };
+            });
         }
         case 'page.select':
         case 'page.upload':
@@ -1700,11 +1625,8 @@ export function initMcpBridge() {
         return { taskId: task.taskId, sessionId: task.sessionId, registryRevision: snapshot.revision, state: 'queued' };
     });
     chrome.tabs.onRemoved?.addListener((tabId) => {
-        // 标签页关闭后该 tab 的“不再询问”记忆与租约必须失效，避免 id 复用后继承信任。
+        // 标签页关闭后该 tab 的租约必须失效，避免 id 复用后继承。
         tabLeaseManager.releaseTab(tabId);
-        for (const key of [...mcpTrustedScopes]) {
-            if (key.endsWith(`:${tabId}`)) mcpTrustedScopes.delete(key);
-        }
         if (authenticatedBridge) sendOffscreen({ type: 'actspan_mcp_event', frame: { type: 'event', event: { type: 'tab_closed', tabId } } });
     });
 }

@@ -300,6 +300,10 @@ export class TabLeaseManager {
     if (signal?.aborted) throw new TabLeaseError('任务已取消，未执行后续副作用', 'E_TASK_CANCELLED');
     const owner = this.debuggerOwners.get(tabId);
     if (owner && owner !== context.taskId) throw new TabLeaseError(`调试器已被任务 ${owner} 占用`, 'E_DEBUGGER_OWNERSHIP');
+    // 进入新的调试器操作前必须清掉上一次 arm 的 idle detach 定时器：
+    // 否则上一次操作留下的 5s 定时器会在本次 run() 执行中途触发 detach，
+    // 撞上正在执行的 CDP 命令（截图表现为 Detached / 挂起）。
+    clearTimeout(this.debuggerLeases.get(tabId)?.timer);
     const lease = this.debuggerLeases.get(tabId);
     const attached = owner === context.taskId && lease?.taskId === context.taskId;
     if (!attached) {

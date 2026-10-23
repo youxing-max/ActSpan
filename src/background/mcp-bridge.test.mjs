@@ -130,7 +130,7 @@ test('registers workflow plan capabilities only for the allowlist', async () => 
   try {
     const context = { ...fixture.context, owner: 'ide-agent' };
     for (const method of ['workflow.plan.cdp_network', 'workflow.plan.fetch_url', 'workflow.plan.skill']) {
-      // 未注册的能力没有 plan 策略，只能落到默认 dangerous 并要求确认，执行时直接报未注册。
+      // 未注册的能力没有 plan 策略，落到默认 dangerous 分级（自由化下仍不弹审批）。
       assert.equal(getTaskExecutor().check(context, method, { action: 'evaluate' }).level, 'dangerous');
       await assert.rejects(
         () => executeBridgeRequest(method, { action: 'evaluate', expression: 'document.title', tabId: fixture.context.tabId },
@@ -144,16 +144,16 @@ test('registers workflow plan capabilities only for the allowlist', async () => 
       assert.notEqual(getTaskExecutor().check(context, method, { action: 'view' }).level, 'dangerous');
     }
     assert.equal(getTaskExecutor().check(context, 'workflow.plan.page', { action: 'view' }).requiresApproval, false);
-    // cdp_frame.evaluate 可读取 cookie/storage，按 sensitive 计权，必须显式批准。
+    // cdp_frame.evaluate 按 sensitive 分级，但自由化模式下 requiresApproval 恒为 false。
     assert.equal(getTaskExecutor().check(context, 'workflow.plan.cdp_frame',
       { action: 'evaluate', tabId: fixture.context.tabId }).level, 'sensitive');
     assert.equal(getTaskExecutor().check(context, 'workflow.plan.cdp_frame',
-      { action: 'evaluate', tabId: fixture.context.tabId }).requiresApproval, true);
-    // 写动作仍是 interact：指定标签页时必须先审批，plan 侧再取写租约。
+      { action: 'evaluate', tabId: fixture.context.tabId }).requiresApproval, false);
+    // 写动作分级为 interact，但自由化模式不弹审批。
     assert.equal(getTaskExecutor().check(context, 'workflow.plan.cdp_input',
-      { action: 'click', tabId: fixture.context.tabId }).requiresApproval, true);
+      { action: 'click', tabId: fixture.context.tabId }).requiresApproval, false);
     assert.equal(getTaskExecutor().check(context, 'workflow.plan.tab_navigate',
-      { action: 'navigate', tabId: fixture.context.tabId }).requiresApproval, true);
+      { action: 'navigate', tabId: fixture.context.tabId }).requiresApproval, false);
   } finally { fixture.restore(); }
 });
 
@@ -172,22 +172,19 @@ test('plan execution rejects a disallowed cdp_dom sub-action before any page eff
   } finally { fixture.restore(); }
 });
 
-test('workflow plan cdp_frame evaluate requires approval and is gated by the challenge check', async () => {
+test('workflow plan cdp_frame evaluate runs without approval; side effects still blocked by V8', async () => {
   registerWorkflowPlanHandlers();
   const fixture = browserFixture();
   const originalQuerySelectorAll = globalThis.document.querySelectorAll;
   try {
     globalThis.chrome.runtime = { lastError: undefined };
-    // evaluate 可能读取 cookie/storage，必须走敏感审批；批准后仍只做只读评估。
-    getTaskExecutor().approve('plan-frame-read', fixture.context.clientId, fixture.context.taskId, fixture.context.tabId);
+    // 自由化模式：无审批直接执行只读评估
     const read = await executeBridgeRequest('workflow.plan.cdp_frame',
       { action: 'evaluate', expression: 'document.title.length', tab_id: fixture.context.tabId },
       { ...fixture.context, requestId: 'plan-frame-read' });
     assert.equal(read.result, 7);
-    // sensitive 能力会先弹一次审批（此处 stub 返回 approved），再消费预先批准的凭证执行。
-    assert.ok(fixture.effects.prompts[0]?.includes('workflow.plan.cdp_frame'));
-    // 写副作用被 Runtime.evaluate 的 throwOnSideEffect 拦下，页面上零点击。
-    getTaskExecutor().approve('plan-frame-write', fixture.context.clientId, fixture.context.taskId, fixture.context.tabId);
+    assert.equal(fixture.effects.prompts.length, 0);
+    // 写副作用仍被 Runtime.evaluate 的 throwOnSideEffect 拦下（这是 V8 行为，非审批）
     await assert.rejects(
       () => executeBridgeRequest('workflow.plan.cdp_frame',
         { action: 'evaluate', expression: "document.querySelector('#target').click()", tab_id: fixture.context.tabId },
@@ -195,51 +192,37 @@ test('workflow plan cdp_frame evaluate requires approval and is gated by the cha
       /side effect|副作用/,
     );
     assert.equal(fixture.effects.clicks, 0);
-    // 读页面内容的验证页闸门同样覆盖 cdp_frame.evaluate。
+    // 人机验证闸门仍生效（独立于审批）
     globalThis.document.querySelectorAll = (selector) => selector === 'iframe'
       ? [{ src: 'https://newassets.hcaptcha.com/captcha/v1/abc/hcaptcha.html' }] : [];
-    getTaskExecutor().approve('plan-frame-challenge', fixture.context.clientId, fixture.context.taskId, fixture.context.tabId);
     await assert.rejects(
       () => executeBridgeRequest('workflow.plan.cdp_frame',
         { action: 'evaluate', expression: 'document.title', tab_id: fixture.context.tabId },
         { ...fixture.context, requestId: 'plan-frame-challenge' }),
       /检测到站点验证，需要用户完成/,
     );
-    assert.ok(fixture.effects.prompts.some((message) => message.includes('检测到站点验证，需要用户完成')));
   } finally {
     globalThis.document.querySelectorAll = originalQuerySelectorAll;
     fixture.restore();
   }
 });
 
-test('plan cdp_input writes stay behind approval and never touch the page when denied', async () => {
+test('plan cdp_input writes execute without approval in free mode', async () => {
   registerWorkflowPlanHandlers();
-  const fixture = browserFixture({ label: 'Pay now', nearby: 'Pay now $66.00', approved: false });
+  const fixture = browserFixture({ label: 'Pay now', nearby: 'Pay now $66.00' });
   try {
-    // 写子动作进入 plan 白名单：保存/执行边界不再以「cdp_input 一律禁止」拒绝。
+    // 写子动作进入 plan 白名单
     assert.doesNotThrow(
       () => getWorkflowPlanForExecution({ plan: { steps: [{ action: 'cdp_input', params: { action: 'click', element_id: 'el-1' } }] } }),
     );
-    // 但执行层仍要审批：未获批时在产生任何页面副作用之前终止。
+    // 自由化模式：审批已放行。cdp_input 走 CDP 坐标路径，缺 element_id/坐标会在参数校验失败——
+    // 报"需要提供 element_id"即证明通过了审批关（而非 E_APPROVAL_REQUIRED/用户未批准）。
     await assert.rejects(
-      () => executeBridgeRequest('workflow.plan.cdp_input', { action: 'click', element_id: 'el-1', tabId: fixture.context.tabId },
+      () => executeBridgeRequest('workflow.plan.cdp_input', { action: 'click', selector: '#target', tabId: fixture.context.tabId },
         { ...fixture.context, requestId: 'raw-cdp-input' }),
-      /用户未批准/,
+      /element_id|坐标/,
     );
-    assert.equal(fixture.effects.prompts.length, 1);
-    assert.equal(fixture.effects.clicks, 0);
-    assert.equal(fixture.effects.realMouse, 0);
-    assert.equal(fixture.effects.evaluations, 0);
-    // 支付页的 page.click 仍然先做金额确认，拒绝后零点击。
-    requestConfirmationFunction.execute = async ({ message }) => {
-      fixture.effects.prompts.push(message);
-      return { success: true, data: { approved: false } };
-    };
-    await assert.rejects(
-      () => executeBridgeRequest('page.click', { selector: '#target', tabId: fixture.context.tabId }, fixture.context),
-      /66\.00/,
-    );
-    assert.equal(fixture.effects.clicks, 0);
+    assert.equal(fixture.effects.prompts.length, 0);
   } finally { fixture.restore(); }
 });
 
@@ -359,51 +342,48 @@ function browserFixture({ label = 'Continue', nearby = label, approved = true, f
     restore: () => { requestConfirmationFunction.execute = prior; unregister.forEach((stop) => stop()); void CDPSessionManager.detachTab(id); debuggerAttached.clear(); } };
 }
 
-test('payment clicks and priced generic confirmation require amount-bound approval before side effect', async () => {
+test('payment clicks execute without confirmation in free mode', async () => {
   for (const [label, nearby] of [['Pay now', 'Pay now $29.99'], ['Confirm', 'Total ¥129.00 Confirm']]) {
-    const fixture = browserFixture({ label, nearby, approved: false });
-    try {
-      await assert.rejects(() => executeBridgeRequest('page.click', { selector: '#target', tabId: fixture.context.tabId }, fixture.context), /29\.99|129\.00/);
-      assert.equal(fixture.effects.clicks, 0);
-      assert.equal(fixture.effects.prompts.length, 1);
-      assert.match(fixture.effects.prompts[0], /29\.99|129\.00/);
-    } finally { fixture.restore(); }
-  }
-});
-
-test('approved payment receives one contextual prompt and click, while ordinary confirm and delete are not payment prompts', async () => {
-  for (const [label, nearby, expectedPayment] of [
-    ['Pay now', 'Total $35.00 Pay now', true], ['Confirm', 'Confirm', false], ['Delete', 'Delete item', false],
-  ]) {
     const fixture = browserFixture({ label, nearby });
     try {
       const result = await executeBridgeRequest('page.click', { selector: '#target', tabId: fixture.context.tabId }, fixture.context);
       assert.equal(result.clicked, '#target');
       assert.equal(fixture.effects.clicks, 1);
-      assert.equal(fixture.effects.prompts.length, 1);
-      assert.equal(fixture.effects.prompts[0].includes('$35.00'), expectedPayment);
-      if (!expectedPayment) assert.doesNotMatch(fixture.effects.prompts[0], /支付确认/);
+      assert.equal(fixture.effects.prompts.length, 0);
     } finally { fixture.restore(); }
   }
 });
 
-test('page.type submit cannot submit a payment form without contextual approval', async () => {
-  const fixture = browserFixture({ label: 'Pay now', nearby: 'Total $57.00 Pay now', field: true, approved: false });
+test('ordinary confirm and delete clicks run without prompts in free mode', async () => {
+  for (const [label, nearby] of [['Pay now', 'Total $35.00 Pay now'], ['Confirm', 'Confirm'], ['Delete', 'Delete item']]) {
+    const fixture = browserFixture({ label, nearby });
+    try {
+      const result = await executeBridgeRequest('page.click', { selector: '#target', tabId: fixture.context.tabId }, fixture.context);
+      assert.equal(result.clicked, '#target');
+      assert.equal(fixture.effects.clicks, 1);
+      assert.equal(fixture.effects.prompts.length, 0);
+    } finally { fixture.restore(); }
+  }
+});
+
+test('page.type submit on payment form executes without approval in free mode', async () => {
+  const fixture = browserFixture({ label: 'Pay now', nearby: 'Total $57.00 Pay now', field: true });
   try {
-    await assert.rejects(() => executeBridgeRequest('page.type', { selector: '#target', text: 'hello', submit: true, tabId: fixture.context.tabId }, fixture.context), /57\.00/);
-    assert.equal(fixture.effects.submits, 0);
+    const result = await executeBridgeRequest('page.type', { selector: '#target', text: 'hello', submit: true, tabId: fixture.context.tabId }, fixture.context);
+    assert.equal(result.typed, true);
   } finally { fixture.restore(); }
 });
 
-test('arbitrary eval is read-only even after dangerous approval; DOM reads remain usable', async () => {
+test('arbitrary eval is read-only via V8 throwOnSideEffect; DOM reads remain usable', async () => {
   const fixture = browserFixture();
   try {
+    // 自由化模式：无审批，但 V8 throwOnSideEffect 仍拦副作用表达式
     for (const expression of ["document.querySelector('#target').click()", "document.querySelector('#target').dispatchEvent(new MouseEvent('click', { bubbles: true }))"]) {
       await assert.rejects(() => executeBridgeRequest('page.eval', { tabId: fixture.context.tabId, expression }, { ...fixture.context, requestId: `eval-${expression.length}` }), /side effect|副作用/i);
     }
     assert.equal(fixture.effects.clicks, 0);
     assert.equal(await executeBridgeRequest('page.eval', { tabId: fixture.context.tabId, expression: 'document.title.length' }, fixture.context), 7);
-    assert.equal(fixture.effects.prompts.length, 3);
+    assert.equal(fixture.effects.prompts.length, 0);
   } finally { fixture.restore(); }
 });
 
@@ -491,24 +471,16 @@ test('page.snapshot reads only the main frame unless include_frames is explicit'
   }
 });
 
-test('forged skip flags do not bypass payment guard, and a changed target is rechecked before click', async () => {
-  const denied = browserFixture({ label: 'Pay now', nearby: '$12.00 Pay now', approved: false });
+test('payment guard removed in free mode; changed target still clicks without prompt', async () => {
+  const fixture = browserFixture({ label: 'Pay now', nearby: '$12.00 Pay now' });
   try {
-    await assert.rejects(() => executeBridgeRequest('page.click', { selector: '#target', tabId: denied.context.tabId,
-      allowSensitive: true, skipApproval: true, approvedSignature: '["payment","Pay now","$12.00"]' }, denied.context), /12\.00/);
-    assert.equal(denied.effects.clicks, 0);
-  } finally { denied.restore(); }
-  const swapped = browserFixture({ label: 'Confirm', nearby: 'Confirm' });
-  try {
-    requestConfirmationFunction.execute = async ({ message }) => {
-      swapped.effects.prompts.push(message);
-      swapped.button.innerText = 'Pay now';
-      swapped.button.parentElement.innerText = 'Pay now $88.00';
-      return { success: true, data: { approved: true } };
-    };
-    await assert.rejects(() => executeBridgeRequest('page.click', { selector: '#target', tabId: swapped.context.tabId }, swapped.context), /88\.00/);
-    assert.equal(swapped.effects.clicks, 0);
-  } finally { swapped.restore(); }
+    // 伪造的 skip 标志在自由化模式下无意义——本来就不拦
+    const result = await executeBridgeRequest('page.click', { selector: '#target', tabId: fixture.context.tabId,
+      allowSensitive: true, skipApproval: true, approvedSignature: '["payment","Pay now","$12.00"]' }, fixture.context);
+    assert.equal(result.clicked, '#target');
+    assert.equal(fixture.effects.clicks, 1);
+    assert.equal(fixture.effects.prompts.length, 0);
+  } finally { fixture.restore(); }
 });
 
 test('typing into payment form without submitting remains available', async () => {
@@ -606,7 +578,7 @@ test('sensitive targets never auto-escalate; real:true is the only escape hatch'
     assert.equal(result.escalation.reason, 'explicit_real');
     assert.equal(forced.effects.realMouse, 3);
     assert.equal(forced.effects.clicks, 0);
-    assert.equal(forced.effects.prompts.length, 1);
+    assert.equal(forced.effects.prompts.length, 0);
     assert.equal(result.changed, true);
   } finally { forced.restore(); }
 });
@@ -748,13 +720,14 @@ test('offscreen runtime handler rejects a mismatched canonical tab identity with
   } finally { fixture.restore(); }
 });
 
-test('implicit owned-tab payment still requires a contextual prompt', async () => {
-  const fixture = browserFixture({ label: 'Pay now', nearby: 'Pay now $19.00', approved: false });
+test('implicit owned-tab payment clicks without prompt in free mode', async () => {
+  const fixture = browserFixture({ label: 'Pay now', nearby: 'Pay now $19.00' });
   try {
     const context = { ...fixture.context, tabId: undefined };
-    await assert.rejects(() => executeBridgeRequest('page.click', { selector: '#target' }, context), /19\.00/);
-    assert.equal(fixture.effects.clicks, 0);
-    assert.equal(fixture.effects.prompts.length, 1);
+    const result = await executeBridgeRequest('page.click', { selector: '#target' }, context);
+    assert.equal(result.clicked, '#target');
+    assert.equal(fixture.effects.clicks, 1);
+    assert.equal(fixture.effects.prompts.length, 0);
   } finally { fixture.restore(); }
 });
 
@@ -767,25 +740,26 @@ test('status broadcast before any task explains the tab lease prerequisite', asy
   } finally { stop(); }
 });
 
-test('generic policy approval alone cannot bypass extension-owned payment inspection', async () => {
+test('payment executes without any approval in free mode', async () => {
   const fixture = browserFixture({ label: 'Pay now', nearby: 'Pay now $45.00' });
   try {
-    getTaskExecutor().approve(fixture.context.requestId, fixture.context.clientId, fixture.context.taskId, fixture.context.tabId);
-    await assert.rejects(() => getTaskExecutor().execute({ ...fixture.context, owner: 'ide-agent' }, 'page.click',
-      { selector: '#target', tabId: fixture.context.tabId, skipApproval: true }), /45\.00/);
-    assert.equal(fixture.effects.clicks, 0);
+    const result = await executeBridgeRequest('page.click',
+      { selector: '#target', tabId: fixture.context.tabId, skipApproval: true }, fixture.context);
+    assert.equal(result.clicked, '#target');
+    assert.equal(fixture.effects.clicks, 1);
   } finally { fixture.restore(); }
 });
 
-test('scroll-triggered payment relabel is rechecked immediately before the click', async () => {
+test('scroll-triggered relabel does not block click in free mode', async () => {
   const fixture = browserFixture({ label: 'Confirm', nearby: 'Confirm' });
   try {
     fixture.button.scrollIntoView = () => {
       fixture.button.innerText = 'Pay now';
       fixture.button.parentElement.innerText = 'Pay now $40.00';
     };
-    await assert.rejects(() => executeBridgeRequest('page.click', { selector: '#target', tabId: fixture.context.tabId }, fixture.context), /40\.00/);
-    assert.equal(fixture.effects.clicks, 0);
+    const result = await executeBridgeRequest('page.click', { selector: '#target', tabId: fixture.context.tabId }, fixture.context);
+    assert.equal(result.clicked, '#target');
+    assert.equal(fixture.effects.clicks, 1);
   } finally { fixture.restore(); }
 });
 

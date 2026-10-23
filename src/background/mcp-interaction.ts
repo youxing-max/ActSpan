@@ -70,22 +70,9 @@ export async function interactOnPage(method: string, params: Record<string, unkn
             if (!found) throw new Error(`元素未找到或句柄已失效: ${selector}`);
             return found as HTMLElement;
         };
-        const denyPayment = (el: HTMLElement) => {
-            const form = (el as HTMLInputElement).form;
-            const submit = form?.querySelector('button[type="submit"],input[type="submit"],button:not([type])');
-            const label = [el.getAttribute?.('aria-label'), el.getAttribute?.('value'), el.textContent,
-                submit?.getAttribute('aria-label'), submit?.getAttribute('value'), submit?.textContent].filter(Boolean).join(' ').slice(0, 500);
-            const nearby = (form?.innerText || el.parentElement?.innerText || '').slice(0, 1000);
-            const amount = (nearby.match(/(?:[$€£¥]\s*\d[\d,.]*|\d[\d,.]*\s*(?:元|円|美元|欧元|USD|CNY|EUR|GBP))/i) || [])[0] || '';
-            if (/(?:支付|付款|购买|结算|下单|充值|订阅|捐赠|pay\b|checkout\b|purchase\b|place order\b|subscribe\b|donate\b)/i.test(label) ||
-                amount && /(?:确认|确定|继续|提交|完成|confirm\b|continue\b|proceed\b|submit\b|complete\b)/i.test(label)) {
-                throw new Error(`支付动作未经确认${amount ? `：${amount}` : ''}；请使用需要用户确认的 page.click 或 page.type 提交路径`);
-            }
-        };
         if (method === 'page.select') {
             const select = target();
             if (select.tagName !== 'SELECT') throw new Error('目标不是原生 select；请定位真实 select 元素');
-            denyPayment(select);
             const control = select as HTMLSelectElement;
             const requested = String(params.value);
             const option = Array.from(control.options).find((item) => item.value === requested)
@@ -102,7 +89,6 @@ export async function interactOnPage(method: string, params: Record<string, unkn
             const destination = drop ? document.querySelector(params.dropSelector as string) as HTMLElement | null : target();
             if (!destination) throw new Error(`拖放目标未找到: ${params.dropSelector}`);
             if (!drop && (destination.tagName !== 'INPUT' || (destination as HTMLInputElement).type !== 'file')) throw new Error('上传目标必须是 file input');
-            denyPayment(destination);
             const bytes = atob(String(params.base64));
             const data = new Uint8Array(bytes.length);
             for (let i = 0; i < bytes.length; i++) data[i] = bytes.charCodeAt(i);
@@ -136,7 +122,6 @@ export async function interactOnPage(method: string, params: Record<string, unkn
                     altKey: modifiers.includes('alt'), metaKey: modifiers.includes('meta') || modifiers.includes('cmd') };
                 if (!current) throw new Error('页面无聚焦元素；请传 selector 或 ref');
                 const activation = key === 'Enter' || key === ' ' || key === 'Space';
-                if (activation && !modifiers.length) denyPayment(current);
                 const proceed = current.dispatchEvent(new KeyboardEvent('keydown', eventOptions));
                 if (proceed && !modifiers.length && key === 'Tab') {
                     const focusable = Array.from(document.querySelectorAll('a[href],button,input,select,textarea,[tabindex]')) as HTMLElement[];
@@ -148,7 +133,6 @@ export async function interactOnPage(method: string, params: Record<string, unkn
                     if (current.matches?.('button,a,[role="button"],[role="link"],input[type="submit"]')) current.click();
                     else if (key === 'Enter' && (current as HTMLInputElement).form) {
                         const form = (current as HTMLInputElement).form!;
-                        denyPayment(current);
                         form.requestSubmit();
                     }
                 } else if (proceed && (current.tagName === 'INPUT' || current.tagName === 'TEXTAREA') &&

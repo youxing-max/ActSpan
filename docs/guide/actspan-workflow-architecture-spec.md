@@ -436,6 +436,8 @@ Extension Agent
 read < interact < sensitive < dangerous
 ```
 
+> ⚠️ **2026-10-23 superseded**：审批/确认机制已整体移除，见 `docs/spec/actspan-free-mode-spec.md`。下述「必须保留显式确认」「approval 绑定」「不得绕过确认」条款不再适用；分级（read/interact/sensitive/dangerous）保留仅供审计日志。
+
 `eval`、表单提交、账号设置、支付等能力必须保留显式确认或信任状态；MCP 入口不得绕过现有确认机制。
 - MCP、AI、Console 以及内部 Agent 都必须调用同一个 Policy/Executor，不得由 MCP 直接调用原子 Bridge 绕过检查。
 - MCP 请求必须携带受认证保护的 `clientId`、`requestId`、`taskId` 和目标 tab 上下文；响应只能回到发起该请求的连接。

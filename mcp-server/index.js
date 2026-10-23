@@ -200,9 +200,8 @@ async function main(config) {
     registerTool('actspan_tab_close', {
         title: 'Close tab', description: 'Close a tab owned by the current task.',
         inputSchema: { ...taskParams, tabId: z.number().int() },
-    }, run((args) => callBridge('tab.close', args, 90000, args)));
-    // tab.close 是 sensitive 能力，必然走审批；审批窗口 45s（mcp-bridge.ts:710）。
-    // 客户端超时必须大于审批窗口，否则用户还在看确认卡片时就报 "Bridge request timed out"。
+    }, run((args) => callBridge('tab.close', args, 30000, args)));
+    // 自由化模式：tab.close 不再走审批，30s 超时仅防桥接卡死。
 
     registerTool('actspan_tab_navigate', {
         title: 'Navigate tab', description: 'Navigate a tab owned by the current task.',

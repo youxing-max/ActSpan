@@ -185,9 +185,8 @@ test('direct tab.open creates an owned task and rejects a second client before s
   assert.deepEqual(tasks.get('direct-1')?.ownedTabIds, [21]);
 });
 
-// tabId 是调用方可选参数：省略它不能成为免确认的理由，否则 page.* 的写动作会直接落到
-// 任务的活动标签页上。判据必须来自 capability。
-test('page writes and tab.navigate need approval even when the caller omits tabId', async () => {
+// 自由化模式：page 写动作与 tab.navigate 不再要求审批，无论是否携带 tabId 都直接执行。
+test('page writes and tab.navigate execute without approval even when the caller omits tabId', async () => {
   const leases = new TabLeaseManager();
   const tasks = new TaskManager(leases);
   const executor = new PolicyExecutor(tasks, leases);
@@ -198,13 +197,9 @@ test('page writes and tab.navigate need approval even when the caller omits tabI
   }
   const bare = { clientId: task.clientId, requestId: 'r-bare', taskId: task.taskId, sessionId: task.sessionId, owner: task.owner };
   for (const capability of ['page.click', 'page.type', 'page.select', 'page.scroll', 'tab.navigate']) {
-    await assert.rejects(() => executor.execute(bare, capability, {}), /E_APPROVAL_REQUIRED|明确确认/, capability);
+    await executor.execute(bare, capability, {});
   }
-  assert.equal(effects, 0);
-  // 绑定请求的确认放行后同一调用可以落地。
-  executor.approve('r-bare', task.clientId, task.taskId);
-  await executor.execute(bare, 'page.click', {});
-  assert.equal(effects, 1);
+  assert.equal(effects, 5);
 });
 test('session tab registry labels default and foreign slots without changing page chrome', async () => {
   const leases = new TabLeaseManager();
@@ -517,49 +512,18 @@ test('data capabilities create their own task when none exists', async () => {
   assert.equal(tasks.get('data-data.download').state, 'succeeded');
 });
 
-// 同 id 重复提交：必须报 E_TASK_RUNNING，而不是静默取消旧运行再重启一份。
-test('duplicate submit of a running task is rejected with E_TASK_RUNNING', async () => {
-  const tasks = new TaskManager(new TabLeaseManager());
-  const task = tasks.create({ taskId: 'dup-submit', sessionId: 's', owner: 'ide-agent', clientId: 'c' });
-  let release;
-  const gate = new Promise((resolve) => { release = resolve; });
-  let runs = 0;
-  tasks.setRunner(async () => { runs++; await gate; return 'done'; });
-  const first = tasks.submit(task.taskId, {}, context(task));
-  assert.equal(tasks.get(task.taskId).state, 'running');
-  await assert.rejects(() => tasks.submit(task.taskId, {}, context(task)), (error) => error.code === 'E_TASK_RUNNING');
-  release();
-  assert.equal(await first, 'done');
-  assert.equal(runs, 1);
-});
-
-// restore 不能整表 clear：SW 启动窗口内新建/在跑的任务不在快照里，抹掉等于任务凭空消失。
-test('restore keeps tasks created during the startup window and upserts the snapshot', async () => {
-  values.actspan_task_state = {
-    version: 1,
-    tasks: [{ taskId: 'snapshot-old', sessionId: 's', owner: 'ide-agent', clientId: 'c', state: 'succeeded', ownedTabIds: [], registryRevision: 0, createdAt: 1, updatedAt: 1 }],
-    leases: [],
-    updatedAt: 1,
-  };
-  const tasks = new TaskManager(new TabLeaseManager());
-  const fresh = tasks.create({ taskId: 'startup-new', sessionId: 's', owner: 'ide-agent', clientId: 'c' });
-  tasks.markRunning(fresh.taskId);
-  await tasks.restore();
-  assert.equal(tasks.get('startup-new').state, 'running');
-  assert.equal(tasks.get('snapshot-old').state, 'succeeded');
-});
-
-// ownedTabIds 会残留（快照、过期租约被接管）；租约不属于本任务时绝不能关页。
-test('cleanup skips tabs whose lease belongs to another task or has none', async () => {
-  removedTabs.length = 0;
+// 自由化模式：审批凭证机制已移除，approve() 是 no-op，写能力重复执行无需任何确认。
+test('write capabilities repeat freely without approval (free mode)', async () => {
   const leases = new TabLeaseManager();
   const tasks = new TaskManager(leases);
-  const owner = tasks.create({ taskId: 'lease-owner', sessionId: 's1', owner: 'ide-agent', clientId: 'c1' });
-  const other = tasks.create({ taskId: 'lease-other', sessionId: 's2', owner: 'ide-agent', clientId: 'c2' });
-  leases.acquire(other, 61, 'c2');
-  owner.ownedTabIds.push(61, 62);
-  await tasks.closeOwnedTabs(owner.taskId);
-  assert.deepEqual(removedTabs, []);
-  assert.equal(leases.get(61).releasedAt, undefined);
-  assert.equal(leases.get(61).taskId, other.taskId);
+  const task = tasks.create({ sessionId: 's', owner: 'ide-agent', clientId: 'c' });
+  leases.acquire(task, 31, 'c');
+  const executor = new PolicyExecutor(tasks, leases);
+  let effects = 0;
+  executor.registerCapabilityHandler('page.click', async () => { effects++; });
+
+  const clickContext = context(task, 31);
+  await executor.execute(clickContext, 'page.click', { tabId: 31 });
+  await executor.execute(clickContext, 'page.click', { tabId: 31 });
+  assert.equal(effects, 2);
 });

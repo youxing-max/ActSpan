@@ -178,6 +178,8 @@ network fetch scroll download upload query act ask status eval learnings reload
 
 ### D. 安全
 
+> ⚠️ **2026-10-23 superseded**：审批门已整体移除，见 `docs/spec/actspan-free-mode-spec.md`。下表 D1/D2 的「拦截/确认」契约不再适用；`page.eval` 仍受 V8 `throwOnSideEffect` 约束。
+
 | ID | 需求 | 契约 | 落点 | 依赖 | 量级 |
 |---|---|---|---|---|---|
 | **D1** | **`page.eval` 纳入 policy**（当前结构性漏洞） | `mcp-bridge.ts:503` 的 `page.eval` 走 `Runtime.evaluate` + `userGesture:true`，只校验 tab 归属，**外部 agent 可在页面内执行任意 JS 触发提交，绕过所有 click 层确认门**。必须拦 capture-phase 的合成 `MouseEvent` 派发与支付类点击；**同时不得影响普通 eval**（对方断言：「这道防线不碰普通的 eval」） | `mcp-bridge.ts`、`policy-executor.ts` | — | 70 |

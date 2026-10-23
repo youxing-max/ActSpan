@@ -127,7 +127,7 @@ Actspan 使用 Chrome Extension Manifest V3 的分层架构：
 
 ## MCP 与外部工具
 
-项目包含本地 MCP Server，可把 Actspan 的浏览器能力暴露给支持 MCP 的客户端。稳定工具共 34 个，统一使用 `actspan_` 前缀：
+项目包含本地 MCP Server，可把 Actspan 的浏览器能力暴露给支持 MCP 的客户端。稳定工具共 35 个，统一使用 `actspan_` 前缀：
 
 | 分组 | 工具 | 说明 |
 |---|---|---|
@@ -165,6 +165,7 @@ Actspan 使用 Chrome Extension Manifest V3 的分层架构：
 | | `actspan_agent_status` | 按 taskId 查询任务状态 |
 | | `actspan_agent_result` | 读取任务保留的结果 |
 | | `actspan_agent_cancel` | 按 taskId 取消任务 |
+| **定时任务** | `actspan_timer` | 创建/取消延时、周期与每日/每周定时任务，到点自动起 AI 会话执行，原标签页关闭后仍会执行 |
 
 MCP 配置、鉴权、工具参数和端到端测试见 [MCP Bridge 文档](MCP-BRIDGE.md)。
 

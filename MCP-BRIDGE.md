@@ -56,9 +56,9 @@ agent 会按需调用 `actspan_status`、`actspan_tab_open`、`actspan_page_read
 
 MCP 服务日志不输出到终端，默认写入：`~/.actspan/mcp-server.log`。可通过环境变量 `ACTSPAN_MCP_LOG` 指定其他日志文件。
 
-## 工具清单（34 个）
+## 工具清单（35 个）
 
-按能力分为八组：状态与通知、标签页、页面原子操作、act 组、network 组、data 组、skill/workflow、异步 agent。单一事实源是 `mcp-server/catalog.js` 的 `TOOL_NAMES`，本文与之不一致时以代码为准（`node mcp-server/check-tool-docs.mjs MCP-BRIDGE.md` 可校验）。
+按能力分为九组：状态与通知、标签页、页面原子操作、act 组、network 组、data 组、skill/workflow、异步 agent、定时任务。单一事实源是 `mcp-server/catalog.js` 的 `TOOL_NAMES`，本文与之不一致时以代码为准（`node mcp-server/check-tool-docs.mjs MCP-BRIDGE.md` 可校验）。
 
 ### 状态与通知（3）
 
@@ -131,6 +131,12 @@ MCP 服务日志不输出到终端，默认写入：`~/.actspan/mcp-server.log`�
 |---|---|
 | `actspan_agent_submit` / `actspan_agent_status` / `actspan_agent_result` / `actspan_agent_cancel` | 提交开放式浏览器任务、按 taskId 查状态、读留存结果、取消任务 |
 
+### 定时任务（1）
+
+| 工具 | 说明 |
+|---|---|
+| `actspan_timer` | 创建/列出/取消浏览器定时任务：`set_timeout`（延时一次）、`set_interval`（周期）、`set_schedule`（daily/weekly）；到点以 `task_action` 为输入自动起一个 AI 会话执行，原标签页已关闭也会照跑（完成后发系统通知）。alarm 最小粒度 1 分钟，更短的延时走内存调度、浏览器关闭即丢失 |
+
 ### `actspan_feishu_push`
 
 - `title`：必填，通知标题。
@@ -194,4 +200,4 @@ MCP 只提供原子能力，跨 MCP 的编排 SOP 写进 IDE 的 skill。**已�
 
 ## 测试
 
-`cd mcp-server && node test/e2e.mjs` —— 模拟 IDE(stdio) + 模拟扩展(WS)，验证 34 个工具注册、token 鉴权、端到端调用、Feishu 推送、错误 token 拒绝。
+`cd mcp-server && node test/e2e.mjs` —— 模拟 IDE(stdio) + 模拟扩展(WS)，验证 35 个工具注册、token 鉴权、端到端调用、Feishu 推送、错误 token 拒绝。
