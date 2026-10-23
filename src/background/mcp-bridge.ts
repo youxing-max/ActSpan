@@ -30,8 +30,6 @@ import { updateStatus } from './status-bridge';
 import { MAIN_FRAME_ID, frameSnapshotId, listTabFrames, qualifyRef, routeFrameRef } from './frame-routing';
 import { realClickAt, realPressKey, realTypeInto } from '../functions/cdp-input';
 import { CDPSessionManager } from '../lib/cdp-session';
-import { screenshotFunction } from '../functions/screenshot';
-import { ArtifactStore } from '../lib/artifact-store';
 import type { PermissionLevel, TabLease, TaskContext } from './task-types';
 
 const readDriftTracker = createReadDriftTracker();
@@ -1189,8 +1187,9 @@ export async function dispatch(method: string, params: Record<string, unknown>, 
         }
 
         case 'page.screenshot': {
-            // 统一走 screenshotFunction（format/quality/clip/full_page/element_id 全支持），
-            // 它经 CDPSessionManager 自管调试会话，不能再套 withDebugger 造成重复 attach。
+            // 可视区 PNG 截图（free mode 实现）。
+            // 必须走 CDPSessionManager.sendCommand：它管理 inFlightCommands 并 touchSession，
+            // 否则空闲 5s 的 idle detach 会在 attach 后立即 detach，撞上 captureScreenshot（Detached while handling command）。
             const tab = await resolveTab(context, params.tabId as number | undefined, 'read');
             return withDebugger(context, tab.id!, async () => {
                 assertSignalActive(context.signal);

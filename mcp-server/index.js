@@ -305,20 +305,10 @@ async function main(config) {
 
     registerTool('actspan_screenshot', {
         title: 'Capture screenshot',
-        description: 'Capture a screenshot from a task-owned tab; when tabId is omitted, capture the active tab. Defaults to the visible area; pass full_page for the entire scrollable page, clip for a viewport region, or element_id+snapshot_id (from page_snapshot) to capture one element.',
+        description: 'Capture a screenshot from a task-owned tab; when tabId is omitted, capture the active tab. Captures the visible viewport area as PNG.',
         inputSchema: {
             ...taskParams,
             tabId: tabIdParam,
-            format: z.enum(['png', 'jpeg']).default('png'),
-            quality: z.number().int().min(0).max(100).optional().describe('jpeg only, default 80.'),
-            full_page: z.boolean().default(false),
-            clip: z.object({
-                x: z.number(), y: z.number(),
-                width: z.number().positive(), height: z.number().positive(),
-            }).strict().optional().describe('Viewport coordinates region.'),
-            element_id: z.string().min(1).optional(),
-            snapshot_id: z.string().min(1).optional(),
-            wait_ms: z.number().int().min(1000).max(60000).optional().describe('Page load timeout, default 15000.'),
         },
     }, async (args) => {
         try {
