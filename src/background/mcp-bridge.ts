@@ -31,6 +31,8 @@ import { updateStatus } from './status-bridge';
 import { MAIN_FRAME_ID, frameSnapshotId, listTabFrames, qualifyRef, routeFrameRef } from './frame-routing';
 import { realClickAt, realPressKey, realTypeInto } from '../functions/cdp-input';
 import { CDPSessionManager } from '../lib/cdp-session';
+import { screenshotFunction } from '../functions/screenshot';
+import { ArtifactStore } from '../lib/artifact-store';
 import type { PermissionLevel, TabLease, TaskContext } from './task-types';
 
 const readDriftTracker = createReadDriftTracker();
@@ -1252,13 +1254,27 @@ export async function dispatch(method: string, params: Record<string, unknown>, 
         }
 
         case 'page.screenshot': {
+            // 统一走 screenshotFunction（format/quality/clip/full_page/element_id 全支持），
+            // 它经 CDPSessionManager 自管调试会话，不能再套 withDebugger 造成重复 attach。
             const tab = await resolveTab(context, params.tabId as number | undefined, 'read');
-            return withDebugger(context, tab.id!, async () => {
-                assertSignalActive(context.signal);
-                const shot = await chrome.debugger.sendCommand({ tabId: tab.id! }, 'Page.captureScreenshot', { format: 'png' }) as { data?: string };
-                if (!shot?.data) throw new Error('截图返回为空');
-                return { mimeType: 'image/png', data: shot.data };
-            });
+            assertSignalActive(context.signal);
+            const shotResult = await screenshotFunction.execute(
+                params as Record<string, unknown>,
+                { ...context, tabId: tab.id! },
+            );
+            if (!shotResult?.success) throw new Error(shotResult?.error || '截图失败');
+            const shotData = shotResult.data as { artifact_id?: string; mode?: string; sizeKB?: number; target_url?: string } | undefined;
+            const artifact = shotData?.artifact_id ? await ArtifactStore.getScreenshot(shotData.artifact_id) : null;
+            const base64 = artifact?.dataUrl?.split(',')[1] || '';
+            if (!base64) throw new Error('截图返回为空');
+            return {
+                mimeType: artifact?.format === 'jpeg' ? 'image/jpeg' : 'image/png',
+                data: base64,
+                artifact_id: shotData?.artifact_id,
+                mode: shotData?.mode,
+                sizeKB: shotData?.sizeKB,
+                target_url: shotData?.target_url,
+            };
         }
         case 'page.select':
         case 'page.upload':

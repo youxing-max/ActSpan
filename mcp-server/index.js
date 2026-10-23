@@ -173,7 +173,7 @@ async function main(config) {
             message: z.string(),
             webhookName: z.string().min(1).optional().describe('Exact configured webhook name; omit to target all enabled Feishu and DingTalk webhooks.'),
         },
-    }, run((args) => callBridge('feishu.push', args, 30000)));
+    }, run((args) => callBridge('feishu.push', args, 90000)));
 
     registerTool('actspan_tabs_list', {
         title: 'List browser tabs', description: 'List browser tabs visible to the current Actspan task.', inputSchema: taskParams,
@@ -201,8 +201,8 @@ async function main(config) {
         title: 'Close tab', description: 'Close a tab owned by the current task.',
         inputSchema: { ...taskParams, tabId: z.number().int() },
     }, run((args) => callBridge('tab.close', args, 90000, args)));
-    // tab.close 是 sensitive 能力，必然走审批；审批窗口本身就有 25s。客户端只等 10s 会在用户
-    // 还在看确认卡片时就报 "Bridge request timed out"，把可完成的操作变成必然失败。
+    // tab.close 是 sensitive 能力，必然走审批；审批窗口 45s（mcp-bridge.ts:710）。
+    // 客户端超时必须大于审批窗口，否则用户还在看确认卡片时就报 "Bridge request timed out"。
 
     registerTool('actspan_tab_navigate', {
         title: 'Navigate tab', description: 'Navigate a tab owned by the current task.',
@@ -268,7 +268,7 @@ async function main(config) {
         inputSchema: snapshotSchema,
     }, run((args) => {
         const checked = snapshotSchema.parse(args);
-        return callBridge('page.snapshot', checked, 30000, checked);
+        return callBridge('page.snapshot', checked, 90000, checked);
     }));
 
 
@@ -305,12 +305,31 @@ async function main(config) {
     }, run((args) => callBridge('page.eval', args, 90000, args)));
 
     registerTool('actspan_screenshot', {
-        title: 'Capture screenshot', description: 'Capture a screenshot from a task-owned tab; when tabId is omitted, capture the active tab.',
-        inputSchema: { ...taskParams, tabId: tabIdParam },
+        title: 'Capture screenshot',
+        description: 'Capture a screenshot from a task-owned tab; when tabId is omitted, capture the active tab. Defaults to the visible area; pass full_page for the entire scrollable page, clip for a viewport region, or element_id+snapshot_id (from page_snapshot) to capture one element.',
+        inputSchema: {
+            ...taskParams,
+            tabId: tabIdParam,
+            format: z.enum(['png', 'jpeg']).default('png'),
+            quality: z.number().int().min(0).max(100).optional().describe('jpeg only, default 80.'),
+            full_page: z.boolean().default(false),
+            clip: z.object({
+                x: z.number(), y: z.number(),
+                width: z.number().positive(), height: z.number().positive(),
+            }).strict().optional().describe('Viewport coordinates region.'),
+            element_id: z.string().min(1).optional(),
+            snapshot_id: z.string().min(1).optional(),
+            wait_ms: z.number().int().min(1000).max(60000).optional().describe('Page load timeout, default 15000.'),
+        },
     }, async (args) => {
         try {
             const result = await callBridge('page.screenshot', args || {}, 90000, args || {});
-            return { content: [{ type: 'image', data: result.data, mimeType: 'image/png' }] };
+            return {
+                content: [{ type: 'image', data: result.data, mimeType: result.mimeType || 'image/png' }],
+                ...(result.mode || result.artifact_id
+                    ? { structuredContent: { mode: result.mode, artifact_id: result.artifact_id, sizeKB: result.sizeKB, target_url: result.target_url } }
+                    : {}),
+            };
         } catch (error) {
             return fail(error);
         }
@@ -389,7 +408,9 @@ async function main(config) {
     registerDataTools({ registerTool, callBridge, run, tabIdParam, taskParams });
     registerStatusTool({ registerTool, callBridge, run, tabIdParam, taskParams });
 
-    const transport = new StdioServerTransport();
+    // upload 工具允许 12,000,000 字符 base64，SDK ReadBuffer 默认 10MB 会在收到合法大文件时断连；
+    // 显式放宽到 14MiB（12M base64 + JSON-RPC 信封），与 interaction-tools.js 的 schema 上限对齐。
+    const transport = new StdioServerTransport(process.stdin, process.stdout, { maxBufferSize: 14 * 1024 * 1024 });
     server.server.onclose = () => { void hub.stop(); };
     const onStdioClose = () => { void server.close().finally(() => process.exit(0)); };
     process.stdin.once('end', onStdioClose);
