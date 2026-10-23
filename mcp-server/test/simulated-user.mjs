@@ -13,7 +13,7 @@ const env = {
     ACTSPAN_API_URL: '', ACTSPAN_API_KEY: '',
 };
 const client = new Client({ name: 'sim-user', version: '1.0.0' });
-await client.connect(new StdioClientTransport({ command: process.execPath, args: [path.join(here, 'index.js')], cwd: here, env }));
+await client.connect(new StdioClientTransport({ command: process.execPath, args: [path.join(here, '..', 'index.js')], cwd: path.join(here, '..'), env }));
 
 const notes = [];
 const say = (kind, id, detail) => { notes.push({ kind, id, detail }); console.log(`${kind}  ${id}  ${detail}`); };

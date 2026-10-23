@@ -19,7 +19,7 @@ export default [
   },
   js.configs.recommended,
   {
-    files: ['mcp-server/**/*.{js,mjs}', 'src/**/*.test.mjs', 'test/**/*.mjs'],
+    files: ['mcp-server/**/*.{js,mjs}', 'src/**/*.test.mjs', 'test/**/*.mjs', 'scripts/**/*.mjs'],
     languageOptions: {
       globals: { ...globals.node, ...globals.browser, chrome: 'readonly' },
     },

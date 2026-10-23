@@ -23,14 +23,14 @@
     "build:offscreen": "vite build --config vite.config.offscreen.ts",
     "build": "npm run build:popup && npm run build:content && npm run build:sidepanel && npm run build:background && npm run build:offscreen && echo 'Build completed!'",
     "typecheck": "tsc -b --noEmit",
-    "test": "node --test $(find src -name '*.test.mjs') test/fixtures.test.mjs test/manifest-recorder.test.mjs test/scenarios.test.mjs",
+    "test": "node scripts/run-tests.mjs",
     "test:omp-compat": "node mcp-server/test/omp-compat.mjs",
     "lint": "eslint . --report-unused-disable-directives",
     "preview": "vite preview",
     "docs:dev": "vitepress dev docs",
     "docs:build": "vitepress build docs",
     "docs:preview": "vitepress preview docs",
-    "test:live": "ACTSPAN_LIVE=1 node --test test/scenarios.test.mjs"
+    "test:live": "node scripts/test-live.mjs"
   },
   "dependencies": {
     "@ant-design/icons": "^5.6.1",
