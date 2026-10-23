@@ -593,8 +593,9 @@ export const getStyles = () => `
     pointer-events: none;
   }
 
-  /* 审批卡例外：面板展开时也必须可见可点，否则敏感动作无法批准 */
-  .actspan-trigger.active .actspan-pill-action-card:has([data-type="approval"]) {
+  /* 审批卡例外：面板展开时也必须可见可点，否则敏感动作无法批准；ask-user 提问卡同理，否则用户永远看不到问题 */
+  .actspan-trigger.active .actspan-pill-action-card:has([data-type="approval"]),
+  .actspan-trigger.active .actspan-pill-action-card:has([data-type="ask-user"]) {
     opacity: 1;
     pointer-events: auto;
   }
