@@ -61,7 +61,7 @@ export function serverDefinition({ client = 'actspan', extensionId, fromNpm = fa
     };
     const checked = validateConfig(env);
     if (!checked.valid) throw new Error(`生成的 MCP 配置未通过服务端校验，install 不会写出无效配置：\n${checked.errors.map((error) => `- ${error}`).join('\n')}`);
-    return fromNpm ? { command: process.platform === 'win32' ? 'npx.cmd' : 'npx', args: ['-y', '@actspan/mcp-server', 'mcp', '--client', client], env } : { command: process.execPath, args: [path.join(packageRoot, 'index.js'), 'mcp', '--client', client], env };
+    return fromNpm ? { command: process.platform === 'win32' ? 'npx.cmd' : 'npx', args: ['-y', 'actspan-mcp', 'mcp', '--client', client], env } : { command: process.execPath, args: [path.join(packageRoot, 'index.js'), 'mcp', '--client', client], env };
 }
 function jsonTarget(parsed) {
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { supported: false, configured: false, reason: '顶层不是 JSON 对象' };

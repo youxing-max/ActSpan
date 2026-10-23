@@ -321,7 +321,7 @@ network fetch scroll download upload query act ask status eval learnings reload
 | U2 | `install` 子命令 | 八条纪律：agent 表是数据不是代码（`agents.json`，含 `_comment` 字段说明）；每 agent 一条候选路径链，按序取**第一个存在**的；平台差异不猜（Win `%APPDATA%` / mac `~/Library/Application Support` / Linux `$XDG_CONFIG_HOME` 或 `~/.config`）；表追不上新产品 → **扫 home 点目录自动发现**含 `mcpServers` 的配置（Codex TOML 另行适配）；**发现要去重**（对方踩过的坑：排除范围要用表里**所有候选路径**算，不能只用命中的那个，否则 Claude Code 第二个位置被当成新 agent，**用户看到同一产品列两遍还被写两份配置**）；写之前先给人看（`--dry-run`，每行 `·`/`+` 标「已配置，跳过」/「将写入 MCP 配置」）；**备份是文件名的一部分**（`.bak-<ts>`，已配过的只报状态不动文件）；**TOML 不做完整解析，只追加 `[mcp_servers.x]` 块**（理由：用户 config.toml 里可能有注释和自定义格式） | `mcp-server/` 新 `install.js` + `agents.json` | U1 | 320 |
 | U3 | `doctor` | **桥没跑就自己先拉一个再探**（对方原文：「桥本来就是谁先用谁拉起的，doctor 自己拉一个再探，才探得到真相」）；`bridge.json` 里记的 pid 已经没了要明说；成功输出「握手正常 · 扩展在线」。保留现有 `hub_listening` 双分支 hint | 同上 | E1 | 60 |
 | U4 | **配对自举：消灭手填 token 与扩展 ID** | `install` 起一次性 `127.0.0.1` 随机端口 HTTP 监听 → 打开引导页（`chrome-extension://<id>/welcome.html`）→ 页面 POST 回 `chrome.runtime.id` 与生成的配对密钥（同时写 `chrome.storage.local`）→ installer **自己填进它写给用户的那份 MCP 配置**。用户全程只做浏览器强制他做的那一下：加载扩展。**注：对方没有这条（其白名单要求 ID 预先已知），这是 ActSpan 自有设计** | `install.js`、`welcome` 页、`mcp-bridge.ts:6` | U2 | 110 |
-| U5 | 双运行模式 + Windows | `FROM_NPM ? { command: WIN ? 'npx.cmd' : 'npx', args:['-y','@actspan/mcp-server','mcp','--client',c] } : { command: nodeBin(), args:[cli,'mcp','--client',c] }`。**`npx.cmd` 是 Windows 上 `npx` 解析失败的唯一解** | 同上 | U2 | 15 |
+| U5 | 双运行模式 + Windows | `FROM_NPM ? { command: WIN ? 'npx.cmd' : 'npx', args:['-y','actspan-mcp','mcp','--client',c] } : { command: nodeBin(), args:[cli,'mcp','--client',c] }`。**`npx.cmd` 是 Windows 上 `npx` 解析失败的唯一解** | 同上 | U2 | 15 |
 | U6 | 引导页 | 写临时 html，按平台 `cmd /c start` / `open` / `xdg-open`，`detached + unref`。页面须明写：**装扩展这一下必须你自己点，浏览器不允许脚本代劳** | 同上 | U2 | 40 |
 | U7 | 异构配置**只打印不写** | 认不出的格式（如顶层 `mcp` + 命令数组）→ 打印该填的 JSON + 手动步骤 + 核对日期，并声明「这是手动配置说明，不表示 install 已支持自动安装」。**探测不到就说清楚，绝不猜** | 同上 | U2 | 20 |
 
@@ -452,7 +452,7 @@ WP15 测试         S1–S5            S1/S2 最先做，其余随包推进
 | **Q6** | `act` DSL 是否进本轮（WP10） | 它硬依赖 H2 + C1，且是对方"98% 墙钟在命令间推理"那个论点的落地物。做则本轮工作量翻倍，不做则"省轮数"只有间接手段 | **不进本轮。** 先把 C1（效果证据）做完并稳定一轮，`act` 的价值才可验证；否则批量执行建立在不可信的单步结果上 | 不进本轮 |
 | **Q7** | offscreen 迁移（E10）与桥拆分（E1）是否合并到一个窗口 | 两者都动连接层，分两次做等于把桥重构两遍 | **合并**，且排在 WP0/WP6 之后单独一个窗口。E1 单独先做也可以（它解决多 agent 撞端口），但 E10 必须等 E1 稳定 | E1 先做，E10 排后 |
 | **Q8** | 时间窗与人力 | 16 个工作包全做约 3500+ 行。范围必须匹配窗口，否则承诺会失信 | 需要你给**截止日期 + 可投入人力**，我据此裁包。当前建议的本轮范围（WP0 + WP0.5 + WP6 + U1 + S1/S2，约 300 行）是按"一人 2–3 天"估的 | 按本轮建议范围执行 |
-| **Q9** | 是否发布到 npm | `npx -y @actspan/mcp-server` 要求包已发布；AGPL 发布无碍，但**包名占用**和版本策略是对外动作 | 先本地 `node` 模式跑通（U5 已支持双模式），发布留到安装体验验收后再定 | 只支持本地模式 |
+| **Q9** | 是否发布到 npm | `npx -y actspan-mcp` 要求包已发布；AGPL 发布无碍，但**包名占用**和版本策略是对外动作 | 先本地 `node` 模式跑通（U5 已支持双模式），发布留到安装体验验收后再定 | 只支持本地模式 |
 
 ### 7.3 产品语义（会影响用户可见行为）
 

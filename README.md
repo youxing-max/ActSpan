@@ -101,7 +101,7 @@ Actspan 直接运行在 Chrome 扩展环境中，复用当前浏览器已有的�
 
 ### 6. MCP 工具与协议扩展
 
-- 本地 MCP Server（`@actspan/mcp-server`）把浏览器能力以 **35 个 `actspan_` 前缀工具**暴露给任何 MCP 客户端。
+- 本地 MCP Server（`actspan-mcp`）把浏览器能力以 **35 个 `actspan_` 前缀工具**暴露给任何 MCP 客户端。
 - 支持动态 HTTP 工具和远程 Manifest，可按需接入已有服务。
 - 完整清单见下文 [MCP 工具全清单](#mcp-工具全清单35-个)。
 
@@ -137,7 +137,7 @@ Actspan 直接运行在 Chrome 扩展环境中，复用当前浏览器已有的�
 ```text
 MCP 客户端（Claude Code / Codex / IDE Agent）
    ↓ stdio
-@actspan/mcp-server（index.js：工具注册 / policy / catalog）
+actspan-mcp（index.js：工具注册 / policy / catalog）
    ↓ WebSocket 127.0.0.1:30121（bridge-daemon 常驻，bridge-lock 防重复）
 扩展 Offscreen 文档（mcp-transport：帧封装 actspan_mcp_socket_event / 取消帧）
    ↓
@@ -384,7 +384,7 @@ src/
   options/       # 配置页
   session-history/ # 会话历史
   sidepanel/     # Side Panel UI
-mcp-server/      # 独立 npm 包 @actspan/mcp-server（桥、工具、机器人、安装器）
+mcp-server/      # 独立 npm 包 actspan-mcp（桥、工具、机器人、安装器）
 public/skills/   # 内置技能（global/ + domains/）
 docs/            # VitePress 文档站（指南、规范、审计记录）
 ```

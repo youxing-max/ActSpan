@@ -285,7 +285,7 @@ actspan_agent_cancel
 
 ### 6.3 npm 本地 MCP 发布与客户端配置
 
-MCP Server 以 `@actspan/mcp-server` 发布到 npm，提供 `actspan-mcp` 启动入口，使用 stdio 作为 IDE Agent 的 MCP 传输。用户不需要手动下载源码；客户端 MCP 配置通过 `npx` 将固定版本下载到本地缓存并启动。
+MCP Server 以 `actspan-mcp` 发布到 npm，提供 `actspan-mcp` 启动入口，使用 stdio 作为 IDE Agent 的 MCP 传输。用户不需要手动下载源码；客户端 MCP 配置通过 `npx` 将固定版本下载到本地缓存并启动。
 
 客户端配置的最小形式：
 
@@ -294,7 +294,7 @@ MCP Server 以 `@actspan/mcp-server` 发布到 npm，提供 `actspan-mcp` 启动
   "mcpServers": {
     "actspan": {
       "command": "npx",
-      "args": ["--yes", "@actspan/mcp-server@1.0.0"],
+      "args": ["--yes", "actspan-mcp@1.0.0"],
       "env": {
         "ACTSPAN_API_URL": "https://api.example.com",
         "ACTSPAN_API_KEY": "replace-with-user-key",
@@ -495,7 +495,7 @@ submit → queued → running →
 - 增加 revision 和 syncStatus。
 - 增加 MCP next-lookup 自动可见性。
 
-- 发布 `@actspan/mcp-server`，声明 `actspan-mcp` bin、支持的 Node 版本和 stdio transport。
+- 发布 `actspan-mcp`，声明 `actspan-mcp` bin、支持的 Node 版本和 stdio transport。
 - 通过客户端 MCP JSON 的 `env` 注入直达 URL、Key 和 Bridge URL；不新增服务端用户配置文件依赖。
 - 对 npx 首次下载、固定版本启动、配置缺失和 API 鉴权失败提供可定位错误。
 
@@ -573,7 +573,7 @@ submit → queued → running →
 13. MCP eval/click/type/close/navigate 经过统一权限确认，旧 socket 迟到响应被丢弃。
 14. 未列入 allowlist 的 extension origin 无法自动配对。
 15. 同一 session 的 replace 会取消旧 run，不同 session 的独立 task 可以并发。
-16. 新客户端仅配置 `@actspan/mcp-server@固定版本` 即可完成 npx 下载、stdio 握手和 `actspan_status` 查询。
+16. 新客户端仅配置 `actspan-mcp@固定版本` 即可完成 npx 下载、stdio 握手和 `actspan_status` 查询。
 17. `ACTSPAN_API_URL`、`ACTSPAN_API_KEY` 和 `ACTSPAN_BRIDGE_URL` 能从客户端 MCP JSON 正确注入并被服务端读取。
 18. 缺少 URL、Key、Bridge 或使用无效 URL 时，MCP Server 在 stderr 返回明确错误，不发送未认证请求。
 19. Key 不出现在 stdout、日志、工具响应、命令行参数和 npm 包内容中。

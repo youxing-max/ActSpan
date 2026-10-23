@@ -30,7 +30,7 @@ IDE agent ──stdio MCP──> mcp-server/index.js ──ws://127.0.0.1:30121(
 }
 ```
 
-也可以在安装 `@actspan/mcp-server` 后，将 `command` 改为 `actspan-mcp` 并省略 `args`，其余环境变量保持不变。
+也可以在安装 `actspan-mcp` 后，将 `command` 改为 `actspan-mcp` 并省略 `args`，其余环境变量保持不变。
 
 3. **扩展 allowlist**：本地 Bridge 只要求 `ACTSPAN_BRIDGE_URL` 与 `ACTSPAN_EXTENSION_IDS`。缺失或格式错误时 server 仍会启动，但 `actspan_status` 会报告 `loop_mode: "disabled"`、`pairing_required: true`，且不接受任何扩展配对；此时请运行 `actspan-install`，由配对页写入从 manifest key 推导出的规范 ID。`ACTSPAN_API_URL`（HTTPS）与 `ACTSPAN_API_KEY` 仅在启用控制面 API 时需要，二者要么同时提供、要么同时省略。
 

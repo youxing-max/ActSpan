@@ -1,4 +1,4 @@
-# @actspan/mcp-server
+# actspan-mcp
 
 Actspan 浏览器扩展的本地 MCP Server：把你 Chrome 里的真实浏览器能力（页面读写、点击输入、截图、网络请求读取、数据抓取、工作流、定时任务）以 **35 个标准 MCP 工具**暴露给任意 MCP 客户端（Claude Code、Codex、各类 IDE Agent）。
 
@@ -19,10 +19,10 @@ Actspan 浏览器扩展的本地 MCP Server：把你 Chrome 里的真实浏览�
 
 ```bash
 # 交互式安装：写入 MCP 客户端配置（Claude Code / Codex 等）
-npx @actspan/mcp-server install
+npx actspan-mcp install
 
 # 或者全局安装后使用命令
-npm i -g @actspan/mcp-server
+npm i -g actspan-mcp
 actspan-install        # 配置客户端
 actspan-doctor         # 诊断桥接连接
 actspan-mcp            # 手动启动 MCP Server（一般由客户端自动拉起）
