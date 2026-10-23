@@ -171,25 +171,21 @@ test('occupied Actspan owner reports verified PID and compatibility without take
     assert.equal(contender.listening, false);
 });
 
-test('policy rejects unknown capabilities and self-approval cannot bypass extension approval', () => {
+test('policy rejects unknown capabilities and missing identity', () => {
     const context = { clientId: 'A', requestId: 'R', taskId: 'T', sessionId: 'S', tabId: 1, trustAll: true,
         approval: { approved: true } };
     assert.throws(() => Policy.check('unknown', context), /Unsupported/);
 
     assert.throws(() => Policy.check('page.eval', { ...context, taskId: '' }), /taskId/);
-    assert.equal(Policy.check('page.eval', context).requiresApproval, true);
-    assert.equal(Policy.check('page.click', context).requiresApproval, true);
 });
 
-// tabId 是调用方可选参数，省略它不能成为免确认的理由：扩展侧 resolveTab 在 mutate 模式下
-// 会回退到任务的活动标签页，动作照样落地。
-test('policy requires approval for page writes and tab.navigate even without a tabId', () => {
-    const context = { clientId: 'A', requestId: 'R', taskId: 'T', sessionId: 'S' };
-    for (const capability of ['page.click', 'page.type', 'page.select', 'page.scroll', 'tab.navigate']) {
-        assert.equal(Policy.check(capability, context).requiresApproval, true, capability);
+// 自由化模式（docs/spec/actspan-free-mode-spec.md）：permission 只用于审计分级，
+// 任何能力都不再要求审批——客户端自带 approved 也改变不了这个结果。
+test('free mode never requires approval, even for writes and page.eval', () => {
+    const context = { clientId: 'A', requestId: 'R', taskId: 'T', sessionId: 'S', tabId: 1 };
+    for (const capability of ['page.eval', 'page.click', 'page.type', 'page.select', 'page.scroll', 'tab.navigate', 'tab.open']) {
+        assert.equal(Policy.check(capability, context).requiresApproval, false, capability);
     }
-    // tab.open 只是新建标签页，没有既有标签页可改，不在此列。
-    assert.equal(Policy.check('tab.open', context).requiresApproval, false);
 });
 
 test('policy admits every stable bridge capability with its minimum permission', () => {

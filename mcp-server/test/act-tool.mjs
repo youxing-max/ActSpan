@@ -40,30 +40,13 @@ test('registers actspan_act and batches safe actions before one final snapshot',
     assert.deepEqual(calls.map(({ method }) => method), ['page.click', 'act.draft', 'page.read']);
 });
 
-test('blocks sensitive action before bridge dispatch unless explicitly allowed', async () => {
+// 自由化模式（docs/spec/actspan-free-mode-spec.md）：敏感目标不再被拦，动作直达桥。
+test('sensitive targets reach the bridge in free mode', async () => {
     const calls = [];
     const { handler } = setup(async (method) => { calls.push(method); return { changed: true }; });
     const result = await handler({ tabId: 3, steps: [{ action: 'click', selector: 'button.pay-now' }] });
-    assert.equal(result.success, false);
-    assert.match(result.error, /^SENSITIVE_BLOCKED: /);
-    assert.deepEqual(calls, []);
-});
-
-// 目标可能藏在 find/value 里：只看顶层 selector 会整类漏判，闸门必须按整个步骤判定。
-test('blocks sensitive targets addressed by find or value, and from select', async () => {
-    for (const step of [
-        { action: 'click', find: { role: 'button', name: '删除账户' } },
-        { action: 'click', find: { role: 'button', name: 'Delete account' } },
-        { action: 'type', selector: '#card', text: '4111', submit: true },
-        { action: 'select', selector: '#plan', value: '结算方式' },
-    ]) {
-        const calls = [];
-        const { handler } = setup(async (method) => { calls.push(method); return { changed: true }; });
-        const result = await handler({ tabId: 3, steps: [step] });
-        assert.equal(result.success, false, `${JSON.stringify(step)} must be blocked`);
-        assert.match(result.error, /^SENSITIVE_BLOCKED: /);
-        assert.deepEqual(calls, [], `${JSON.stringify(step)} must not reach the bridge`);
-    }
+    assert.equal(result.success, true);
+    assert.deepEqual(calls, ['page.click', 'act.draft', 'page.read']);
 });
 
 test('an ordinary target is still batched without an allowSensitive flag', async () => {
@@ -172,24 +155,27 @@ test('accepts a script whose listed steps fit the expanded budget', async () => 
     assert.equal(calls.filter(({ method }) => method === 'page.click').length, 20);
 });
 
-// 回归：run() 会把 success:false 升级成 isError，客户端只剩一条文案，trace/reads 全丢。
-// 这里跑 index.js 用的真实信封，直通 run 掩盖不了这层降级。
+// 回归：runStructured 不把 success:false 升级成 isError，客户端仍能拿到 trace/reads。
+// 用仍然存在的步骤失败（wait 条件未观测到 → NO_EFFECT），不是已移除的敏感闸门。
 test('a step-level act failure stays content, not isError, and keeps trace and reads', async () => {
-    const { handler } = setup(async (method) => (method === 'page.read' ? { matched: true } : { changed: true }),
-        { runStructured: real.runStructured });
+    const { handler } = setup(async (method) => {
+        if (method === 'page.read') return { matched: true };
+        if (method === 'page.wait') return { found: false };
+        return { changed: true };
+    }, { runStructured: real.runStructured });
     const envelope = await handler({ tabId: 3, steps: [
         { action: 'read', selector: '#price' },
-        { action: 'click', selector: 'button.pay-now' },
+        { action: 'wait', for: 'idle' },
     ] });
     assert.notEqual(envelope.isError, true);
     const payload = JSON.parse(envelope.content[0].text);
     assert.equal(payload.success, false);
-    assert.match(payload.error, /^SENSITIVE_BLOCKED: /);
+    assert.match(payload.error, /^NO_EFFECT: /);
     assert.deepEqual(payload.trace.map(({ path, action, ok }) => ({ path, action, ok })), [
         { path: 'steps[0]', action: 'read', ok: true },
-        { path: 'steps[1]', action: 'click', ok: false },
+        { path: 'steps[1]', action: 'wait', ok: false },
     ]);
-    assert.equal(payload.trace[1].error.code, 'SENSITIVE_BLOCKED');
+    assert.equal(payload.trace[1].error.code, 'NO_EFFECT');
     assert.deepEqual(payload.reads, [{ matched: true }]);
 });
 
@@ -202,8 +188,9 @@ test('a thrown failure is still an MCP error under the same wrapper', async () =
 
 // 另一侧同样要钉住：提升型 run() 还在给其余工具用，别把它一起改成不提升。
 test('run() still promotes a structured failure to isError', async () => {
-    const { handler } = setup(async () => ({ changed: true }), { runStructured: real.run });
-    const envelope = await handler({ steps: [{ action: 'click', selector: 'button.pay-now' }] });
+    const { handler } = setup(async (method) => (method === 'page.wait' ? { found: false } : { changed: true }),
+        { runStructured: real.run });
+    const envelope = await handler({ steps: [{ action: 'wait', for: 'idle' }] });
     assert.equal(envelope.isError, true);
-    assert.match(envelope.content[0].text, /^Actspan error: SENSITIVE_BLOCKED: /);
+    assert.match(envelope.content[0].text, /^Actspan error: NO_EFFECT: /);
 });
