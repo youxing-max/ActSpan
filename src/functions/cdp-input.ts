@@ -452,7 +452,7 @@ const performType = async (
  * 沿 DOM.getFrameOwner 链累加各级 iframe 内容框在各自文档中的位置，
  * 最后减去主 frame visualViewport 滚动量（各中间 frame 自身滚动在换算中自然抵消）。
  */
-const resolveFrameOffset = async (
+export const resolveFrameOffset = async (
   tabId: number,
   frameId?: number,
 ): Promise<{ x: number; y: number }> => {
