@@ -18,18 +18,29 @@ function frame(value) {
 
 function createParser(onFrame, onError) {
     let buffered = Buffer.alloc(0);
+    let dead = false;
+    // 出错后帧边界已不可信：清空缓冲并停收，否则旧数据会一直留在 buffered 里继续增长。
+    const fail = (error) => {
+        buffered = Buffer.alloc(0);
+        dead = true;
+        onError(error);
+    };
     return (chunk) => {
+        if (dead) return;
         buffered = Buffer.concat([buffered, chunk]);
-        if (buffered.length > MAX_FRAME_BYTES) return onError(new Error('RPC frame too large'));
         while (true) {
             const end = buffered.indexOf(10);
-            if (end < 0) return;
+            if (end < 0) {
+                // 只在一条完整帧都收不齐时才判超限，避免多帧合并的 chunk 被误伤。
+                if (buffered.length > MAX_FRAME_BYTES) fail(new Error('RPC frame too large'));
+                return;
+            }
             const line = buffered.subarray(0, end);
             buffered = buffered.subarray(end + 1);
             if (!line.length) continue;
-            if (line.length > MAX_FRAME_BYTES) return onError(new Error('RPC frame too large'));
+            if (line.length > MAX_FRAME_BYTES) return fail(new Error('RPC frame too large'));
             let value;
-            try { value = JSON.parse(line.toString('utf8')); } catch { return onError(new Error('Invalid RPC frame')); }
+            try { value = JSON.parse(line.toString('utf8')); } catch { return fail(new Error('Invalid RPC frame')); }
             onFrame(value);
         }
     };
@@ -62,7 +73,12 @@ function connectSocket(credential, options) {
                 return;
             }
             options.onMessage(message);
-        }, finish);
+        }, (error) => {
+            if (!settled) return finish(error);
+            // 解析器已停收，连接留着只会让在途请求干等到超时：断开，由上层重连重建。
+            options.onDisconnect(error);
+            socket.destroy();
+        });
         socket.setNoDelay(true);
         socket.on('connect', () => {
             try {

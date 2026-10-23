@@ -58,6 +58,8 @@ interface BridgeRequestFrame {
 }
 
 const runtimeRequestType = 'actspan_mcp_request';
+// 取消帧没有 method/params，不能走 BridgeRequestFrame 校验，只能按 id 匹配在途请求。
+const runtimeCancelType = 'actspan_mcp_cancel';
 const runtimeResponseType = 'actspan_mcp_response';
 const runtimeAuditType = 'actspan_mcp_audit';
 // 与 offscreen 侧同名常量保持一致；两侧各自声明，避免把 transport 打进 service worker。
@@ -709,7 +711,7 @@ export async function executeBridgeRequest(method: string, params: Record<string
     if ((decision.requiresApproval && !trustedByUser) || action?.kind === 'payment') {
         const timeout = new AbortController();
         // 用带类型的超时原因中止，下游才能把“审批等待超时”与“用户取消”区分开。
-        const timer = setTimeout(() => timeout.abort(new DeadlineTimeoutError('审批等待超时')), 45_000);
+        const timer = setTimeout(() => timeout.abort(new DeadlineTimeoutError('审批等待超时')), 60_000);
         const onAbort = () => timeout.abort(signal?.reason);
         signal?.addEventListener('abort', onAbort, { once: true });
         if (signal?.aborted) onAbort();
@@ -1345,6 +1347,11 @@ const registerOffscreenTransport = (): void => {
         if (!sender.url?.startsWith(`chrome-extension://${chrome.runtime.id}/`)) return false;
         if (!message || typeof message !== 'object' || Array.isArray(message)) return false;
         const frame = message as Record<string, unknown>;
+        if (frame.type === runtimeCancelType && typeof frame.id === 'string') {
+            inFlightBridgeRequests.get(frame.id)?.abort('cancelled by client');
+            sendResponse({ accepted: true });
+            return false;
+        }
         if (frame.type === runtimeRequestType && isBridgeRequestFrame(frame.frame)) {
             void handleOffscreenRequest(frame.frame);
             sendResponse({ accepted: true });

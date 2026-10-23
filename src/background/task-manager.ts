@@ -13,6 +13,11 @@ const MAX_PERSISTED_RESULT_CHARS = 16_000;
 const MAX_PERSISTED_ERROR_CHARS = 2_000;
 const MAX_PERSISTED_OWNED_TABS = 50;
 
+export class TaskStateError extends Error {
+  readonly code: string;
+  constructor(message: string, code: string) { super(message); this.name = 'TaskStateError'; this.code = code; }
+}
+
 /** 把超大 JSON 字段替换为带大小/预览的占位符，保留“被截断”这一事实 */
 const truncateJsonField = (value: unknown, limit: number): unknown => {
   let serialized = '';
@@ -172,6 +177,8 @@ export class TaskManager {
   async submit(taskId: string, input: Record<string, unknown>, context: TaskContext): Promise<unknown> {
     const task = this.tasks.get(taskId);
     if (!task) throw new Error(`未知任务: ${taskId}`);
+    // 同 id 重复提交必须显式拒绝：静默取消旧运行会让它的副作用与新运行交错写同一个标签页
+    if (task.state === 'running') throw new TaskStateError(`任务已在运行，拒绝重复提交: ${taskId}`, 'E_TASK_RUNNING');
     if (!this.runner) {
       this.markFailed(taskId, { code: 'E_TASK_RUNNER_UNAVAILABLE', message: '扩展 Agent Loop 尚未注册。' });
       throw new Error('扩展 Agent Loop 尚未注册');
@@ -209,11 +216,10 @@ export class TaskManager {
     ])];
     const tabIds = allTabIds.filter((tabId) => !excludedTabIds.has(tabId));
     for (const tabId of tabIds) {
-      const lease = this.leases.get(tabId);
-      const ownsTab = lease && !lease.releasedAt && lease.expiresAt > Date.now() &&
-        lease.taskId === task.taskId && lease.sessionId === task.sessionId &&
-        lease.clientId === (task.clientId || task.owner);
-      if (!ownsTab) continue;
+      // ownedTabIds 会残留（重启恢复、租约过期后被接管），关页前必须按租约重新确认归属，
+      // 否则会关掉用户或别的任务的标签页。
+      try { this.leases.authorize({ taskId: task.taskId, sessionId: task.sessionId, clientId: task.clientId || task.owner, owner: task.owner, requestId: 'close-owned-tabs' }, tabId, false); }
+      catch { continue; }
       try { await chrome.tabs.remove(tabId); } catch { /* 标签页可能已被用户关闭 */ }
       const current = this.leases.get(tabId);
       if (current?.taskId === task.taskId && current.sessionId === task.sessionId && current.clientId === (task.clientId || task.owner)) {
@@ -281,11 +287,13 @@ export class TaskManager {
     const result = await chrome.storage.local.get(TASK_STATE_STORAGE_KEY);
     const state = result[TASK_STATE_STORAGE_KEY] as PersistedTaskState | undefined;
     if (!state || !Array.isArray(state.tasks)) return;
-    this.tasks.clear();
     const now = Date.now();
     const interruptedTaskIds: string[] = [];
     for (const task of state.tasks) {
       if (!task?.taskId || !task.sessionId) continue;
+      // 整表 clear 会抹掉 SW 启动窗口内新建的任务：同 id 且在跑的任务以内存为准，其余按快照 upsert
+      const existing = this.tasks.get(task.taskId);
+      if (existing && !TERMINAL_TASK_STATES.has(existing.state)) continue;
       if (task.state === 'queued' || task.state === 'running' || task.state === 'waiting_user') {
         // loop:* 是聊天轮的内部任务，会话层会单独恢复/报错；
         // 这里再写成 E_TASK_RUNTIME_INTERRUPTED 会让历史任务列表出现大量误报。

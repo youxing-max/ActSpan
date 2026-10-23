@@ -155,7 +155,9 @@ export const saveAISettings = async (settings: Partial<AISettings>): Promise<voi
     settings = { ...settings, endpoint: checked.endpoint };
   }
   const current = await getAISettings();
-  const updated = { ...current, ...settings };
+  // 显式传入的 undefined 表示"未提供"，不应覆盖已存的 apiKey 等字段
+  const provided = Object.fromEntries(Object.entries(settings).filter(([, value]) => value !== undefined));
+  const updated = { ...current, ...provided };
   await chrome.storage.local.set({ [STORAGE_KEY_AI_SETTINGS]: updated });
 };
 
@@ -214,7 +216,7 @@ export const chatComplete = async (
 ): Promise<{ output: OutputItem[]; status: string }> => {
   const settings = await getAISettings();
 
-  if (!settings.apiKey) {
+  if (!settings.apiKey?.trim()) {
     throw new Error('未配置 API Key，请在设置中填写后重试。');
   }
 
@@ -349,7 +351,7 @@ export async function* chatStream(
 ): AsyncGenerator<StreamChunk> {
   const settings = await getAISettings();
 
-  if (!settings.apiKey) {
+  if (!settings.apiKey?.trim()) {
     throw new Error('未配置 API Key，请在设置中填写后重试。');
   }
 

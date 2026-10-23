@@ -279,6 +279,30 @@ test('损坏配置导致 0 写入时 CLI 以非零退出', () => {
     assert.match(result.stderr, /没有写入任何配置/);
 });
 
+test('损坏配置旁边还有可写目标时 CLI 仍以非零退出', () => {
+    // 只覆盖「0 写入」会让部分成功变成 exit 0：一个目标写成了，损坏的目标就被静默当成成功。
+    const fakeHome = mkdtempSync(path.join(os.tmpdir(), 'actspan-home-'));
+    const fakeAppData = path.join(fakeHome, 'AppData', 'Roaming');
+    const cursorDir = process.platform === 'win32'
+        ? path.join(fakeAppData, 'Cursor', 'User')
+        : path.join(fakeHome, 'Library', 'Application Support', 'Cursor', 'User');
+    fs.mkdirSync(cursorDir, { recursive: true });
+    writeFileSync(path.join(cursorDir, 'mcp.json'), '{bad');
+    const codexConfig = path.join(fakeHome, '.codex', 'config.toml');
+    fs.mkdirSync(path.dirname(codexConfig), { recursive: true });
+    writeFileSync(codexConfig, 'model = "o3"\n');
+    const result = spawnSync(process.execPath, ['install.js', '--apply', '--yes', '--extension-id', extensionIdFromKey()], {
+        cwd: new URL('..', import.meta.url),
+        env: { ...process.env, HOME: fakeHome, USERPROFILE: fakeHome, APPDATA: fakeAppData, ACTSPAN_API_URL: '', ACTSPAN_API_KEY: '' },
+        encoding: 'utf8',
+    });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /需要人工处理或使用 --force/);
+    // 可写目标确实写成了，说明这里测的是「部分成功也不能报成功」。
+    assert.match(fs.readFileSync(codexConfig, 'utf8'), /\[mcp_servers\.actspan\]/);
+    assert.equal(fs.readFileSync(path.join(cursorDir, 'mcp.json'), 'utf8'), '{bad');
+});
+
 test('TOML 首次写入后二次安装应 skip，--force 不产生重复 env 表', () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), 'actspan-toml-idem-'));
     const file = path.join(dir, 'config.toml');

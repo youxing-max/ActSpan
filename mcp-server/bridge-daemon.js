@@ -24,17 +24,28 @@ const frame = (value) => {
 };
 function parser(onFrame, onError) {
     let buffered = Buffer.alloc(0);
+    let dead = false;
+    const fail = (error) => {
+        if (dead) return;
+        dead = true;
+        buffered = Buffer.alloc(0);
+        onError(error);
+    };
     return (chunk) => {
+        if (dead) return;
         buffered = Buffer.concat([buffered, chunk]);
-        if (buffered.length > MAX_FRAME_BYTES) return onError(new Error('RPC frame too large'));
         while (true) {
             const end = buffered.indexOf(10);
-            if (end < 0) return;
+            if (end < 0) {
+                // 只有一条完整帧都收不齐时才判超限；否则含多条合法帧的大 chunk 会被误杀。
+                if (buffered.length > MAX_FRAME_BYTES) fail(new Error('RPC frame too large'));
+                return;
+            }
             const line = buffered.subarray(0, end);
             buffered = buffered.subarray(end + 1);
             if (!line.length) continue;
             let value;
-            try { value = JSON.parse(line.toString('utf8')); } catch { return onError(new Error('Invalid RPC frame')); }
+            try { value = JSON.parse(line.toString('utf8')); } catch { fail(new Error('Invalid RPC frame')); return; }
             onFrame(value);
         }
     };

@@ -183,6 +183,7 @@ export function LLMSettingsPage() {
             <Form.Item
               label="API Key"
               name="apiKey"
+              rules={[{ required: true, message: '请填写 API Key' }]}
               extra="你的 API 密钥，仅存储在本地浏览器中"
             >
               <Input.Password placeholder="sk-..." />

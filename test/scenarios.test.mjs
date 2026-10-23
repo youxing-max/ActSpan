@@ -91,7 +91,7 @@ function scenario(name, body, { harness = true } = {}) {
     } catch (error) {
       const message = String(error?.message ?? error);
       if (message.includes('审批等待超时')) {
-        // 一次就够：审批通道缺失对后续用例是同一个事实，重复等 25s 只会拖长 npm test。
+        // 一次就够：审批通道缺失对后续用例是同一个事实，重复等 60s 只会拖长 npm test。
         approvalBlocked = message;
         return t.skip(`live Chrome needs interactive approval for mutate capabilities: ${message}`);
       }
@@ -108,7 +108,7 @@ before(async () => {
   }
   try {
     if (hostError) throw new Error('fixture host unavailable');
-    // 真机用例会等待人工审批（最长 15s）且依赖已配对扩展：默认快速跳过，显式开启才运行。
+    // 真机用例会等待人工审批（最长 60s）且依赖已配对扩展：默认快速跳过，显式开启才运行。
     if (process.env.ACTSPAN_LIVE !== '1') throw new Error('live suite disabled; set ACTSPAN_LIVE=1 to run');
     if (!(await bridgeListening())) throw new Error(`ActSpan bridge is not listening at ${BRIDGE_URL}; the live acceptance suite needs a paired extension and never fakes one`);
     // 扩展 ID 由 manifest key 推导，和 install/acceptance 用同一事实源，不需要人手填环境变量。
@@ -133,7 +133,7 @@ before(async () => {
 });
 
 after(async () => {
-  // tab_close 属 sensitive，要人工审批；审批通道已经证实缺失时再去等 25s 只会拖长 npm test，
+  // tab_close 属 sensitive，要人工审批；审批通道已经证实缺失时再去等 60s 只会拖长 npm test，
   // 且结果一样关不掉（残留的靶场标签页只能由人手关闭）。
   if (mcp && Number.isInteger(tabId) && !approvalBlocked) { try { await mcp.callRaw('actspan_tab_close', { tabId }); } catch { /* cleanup only */ } }
   if (mcp) await mcp.close().catch(() => undefined);

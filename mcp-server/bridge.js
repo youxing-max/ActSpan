@@ -349,6 +349,7 @@ export class ExtensionHub extends EventEmitter {
                         clearTimeout(pending.graceTimer);
                         if (Date.now() >= pending.deadline) {
                             this.pending.delete(id);
+                            this.notifyCancel(id);
                             pending.settle({ ok: false, error: `Bridge request timed out: ${pending.method}` });
                             continue;
                         }
@@ -472,6 +473,14 @@ export class ExtensionHub extends EventEmitter {
         if (!pending) return;
         this.pending.delete(id);
         pending.settle({ ok: false, error: 'MCP client closed' });
+        this.notifyCancel(id);
+    }
+
+    /** 本地已放弃该请求，必须告诉扩展停止执行，否则写操作会在扩展侧继续落地。 */
+    notifyCancel(id) {
+        if (this.isConnected()) {
+            try { this.client.send(JSON.stringify({ type: 'actspan_mcp_cancel', id })); } catch { /* 链路已断，忽略 */ }
+        }
     }
 
     call(method, params = {}, timeoutMs = 60000, context = {}) {
@@ -510,6 +519,7 @@ export class ExtensionHub extends EventEmitter {
             const deadline = Date.now() + timeoutMs;
             const timer = setTimeout(() => {
                 this.pending.delete(id);
+                this.notifyCancel(id);
                 reject(new Error(`Bridge request timed out (${timeoutMs}ms): ${method}`));
             }, timeoutMs);
             const frame = JSON.stringify({ id, method, params, context: request, policy: decision });

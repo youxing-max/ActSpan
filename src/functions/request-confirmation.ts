@@ -12,13 +12,15 @@
 import type { FunctionDefinition, FunctionResult, ToolExecutionContext } from './types';
 import Channel from '../lib/channel';
 import { sendToTabWithRetry } from './tab-message';
-import { DEFAULT_USER_WAIT_TIMEOUT_MS, createDeadlineSignal, isTimeoutError } from '../ai/deadline';
+import { createDeadlineSignal, isTimeoutError } from '../ai/deadline';
 let requestCounter = 0;
 
 /** 模型可主动调用本工具：限制单条消息长度与频率，避免被页面内容诱导刷屏或塞入超长话术。 */
 const MAX_CONFIRMATION_MESSAGE_CHARS = 600;
 const MAX_CONFIRMATIONS_PER_MINUTE = 10;
 const confirmationTimestamps = new Map<string, number[]>();
+/** 审批等待窗口：有/无标签页统一 60s，用户可见确认卡片，不需要 5 分钟的默认兜底。 */
+const APPROVAL_WAIT_TIMEOUT_MS = 60_000;
 /** 审批请求重复投递间隔：用于等待目标页 content script 就绪。 */
 const APPROVAL_RESEND_INTERVAL_MS = 1_500;
 
@@ -118,9 +120,8 @@ export const requestConfirmationFunction: FunctionDefinition = {
       let settled = false;
       // tabs.sendMessage 没有应答回执，目标页 content script 可能尚未就绪；同一 requestId 重复投递是幂等的。
       let resend: number | undefined;
-      // 有明确标签页时用户就在当前页面，1 分钟足够；无标签页场景保留默认等待
-      const waitMs = targetTabId !== undefined ? 60_000 : DEFAULT_USER_WAIT_TIMEOUT_MS;
-      const deadline = createDeadlineSignal(signal, waitMs, 'request_confirmation waiting for a response');
+      // 有明确标签页时用户就在当前页面；无标签页也会定向投递/广播，窗口一致为 60s
+      const deadline = createDeadlineSignal(signal, APPROVAL_WAIT_TIMEOUT_MS, 'request_confirmation waiting for a response');
 
       const cleanup = () => {
         if (settled) return;

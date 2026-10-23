@@ -559,7 +559,10 @@ function submitSessionOp(op: SessionOp): Promise<void> {
  */
 Channel.on('__session_create', (data, sender, sendResponse) => {
     const query = typeof data?.query === 'string' ? data.query : '';
-    if (!query.trim()) return;
+    if (!query.trim()) {
+        respondSessionOp(sendResponse, { accepted: false, code: 'E_PARAM_RESOLVE', message: '缺少 query' }, '__session_create');
+        return true;
+    }
     const op: SessionCreateOp = {
         type: 'create',
         label: '__session_create',
@@ -587,7 +590,11 @@ Channel.on('__session_continue', (data, sender, sendResponse) => {
     const expectedRunId = typeof expectedRunIdRaw === 'string' && expectedRunIdRaw.trim()
         ? expectedRunIdRaw.trim()
         : null;
-    if (!sessionId || !query.trim()) return;
+    if (!sessionId || !query.trim()) {
+        const missing = [!sessionId ? 'sessionId' : '', !query.trim() ? 'query' : ''].filter(Boolean).join('、');
+        respondSessionOp(sendResponse, { accepted: false, code: 'E_PARAM_RESOLVE', message: `缺少 ${missing}` }, '__session_continue');
+        return true;
+    }
 
     const op: SessionContinueOp = {
         type: 'continue',
@@ -704,9 +711,12 @@ Channel.on('__session_replay_request', (data, sender, sendResponse) => {
  * 清除会话
  * 任意标签页请求清除当前活跃会话
  */
-Channel.on('__session_clear', (data) => {
+Channel.on('__session_clear', (data, _sender, sendResponse) => {
     const sessionId = data?.sessionId || getActiveSessionId();
-    if (!sessionId) return;
+    if (!sessionId) {
+        respondSessionOp(sendResponse, { accepted: false, code: 'E_PARAM_RESOLVE', message: '缺少 sessionId 且无活跃会话' }, '__session_clear');
+        return true;
+    }
 
     const op: SessionClearOp = {
         type: 'clear',
@@ -722,9 +732,12 @@ Channel.on('__session_clear', (data) => {
  * 处理 AI 任务取消请求
  * 支持 sessionId（新模式）和 taskId（兼容旧模式）
  */
-Channel.on('__ai_cancel', (data) => {
+Channel.on('__ai_cancel', (data, _sender, sendResponse) => {
     const id = data?.sessionId || data?.taskId;
-    if (!id) return;
+    if (!id) {
+        respondSessionOp(sendResponse, { accepted: false, code: 'E_PARAM_RESOLVE', message: '缺少 sessionId 或 taskId' }, '__ai_cancel');
+        return true;
+    }
 
     const op: SessionCancelOp = {
         type: 'cancel',

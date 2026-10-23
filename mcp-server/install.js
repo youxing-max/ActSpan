@@ -264,10 +264,13 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     } else if (options.help) console.log('Usage: actspan-install [--dry-run] [--apply --yes] [--include-unknown] [--force] [--extension-id ID] [--pair-timeout SECONDS] [--from-npm] [--client NAME]\n默认只写已知宿主配置；--include-unknown 才会处理扫描到的未知 JSON 配置；--force 更新与当前安装不一致的旧 actspan 配置。非交互环境必须传 --extension-id 或 --pair-timeout。仅当启用控制面 API 时才需要 ACTSPAN_API_URL（HTTPS）与 ACTSPAN_API_KEY；密钥只放环境变量，不要写在命令行参数里。');
     else runInstall(options).then((result) => {
         if (!options.apply || options.dryRun) return;
-        // 只打印 manual、实际 0 写入不是成功：自动化必须能感知需要人工处理。
+        // 只要还有 manual 目标就非零退出：部分写入也是没装完，自动化不能因为别的目标写成就当成成功。
         const manual = result.plans.filter((plan) => plan.action === 'manual');
-        if (manual.length > 0 && result.results.every((item) => !item.applied && !item.skipped)) {
-            process.stderr.write(`actspan install: 没有写入任何配置；${manual.length} 个目标需要人工处理或使用 --force\n`);
+        if (manual.length > 0) {
+            const untouched = result.results.every((item) => !item.applied && !item.skipped);
+            process.stderr.write(untouched
+                ? `actspan install: 没有写入任何配置；${manual.length} 个目标需要人工处理或使用 --force\n`
+                : `actspan install: ${manual.length} 个目标未写入，需要人工处理或使用 --force（其余目标已处理）\n`);
             process.exitCode = 1;
         }
     }).catch((error) => { process.stderr.write(`actspan install: ${error.message}\n`); process.exitCode = 1; });
