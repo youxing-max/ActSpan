@@ -232,8 +232,8 @@ export const TODO_COMPLETION_THRESHOLD = 2;
 /** 审查失败最大重试次数 */
 export const MAX_REVIEW_RETRIES = 1;
 
-/** 最大阶段数 */
-export const MAX_PHASES = 10;
+/** 最大阶段数（多站点调研类任务 10 阶段会在生成结果前耗尽，见 E_PHASE_LIMIT） */
+export const MAX_PHASES = 16;
 
 /** 写入类工具名称集合（用于判断是否为纯只读任务） */
 export const WRITE_TOOLS: ReadonlySet<string> = new Set([

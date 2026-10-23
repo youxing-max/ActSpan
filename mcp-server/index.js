@@ -189,7 +189,7 @@ async function main(config) {
             focus: z.boolean().default(false).describe('Leave false (default) to open behind the user\'s current tab. true is the explicit foreground escape hatch: the tab is brought to the front and the user is interrupted.'),
             label: z.string().trim().min(1).max(80).optional(),
         },
-    }, run(({ focus = false, ...args }) => callBridge('tab.open', { ...args, active: focus === true }, 30000, args)));
+    }, run(({ focus = false, ...args }) => callBridge('tab.open', { ...args, active: focus === true }, 90000, args)));
 
     registerTool('actspan_tabs_select', {
         title: 'Select active tab', description: 'Select a task-owned tab as the active browser tab.',
@@ -200,14 +200,14 @@ async function main(config) {
     registerTool('actspan_tab_close', {
         title: 'Close tab', description: 'Close a tab owned by the current task.',
         inputSchema: { ...taskParams, tabId: z.number().int() },
-    }, run((args) => callBridge('tab.close', args, 30000, args)));
+    }, run((args) => callBridge('tab.close', args, 90000, args)));
     // tab.close 是 sensitive 能力，必然走审批；审批窗口本身就有 25s。客户端只等 10s 会在用户
     // 还在看确认卡片时就报 "Bridge request timed out"，把可完成的操作变成必然失败。
 
     registerTool('actspan_tab_navigate', {
         title: 'Navigate tab', description: 'Navigate a tab owned by the current task.',
         inputSchema: { ...taskParams, tabId: tabIdParam, url: z.string().url() },
-    }, run((args) => callBridge('tab.navigate', args, 30000, args)));
+    }, run((args) => callBridge('tab.navigate', args, 90000, args)));
 
     const findParam = z.object({
         role: z.string().trim().min(1).max(80).optional(),
@@ -285,7 +285,7 @@ async function main(config) {
         inputSchema: clickTarget.schema,
     }, run((args) => {
         const checked = parseTarget(clickTarget.validate, args);
-        return callBridge('page.click', checked, 30000, checked);
+        return callBridge('page.click', checked, 90000, checked);
     }));
 
     registerTool('actspan_page_type', {
@@ -293,7 +293,7 @@ async function main(config) {
         inputSchema: typeTarget.schema,
     }, run((args) => {
         const checked = parseTarget(typeTarget.validate, args);
-        return callBridge('page.type', checked, 30000, checked);
+        return callBridge('page.type', checked, 90000, checked);
     }));
 
     registerTool('actspan_page_eval', {
@@ -302,14 +302,14 @@ async function main(config) {
         // 所以「读取页面状态」不能靠 eval；在描述里点名替代工具，避免 agent 反复试错。
         description: 'Evaluate a page expression. The expression must be provably side-effect free: mutating JS is rejected even after approval, and DOM property reads such as input.value may be rejected by the V8 side-effect check. Use page_read with attr "value"/"text"/"checked" or page_snapshot to observe page state.',
         inputSchema: { ...taskParams, tabId: tabIdParam, expression: z.string().min(1) },
-    }, run((args) => callBridge('page.eval', args, 30000, args)));
+    }, run((args) => callBridge('page.eval', args, 90000, args)));
 
     registerTool('actspan_screenshot', {
         title: 'Capture screenshot', description: 'Capture a screenshot from a task-owned tab; when tabId is omitted, capture the active tab.',
         inputSchema: { ...taskParams, tabId: tabIdParam },
     }, async (args) => {
         try {
-            const result = await callBridge('page.screenshot', args || {}, 30000, args || {});
+            const result = await callBridge('page.screenshot', args || {}, 90000, args || {});
             return { content: [{ type: 'image', data: result.data, mimeType: 'image/png' }] };
         } catch (error) {
             return fail(error);

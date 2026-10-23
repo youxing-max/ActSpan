@@ -707,7 +707,7 @@ export async function executeBridgeRequest(method: string, params: Record<string
     if ((decision.requiresApproval && !trustedByUser) || action?.kind === 'payment') {
         const timeout = new AbortController();
         // 用带类型的超时原因中止，下游才能把“审批等待超时”与“用户取消”区分开。
-        const timer = setTimeout(() => timeout.abort(new DeadlineTimeoutError('审批等待超时')), 15_000);
+        const timer = setTimeout(() => timeout.abort(new DeadlineTimeoutError('审批等待超时')), 45_000);
         const onAbort = () => timeout.abort(signal?.reason);
         signal?.addEventListener('abort', onAbort, { once: true });
         if (signal?.aborted) onAbort();

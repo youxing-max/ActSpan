@@ -193,10 +193,10 @@ export const executeToolCalls = async (
     return baseLevel;
   };
 
-  /** 生成确认消息（根据工具元数据的 approvalMessageTemplate 或兜底） */
+  /** 生成确认消息（仅十分危险 dangerous 级操作需要确认；支付/删除由 cdp-input 独立通道拦截） */
   const buildApprovalMessage = (name: string, params: Record<string, any>): string | null => {
     const level = resolvePermissionLevel(name, params);
-    if (level === 'read' || level === 'interact') return null;
+    if (level !== 'dangerous') return null;
 
     const def = getRegisteredFunction(name);
     const action = String(params.action || '');
