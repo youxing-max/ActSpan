@@ -1192,7 +1192,7 @@ export async function dispatch(method: string, params: Record<string, unknown>, 
                 let real: { success: boolean; error?: string };
                 if (action === 'click') {
                     if (!before.center) return { success: false, error: '目标没有可用的视口坐标', changed: false, changedFields: [], before, after: null };
-                    real = await realClickAt(tab.id!, before.center.x, before.center.y, context.signal);
+                    real = await realClickAt(tab.id!, before.center.x, before.center.y, context.signal, routed.frameId);
                 } else {
                     let focused = true;
                     try {

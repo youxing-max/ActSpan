@@ -445,13 +445,53 @@ const performType = async (
  * 坐标由内容脚本解析（ref/find/selector 都在页面里解析），这里只负责派发，
  * 因此升级路径与 cdp_input 工具共用同一套 CDP 事件序列。
  */
+/**
+ * 计算 iframe 视口坐标 → 顶层视口坐标的偏移。
+ * 内容脚本在子 frame 里用 getBoundingClientRect 拿到的是「帧内视口」坐标，
+ * 而 Input.dispatchMouseEvent 要的是顶层视口坐标，不换算 iframe 内必打偏。
+ * 沿 DOM.getFrameOwner 链累加各级 iframe 内容框在各自文档中的位置，
+ * 最后减去主 frame visualViewport 滚动量（各中间 frame 自身滚动在换算中自然抵消）。
+ */
+const resolveFrameOffset = async (
+  tabId: number,
+  frameId?: number,
+): Promise<{ x: number; y: number }> => {
+  if (typeof frameId !== 'number' || frameId === 0) return { x: 0, y: 0 };
+  let totalX = 0;
+  let totalY = 0;
+  let current = frameId;
+  for (let depth = 0; depth < 10 && current !== 0; depth += 1) {
+    const owner = await CDPSessionManager.sendCommand(tabId, 'DOM.getFrameOwner', { frameId: current });
+    const backendNodeId = owner?.result?.backendNodeId;
+    if (!owner?.success || !backendNodeId) break;
+    const box = await CDPSessionManager.sendCommand(tabId, 'DOM.getBoxModel', { backendNodeId });
+    const quad = box?.result?.model?.border;
+    if (!box?.success || !Array.isArray(quad) || quad.length < 4) break;
+    totalX += Number(quad[0]) || 0;
+    totalY += Number(quad[1]) || 0;
+    const described = await CDPSessionManager.sendCommand(tabId, 'DOM.describeNode', { backendNodeId });
+    const parentFrameId = described?.result?.node?.frameId;
+    if (!described?.success || typeof parentFrameId !== 'number' || parentFrameId === current) break;
+    current = parentFrameId;
+  }
+  const layout = await CDPSessionManager.sendCommand(tabId, 'Page.getLayoutMetrics');
+  const viewport = layout?.result?.visualViewport;
+  return {
+    x: totalX - (Number(viewport?.pageX) || 0),
+    y: totalY - (Number(viewport?.pageY) || 0),
+  };
+};
+
 export const realClickAt = async (
   tabId: number,
   x: number,
   y: number,
   signal?: AbortSignal,
+  frameId?: number,
 ): Promise<{ success: boolean; error?: string }> => {
-  const result = await performClick(tabId, x, y, 'left', 1, signal);
+  // 目标在 iframe 内时，x/y 是帧内视口坐标，先换算到顶层视口
+  const offset = await resolveFrameOffset(tabId, frameId);
+  const result = await performClick(tabId, x + offset.x, y + offset.y, 'left', 1, signal);
   return result.success ? { success: true } : { success: false, error: result.error };
 };
 
