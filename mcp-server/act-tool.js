@@ -190,7 +190,7 @@ export default function registerActTool({ registerTool, callBridge, run, runStru
         title: 'Adopt ActSpan draft',
         description: 'Adopt a successful ActSpan draft into the saved workflow registry.',
         inputSchema: { ...taskParams, tabId: tabIdParam, draftId: z.string().min(1) },
-    }, run((args) => callBridge('act.adopt', args, 30000, args)));
+    }, run((args) => callBridge('act.adopt', args, 90000, args)));
 }
 
 export { conditionMatch, sensitiveStep };

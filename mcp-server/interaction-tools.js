@@ -33,7 +33,7 @@ export function registerInteractionTools({ registerTool, callBridge, run, tabIdP
         });
         registerTool(`actspan_page_${action}`, { title, description, inputSchema }, run((args) => {
             const checked = schema.parse(args);
-            return callBridge(`page.${action}`, checked, action === 'wait' ? checked.timeoutMs + 5000 : 30000, checked);
+            return callBridge(`page.${action}`, checked, action === 'wait' ? checked.timeoutMs + 5000 : 90000, checked);
         }));
     }
 }

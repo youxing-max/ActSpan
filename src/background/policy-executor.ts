@@ -9,6 +9,12 @@ const CAPABILITIES: Record<string, PermissionLevel> = {
   'page.read': 'read', 'page.snapshot': 'read', 'tab.open': 'interact', 'tab.navigate': 'interact', 'page.click': 'interact', 'page.type': 'interact',
   'task.submit': 'interact', 'workflow.run': 'interact', 'agent_delegate': 'interact', 'feishu.push': 'interact', 'task.cancel': 'interact', 'tab.close': 'sensitive',
   'page.screenshot': 'sensitive', 'page.eval': 'dangerous', 'task.*': 'interact',
+  // 与 mcp-server/policy.js 对齐，未登记会落入 fallback 'dangerous' 导致只读工具每次必弹审批：
+  'page.wait': 'read',
+  'page.select': 'interact', 'page.upload': 'interact', 'page.key': 'interact', 'page.scroll': 'interact',
+  'network.list': 'read', 'network.detail': 'read', 'network.query': 'read',
+  'act.draft': 'read', 'act.adopt': 'sensitive',
+  'data.fetch_chunk': 'read', 'data.fetch_release': 'read',
 };
 
 export class PolicyError extends Error {

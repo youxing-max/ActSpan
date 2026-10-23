@@ -59,7 +59,7 @@ export default function registerDataTools({ registerTool, callBridge, run, tabId
         let page = 1; let cursor; let previous = ''; let stop_reason = 'normal_end'; let firstPage; let page_count = 0; let actual_page_sizes = [];
         for (let index = 0; index < maxPages; index += 1) {
             const request = { ...params, ...(params.param ? { page } : {}), ...(params.cursorParam && cursor !== undefined ? { cursor } : {}) };
-            const result = await callBridge('data.paginate', request, 30000, task);
+            const result = await callBridge('data.paginate', request, 90000, task);
             if (!result?.ok) { stop_reason = result?.stop_reason || 'non_2xx'; break; }
             const signature = JSON.stringify(result.data);
             if (previous && signature === previous) { stop_reason = 'identical_response'; break; }
