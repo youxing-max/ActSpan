@@ -201,8 +201,7 @@ async function main(config) {
         title: 'Close tab', description: 'Close a tab owned by the current task.',
         inputSchema: { ...taskParams, tabId: z.number().int() },
     }, run((args) => callBridge('tab.close', args, 30000, args)));
-    // tab.close 是 sensitive 能力，必然走审批；审批窗口本身就有 25s。客户端只等 10s 会在用户
-    // 还在看确认卡片时就报 "Bridge request timed out"，把可完成的操作变成必然失败。
+    // 自由化模式：tab.close 不再走审批，30s 超时仅防桥接卡死。
 
     registerTool('actspan_tab_navigate', {
         title: 'Navigate tab', description: 'Navigate a tab owned by the current task.',

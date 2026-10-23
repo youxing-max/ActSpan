@@ -5,6 +5,7 @@
 
 import type { FunctionDefinition, FunctionResult, ToolExecutionContext } from './types';
 import { tabLeaseManager } from '../background/tab-lease-manager';
+import { taskManager } from '../background/task-manager';
 
 type BuiltinResolver = (name: string) => FunctionDefinition | undefined;
 type BuiltinNamesResolver = () => string[];
@@ -85,6 +86,25 @@ export const isWorkflowPlanSubActionAllowed = (name: string, subAction: string):
   return allowed === null || allowed.includes(subAction);
 };
 
+/** 会产生页面副作用的输入子动作；wait_for_element 等只读子动作不逐个审批。 */
+const MUTATING_INPUT_ACTIONS: readonly string[] = ['click', 'click_text', 'fill', 'key_press'];
+const MUTATING_PAGE_ACTIONS: readonly string[] = ['click', 'type', 'eval', 'submit', 'press', 'fill'];
+
+/**
+ * plan 步骤是否必须先拿到用户同意：逐步骤审批只拦真正写页面的动作，
+ * 只读步骤（截图、等待元素）每步弹卡会把审批流淹没。
+ */
+export const isRiskyPlanStep = (step: { action?: string; params?: Record<string, unknown> }): boolean => {
+  if (!step.action) return false;
+  // 旧动作别名（page_action/js_execute 等）必须先解析成白名单内的规范动作再判定。
+  const action = resolveWorkflowPlanAction(step.action)?.name || step.action;
+  const subAction = String(step.params?.action || '').toLowerCase();
+  if (action === 'cdp_input') return MUTATING_INPUT_ACTIONS.includes(subAction);
+  if (action === 'page') return MUTATING_PAGE_ACTIONS.includes(subAction);
+  if (action === 'cdp_frame') return subAction === 'evaluate';
+  return false;
+};
+
 /** 校验单个 step 的 action 与已解析子动作（模板未解析时留给运行时再校验）。 */
 const validatePlanStepAction = (action: string, params: Record<string, unknown>): string | null => {
   if (!resolveWorkflowPlanAction(action)) {
@@ -129,6 +149,8 @@ interface RemotePlanTabLifecycle {
 interface RemoteWorkflowPlan {
   version?: number;
   workflow?: string;
+  /** 工作流起始页面：执行前在后台打开，后续步骤以该标签页为目标。 */
+  entryUrl?: string;
   steps: RemotePlanStep[];
   resultPath?: string;
   outputTemplate?: unknown;
@@ -388,9 +410,24 @@ const normalizeRemotePlan = (raw: unknown): RemoteWorkflowPlan | null => {
   const tabLifecycleRaw = source.tabLifecycle && typeof source.tabLifecycle === 'object'
     ? source.tabLifecycle as Record<string, unknown>
     : null;
+  // 录制器不同版本写过 entryUrl / entry_url / start_url；只接受可导航的 http(s) 绝对地址。
+  const rawEntryUrl = source.entryUrl ?? source.entry_url ?? source.start_url;
+  const entryUrlCandidate = typeof rawEntryUrl === 'string' ? rawEntryUrl.trim() : '';
+  let entryUrl: string | undefined;
+  if (entryUrlCandidate) {
+    try {
+      const parsedEntryUrl = new URL(entryUrlCandidate);
+      if (parsedEntryUrl.protocol === 'http:' || parsedEntryUrl.protocol === 'https:') {
+        entryUrl = entryUrlCandidate;
+      }
+    } catch {
+      entryUrl = undefined;
+    }
+  }
   return {
     version: Number(source.version) || 1,
     workflow: typeof source.workflow === 'string' ? source.workflow : undefined,
+    entryUrl,
     steps,
     resultPath: typeof source.resultPath === 'string' ? source.resultPath : undefined,
     outputTemplate: source.outputTemplate,
@@ -501,6 +538,51 @@ const runRemotePlan = async (
   try {
     await refreshTakeoverState();
 
+    // 工作流起始页面：当前目标标签页不在同一 origin 时后台打开新标签页，
+    // 后续步骤以它为目标；它和 plan 打开的其他标签页一样按 closeMode 清理。
+    if (plan.entryUrl) {
+      let needsEntryTab = true;
+      if (typeof runtimeTabId === 'number') {
+        try {
+          const currentTab = await chrome.tabs.get(runtimeTabId);
+          const currentUrl = currentTab?.url || currentTab?.pendingUrl || '';
+          if (currentUrl) {
+            needsEntryTab = new URL(currentUrl).origin !== new URL(plan.entryUrl).origin;
+          }
+        } catch {
+          // 标签页已不存在或 URL 无法解析：回退到打开起始页
+        }
+      }
+      if (needsEntryTab) {
+        let entryTabId = NaN;
+        try {
+          const entryTab = await chrome.tabs.create({ url: plan.entryUrl, active: false });
+          entryTabId = Number(entryTab?.id);
+        } catch (err: any) {
+          return { success: false, error: `无法打开工作流起始页面: ${err?.message || plan.entryUrl}` };
+        }
+        if (!Number.isFinite(entryTabId) || entryTabId <= 0) {
+          return { success: false, error: `无法打开工作流起始页面: ${plan.entryUrl}` };
+        }
+        runtimeTabId = entryTabId;
+        (vars.context as Record<string, unknown>).tabId = entryTabId;
+        if (isolatedDebug) isolatedTabIds.add(entryTabId);
+        // 后续写步骤的 leaseConflictError 要求租约属于本任务：entry tab 必须显式拿租约，
+        // 否则它在 step 循环开头就被判成“被其他任务使用”。
+        if (context?.taskId) {
+          try {
+            const task = taskManager.get(context.taskId);
+            if (task) tabLeaseManager.acquire(task, entryTabId, context.clientId);
+          } catch { /* 租约失败不阻止打开；步骤校验仍会拦截冲突 */ }
+        }
+        if (!isolatedDebug && (inputParams.keep_alive === true || inputParams.keepAlive === true)) {
+          openedKeepAliveTabIds.add(entryTabId);
+        } else {
+          openedCleanupTabIds.add(entryTabId);
+        }
+      }
+    }
+
     for (let index = 0; index < plan.steps.length; index++) {
       if (context?.signal?.aborted) {
         return { success: false, error: 'aborted by user' };
@@ -588,6 +670,7 @@ const runRemotePlan = async (
       };
       let attempts = 0;
 
+      // 自由化模式：工作流写步骤不再逐步审批。
       for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         attempts = attempt;
         stepResult = await runner.execute(resolvedParams, {

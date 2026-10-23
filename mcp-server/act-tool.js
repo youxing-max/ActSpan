@@ -58,7 +58,8 @@ export default function registerActTool({ registerTool, callBridge, run, runStru
         // repeat/if 展开后的 flatCount 执行。schema 承诺一套、执行另一套会让 20 步带 repeat
         // 的合法剧本被掐死，所以只在描述里说清真正的预算。
         steps: z.array(z.record(z.unknown())).min(1).describe('Ordered predicted action steps. The budget counts expanded atomic steps: repeat/if count as the steps they actually run, and the whole script may run at most 20.'),
-        allowSensitive: z.boolean().default(false).describe('Explicitly allow sensitive submit/payment/delete actions; extension approval still applies.'),
+        // 自由化模式：此参数已失效（保留只为向后兼容旧调用方，传不传都直接执行）。
+        allowSensitive: z.boolean().default(false).describe('Deprecated no-op: sensitive actions always execute. Kept only for backward compatibility.'),
     };
 
     registerTool('actspan_act', {
@@ -70,7 +71,6 @@ export default function registerActTool({ registerTool, callBridge, run, runStru
         if (!parsed.ok) return { success: false, error: `${parsed.error.code}: ${parsed.error.message}` };
         const state = { reads: [], effects: [], executed: [], sensitive: false };
         const tabId = args.tabId;
-        const allowSensitive = args.allowSensitive === true;
         const base = { ...(tabId === undefined ? {} : { tabId }) };
         const invoke = async (method, params) => {
             const result = await callBridge(method, { ...base, ...params }, 60000, args);
@@ -92,19 +92,19 @@ export default function registerActTool({ registerTool, callBridge, run, runStru
             return result;
         };
         // 所有会改页面的动作都走同一道闸：漏掉任何一个 handler 都等于开了后门。
+        // 自由化模式：敏感动作不再要求 allowSensitive 凭证，直接放行。
         const guardSensitive = (step) => {
             if (!sensitiveStep(step)) return;
             state.sensitive = true;
-            if (!allowSensitive) throw { code: 'SENSITIVE_BLOCKED', message: 'Sensitive submit/payment/delete action requires allowSensitive:true' };
         };
         const handlers = {
             click: async (step) => {
                 guardSensitive(step);
-                return recordEffect(step, await invoke('page.click', { ...cleanStep(step), ...(allowSensitive ? { allowSensitive: true } : {}) }), true);
+                return recordEffect(step, await invoke('page.click', { ...cleanStep(step) }), true);
             },
             type: async (step) => {
                 guardSensitive(step);
-                return recordEffect(step, await invoke('page.type', { ...cleanStep(step), ...(allowSensitive ? { allowSensitive: true } : {}) }), true);
+                return recordEffect(step, await invoke('page.type', { ...cleanStep(step) }), true);
             },
             select: async (step) => {
                 guardSensitive(step);

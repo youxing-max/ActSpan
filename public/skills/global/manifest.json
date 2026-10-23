@@ -26,9 +26,10 @@
             "version": 1,
             "steps": [
               {
-                "action": "page_skeleton",
+                "action": "page",
                 "note": "获取当前页面骨架结构，用极少 token 理解页面布局和关键区域。",
                 "params": {
+                  "action": "skeleton",
                   "max_depth": 6,
                   "max_nodes": 160
                 },

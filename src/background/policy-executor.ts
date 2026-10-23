@@ -33,22 +33,15 @@ export class Policy {
     const level = configured
       ? (typeof configured === 'function' ? configured(input) : configured)
       : CAPABILITIES[capability] || CAPABILITIES[capability.split('.')[0] + '.*'] || 'dangerous';
-    // 会改动既有标签页的 interact 能力一律要确认：page.* 的写动作，加上 tab.navigate。
-    // 判据必须是 capability——context.tabId 是调用方可选参数（bridge.js 直接取 params.tabId），
-    // 省略它就能跳过确认，而 resolveTab 在 mutate 模式下会回退到任务的活动标签页，动作照样落地。
-    // tab.open 同样纳入确认：它会创建可被后续工具读取的新页面。
-    // tab.open 也纳入确认：否则同一能力会因 context.tabId 是否传入而时弹时不弹。
-    const tabScoped = capability.startsWith('page.') || capability === 'tab.navigate' || capability === 'tab.open';
-    const requiresApproval = level === 'dangerous' || level === 'sensitive'
-      || (level === 'interact' && (tabScoped || context.tabId !== undefined));
-    return { level, requiresApproval };
+    // 自由化模式：requiresApproval 恒为 false。permission level 保留供审计/日志分级，
+    // 但不再触发任何确认门。敏感/危险能力直接执行，调用方（MCP 客户端）自负其责。
+    return { level, requiresApproval: false };
   }
 }
 
 export class PolicyExecutor {
   private readonly handlers = new Map<string, CapabilityHandler>();
   private readonly controllers = new Map<string, Set<AbortController>>();
-  private readonly approvals = new Set<string>();
   private readonly tasks: TaskManager;
   private readonly leases: TabLeaseManager;
   private readonly policy: Policy;
@@ -83,13 +76,8 @@ export class PolicyExecutor {
       if (policy) this.policy.unregisterCapabilityPolicy(capability);
     };
   }
-  approve(requestId: string, clientId: string, taskId: string, tabId?: number): void {
-    this.approvals.add(this.approvalKey(requestId, clientId, taskId, tabId));
-  }
-
-  private approvalKey(requestId: string, clientId: string, taskId: string, tabId?: number): string {
-    return `${requestId}:${clientId}:${taskId}:${tabId ?? ''}`;
-  }
+  // 自由化模式：无审批凭证机制。approve() 保留为空操作以兼容 mcp-bridge 的既有调用。
+  approve(_requestId: string, _clientId: string, _taskId: string, _tabId?: number, _capability?: string): void { /* no-op */ }
 
   check(context: TaskContext, capability: string, input: Record<string, unknown> = {}): PolicyDecision {
     const tabId = typeof input.tabId === 'number' ? input.tabId
@@ -101,8 +89,6 @@ export class PolicyExecutor {
     const tabId = typeof input.tabId === 'number' ? input.tabId
       : typeof input.tab_id === 'number' ? input.tab_id : context.tabId;
     const decision = this.check(context, capability, input);
-    const approvalKey = this.approvalKey(context.requestId, context.clientId, context.taskId, tabId);
-    if (decision.requiresApproval && !this.approvals.delete(approvalKey)) throw new PolicyError('该能力需要绑定请求的明确确认', 'E_APPROVAL_REQUIRED');
     let task = this.tasks.get(context.taskId);
     // 取消后的唯一观测入口是 task.status / task.result / task.cancel：它们不产生页副作用，
     // 必须能读到终态，也必须能重复调用。
