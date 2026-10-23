@@ -1347,11 +1347,6 @@ const registerOffscreenTransport = (): void => {
         if (!sender.url?.startsWith(`chrome-extension://${chrome.runtime.id}/`)) return false;
         if (!message || typeof message !== 'object' || Array.isArray(message)) return false;
         const frame = message as Record<string, unknown>;
-        if (frame.type === runtimeCancelType && typeof frame.id === 'string') {
-            inFlightBridgeRequests.get(frame.id)?.abort('cancelled by client');
-            sendResponse({ accepted: true });
-            return false;
-        }
         if (frame.type === runtimeRequestType && isBridgeRequestFrame(frame.frame)) {
             void handleOffscreenRequest(frame.frame);
             sendResponse({ accepted: true });
@@ -1387,6 +1382,13 @@ const registerOffscreenTransport = (): void => {
         }
         if (frame.type === 'actspan_mcp_socket_event' && authenticatedBridge && frame.frame && typeof frame.frame === 'object') {
             const event = frame.frame as Record<string, unknown>;
+            // 取消帧被 offscreen 包了一层 socket_event：桥发来的 { type: 'actspan_mcp_cancel', id }
+            // 在这里的嵌套帧上，必须在事件分支里按 id 中止在途请求，否则客户端超时后写操作仍会落地。
+            if (event.type === runtimeCancelType && typeof event.id === 'string') {
+                inFlightBridgeRequests.get(event.id)?.abort('cancelled by client');
+                sendResponse({ accepted: true });
+                return false;
+            }
             if (event.type === 'session_disconnected' && typeof event.clientId === 'string' && typeof event.sessionId === 'string' &&
                 validBridgeIdentity(event.clientId) && validBridgeIdentity(event.sessionId)) {
                 tabLeaseManager.setSessionConnected({ clientId: event.clientId, sessionId: event.sessionId }, false);
