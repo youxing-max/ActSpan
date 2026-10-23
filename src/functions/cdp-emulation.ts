@@ -112,6 +112,14 @@ export const cdpEmulationFunction: FunctionDefinition = {
     }
     if (action === 'set_viewport') {
       if (!params.width || !params.height) return 'set_viewport requires width and height parameters';
+      if (!Number.isFinite(params.width) || !Number.isFinite(params.height)
+        || params.width < 1 || params.height < 1 || params.width > 10000 || params.height > 10000) {
+        return 'width/height must be finite numbers in [1, 10000]';
+      }
+      if (params.device_scale_factor !== undefined
+        && (!Number.isFinite(params.device_scale_factor) || params.device_scale_factor <= 0 || params.device_scale_factor > 5)) {
+        return 'device_scale_factor must be a finite number in (0, 5]';
+      }
     }
     if (action === 'set_user_agent') {
       if (!params.user_agent) return 'set_user_agent requires user_agent parameter';
@@ -120,9 +128,23 @@ export const cdpEmulationFunction: FunctionDefinition = {
       if (params.latitude === undefined || params.longitude === undefined) {
         return 'set_geolocation requires latitude and longitude parameters';
       }
+      if (!Number.isFinite(params.latitude) || params.latitude < -90 || params.latitude > 90) {
+        return 'latitude must be a finite number in [-90, 90]';
+      }
+      if (!Number.isFinite(params.longitude) || params.longitude < -180 || params.longitude > 180) {
+        return 'longitude must be a finite number in [-180, 180]';
+      }
+      if (params.accuracy !== undefined && (!Number.isFinite(params.accuracy) || params.accuracy < 0)) {
+        return 'accuracy must be a finite number >= 0';
+      }
     }
     if (action === 'set_locale') {
       if (!params.locale && !params.timezone) return 'set_locale requires locale or timezone parameter';
+    }
+    if (action === 'set_network_conditions') {
+      if (params.latency !== undefined && (!Number.isFinite(params.latency) || params.latency < 0)) {
+        return 'latency must be a finite number >= 0';
+      }
     }
     return null;
   },
@@ -181,7 +203,7 @@ export const cdpEmulationFunction: FunctionDefinition = {
         const result = await CDPSessionManager.sendCommand(tabId, 'Emulation.setDeviceMetricsOverride', {
           width: Math.floor(params.width!),
           height: Math.floor(params.height!),
-          deviceScaleFactor: params.device_scale_factor || 1,
+          deviceScaleFactor: params.device_scale_factor ?? 1,
           mobile: params.mobile || false,
         });
         if (!result.success) {
@@ -192,7 +214,7 @@ export const cdpEmulationFunction: FunctionDefinition = {
           data: {
             width: params.width,
             height: params.height,
-            device_scale_factor: params.device_scale_factor || 1,
+            device_scale_factor: params.device_scale_factor ?? 1,
             mobile: params.mobile || false,
             message: `视口已设置为 ${params.width}x${params.height}${params.mobile ? '（移动模式）' : ''}`,
           },
@@ -224,7 +246,7 @@ export const cdpEmulationFunction: FunctionDefinition = {
         const result = await CDPSessionManager.sendCommand(tabId, 'Emulation.setGeolocationOverride', {
           latitude: params.latitude!,
           longitude: params.longitude!,
-          accuracy: params.accuracy || 100,
+          accuracy: params.accuracy ?? 100,
         });
         if (!result.success) {
           return { success: false, error: `设置地理位置失败: ${result.error}` };
@@ -234,7 +256,7 @@ export const cdpEmulationFunction: FunctionDefinition = {
           data: {
             latitude: params.latitude,
             longitude: params.longitude,
-            accuracy: params.accuracy || 100,
+            accuracy: params.accuracy ?? 100,
             message: `地理位置已模拟为 (${params.latitude}, ${params.longitude})`,
           },
         };
@@ -315,28 +337,40 @@ export const cdpEmulationFunction: FunctionDefinition = {
       case 'reset': {
         const errors: string[] = [];
 
-        // 重置视口
+        // 与 set 动作一一对应：视口/UA/地理位置/语言/时区/网络限速全部清除，
+        // 否则 reset 宣称"全部重置"但 set_locale/set_network_conditions 的覆盖会残留。
         const vpResult = await CDPSessionManager.sendCommand(tabId, 'Emulation.clearDeviceMetricsOverride', {});
         if (!vpResult.success) errors.push(`视口: ${vpResult.error}`);
 
-        // 重置 UA（空字符串 = 清除覆盖）
         const uaResult = await CDPSessionManager.sendCommand(tabId, 'Emulation.setUserAgentOverride', { userAgent: '' });
         if (!uaResult.success) errors.push(`UA: ${uaResult.error}`);
 
-        // 重置地理位置
         const geoResult = await CDPSessionManager.sendCommand(tabId, 'Emulation.clearGeolocationOverride', {});
         if (!geoResult.success) errors.push(`地理位置: ${geoResult.error}`);
 
+        const localeResult = await CDPSessionManager.sendCommand(tabId, 'Emulation.setLocaleOverride', { locale: '' });
+        if (!localeResult.success) errors.push(`语言: ${localeResult.error}`);
+
+        const tzResult = await CDPSessionManager.sendCommand(tabId, 'Emulation.setTimezoneOverride', { timezoneId: '' });
+        if (!tzResult.success) errors.push(`时区: ${tzResult.error}`);
+
+        await CDPSessionManager.sendCommand(tabId, 'Network.enable', {});
+        const netResult = await CDPSessionManager.sendCommand(tabId, 'Network.emulateNetworkConditions', {
+          offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1,
+        });
+        if (!netResult.success) errors.push(`网络限速: ${netResult.error}`);
+
         if (errors.length > 0) {
+          // 部分失败必须按失败返回，调用方按 success 判断不应拿到"成功"
           return {
-            success: true,
-            data: { message: `部分模拟已重置，以下重置失败: ${errors.join('; ')}` },
+            success: false,
+            error: `部分模拟重置失败: ${errors.join('; ')}`,
+            data: { partial: true, errors },
           };
         }
-
         return {
           success: true,
-          data: { message: '所有模拟设置已重置为默认' },
+          data: { message: '已重置全部模拟（视口/UA/地理位置/语言/时区/网络限速）' },
         };
       }
 

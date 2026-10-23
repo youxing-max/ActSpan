@@ -214,7 +214,12 @@ export async function restoreRuntimeTimers() {
     const now = Date.now();
 
     for (const task of tasks) {
-        if (task.scheduleMode !== 'runtime') continue;
+        // 旧数据可能没有 scheduleMode：按新任务同款规则（timer.ts 的 1 分钟分界）推断，
+        // 否则这类任务永远不会被恢复；推断为 alarm 的由 chrome.alarms 持久化，无需处理。
+        const inferredInterval = task.intervalMs ?? task.delayMs
+            ?? Math.max(1, Math.round((task.intervalMinutes || 1) * 60 * 1000));
+        const mode = task.scheduleMode || (inferredInterval < 60_000 ? 'runtime' : 'alarm');
+        if (mode !== 'runtime') continue;
 
         if (task.type === 'timeout') {
             const nextRunAt = task.nextRunAt || now;
@@ -226,8 +231,12 @@ export async function restoreRuntimeTimers() {
         if (task.type === 'interval') {
             const intervalMs = task.intervalMs || Math.max(1, Math.round((task.intervalMinutes || 1) * 60 * 1000));
             TimerScheduler.scheduleInterval(task.id, intervalMs);
-            // 恢复时同步下一次执行时间，便于 UI 展示
-            await TimerStore.update(task.id, { nextRunAt: now + intervalMs });
+            // 保留原始节奏相位：按原 nextRunAt 推算下一个未来触发点，
+            // 而不是重置为 now+intervalMs（那会丢弃 SW 睡眠期间的相位并整体漂移）。
+            // 不追发欠账，避免 SW 启动瞬间突发放量执行。
+            const base = typeof task.nextRunAt === 'number' && task.nextRunAt > 0 ? task.nextRunAt : now;
+            const missed = Math.max(0, Math.ceil((now - base) / intervalMs));
+            await TimerStore.update(task.id, { nextRunAt: base + missed * intervalMs });
         }
     }
 }

@@ -6,6 +6,7 @@
 
 import type { FunctionDefinition, FunctionResult } from './types';
 import { readMigratedStorage } from '../lib/legacy-storage';
+import { isBlockedFetchUrl } from '../lib/ssrf-guard';
 
 const WEBHOOK_CONFIG_KEY = 'actspan_webhook_config_v1';
 const LEGACY_WEBHOOK_CONFIG_KEY = 'mole_webhook_config_v1';
@@ -253,6 +254,11 @@ export const sendToWebhook = async (
         : isDingTalk
           ? await buildDingTalkRequest(entry, body)
           : buildGenericRequest(entry, body);
+
+    // generic/Bark 地址没有官方白名单约束，发送前统一拦内网/本机，防 SSRF 与凭据页外发
+    if (isBlockedFetchUrl(url)) {
+      return { success: false, message: '不允许向内网或本机地址发送 Webhook' };
+    }
 
     const response = await fetch(url, { ...init, signal: controller.signal });
 

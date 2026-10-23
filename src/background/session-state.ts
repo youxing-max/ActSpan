@@ -92,8 +92,8 @@ export function buildSessionOpQueueSnapshot(now: number = Date.now()): SessionOp
     };
 }
 
-/** 分发会话操作到串行队列 */
-export function dispatchSessionOp(label: string, op: () => Promise<void> | void): Promise<void> {
+/** 分发会话操作到串行队列；onError 让 handler 异常可以回传给消息发送方，不再静默吞掉 */
+export function dispatchSessionOp(label: string, op: () => Promise<void> | void, onError?: (err: unknown) => void): Promise<void> {
     sessionOpQueueDepth += 1;
     sessionOpQueuePeakDepth = Math.max(sessionOpQueuePeakDepth, sessionOpQueueDepth);
     sessionOpUpdatedAt = Date.now();
@@ -107,6 +107,8 @@ export function dispatchSessionOp(label: string, op: () => Promise<void> | void)
             await op();
         } catch (err) {
             console.error(`[Actspan] 会话操作失败 (${label}):`, err);
+            // 仅打日志会让 channel 调用方永远等不到响应（旧行为），必须给一条错误回执
+            try { onError?.(err); } catch { /* 回执失败不阻断队列 */ }
         } finally {
             const finishedAt = Date.now();
             sessionOpLastLabel = label;

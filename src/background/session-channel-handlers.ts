@@ -543,6 +543,13 @@ async function handleSessionOp(op: SessionOp) {
 function submitSessionOp(op: SessionOp): Promise<void> {
     return dispatchSessionOp(op.label, async () => {
         await handleSessionOp(op);
+    }, (err) => {
+        // handler 抛异常时给消息发送方一条错误回执，否则调用方永远等不到响应；
+        // sendResponse 只在部分 SessionOp 变体上声明，做结构收窄
+        respondSessionOp((op as SessionOp & { sendResponse?: ((response?: unknown) => void) | undefined }).sendResponse, {
+            success: false,
+            error: err instanceof Error ? err.message : String(err),
+        }, op.label);
     });
 }
 

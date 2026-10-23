@@ -84,13 +84,20 @@ export const askUserFunction: FunctionDefinition = {
     const requestId = `ask_${Date.now()}_${++requestCounter}`;
     const signal = context?.signal;
 
-    // 广播提问请求到所有标签页
-    Channel.broadcast('__ask_user_request', {
+    // 定向投递到任务标签页；无任务标签页时才退回广播（与 request-confirmation 策略一致）。
+    // 广播会让所有页面都看到提问，且任何页面都能代答，既吵又无法校验回答来源。
+    const deliveryTabId = typeof context?.tabId === 'number' && context.tabId > 0 ? context.tabId : undefined;
+    const askPayload = {
       requestId,
       question,
       options: options.length > 0 ? options : undefined,
       allowFreeText,
-    });
+    };
+    if (deliveryTabId !== undefined) {
+      Channel.sendToTab(deliveryTabId, '__ask_user_request', askPayload);
+    } else {
+      Channel.broadcast('__ask_user_request', askPayload);
+    }
 
     // 阻塞等待用户回答，默认 deadline 防止外部请求永久挂起
     return new Promise<FunctionResult>((resolve) => {
@@ -107,9 +114,10 @@ export const askUserFunction: FunctionDefinition = {
         deadline.cleanup();
       };
 
-      // 监听用户回答（匹配 requestId）
-      const handler = (data: unknown) => {
+      // 监听用户回答（匹配 requestId；定向投递时只接受该标签页的回答）
+      const handler = (data: unknown, sender?: chrome.runtime.MessageSender) => {
         if (!data || typeof data !== 'object') return;
+        if (deliveryTabId !== undefined && sender?.tab?.id !== deliveryTabId) return;
         const response = data as { requestId?: unknown; answer?: unknown; source?: unknown; denied?: unknown };
         if (settled || response.requestId !== requestId) return;
         if (response.denied === true) {
