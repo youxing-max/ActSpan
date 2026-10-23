@@ -8,6 +8,24 @@
     "type": "git",
     "url": "https://github.com/youxing-max/ActSpan"
   },
+  "homepage": "https://github.com/youxing-max/ActSpan#readme",
+  "bugs": "https://github.com/youxing-max/ActSpan/issues",
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "browser-automation",
+    "chrome-extension",
+    "ai-agent",
+    "actspan"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
+  "files": [
+    "*.js",
+    "agents.json"
+  ],
   "actspan": {
     "extensionVersion": "1.1.0",
     "extensionKey": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAktAyufAUexbFFANX4kaBpsTY4BtytJq8WYSOk5ng28LsHgAHB0dK6XuIQ4QtY7AV5JezZGmjpmjSb0g4cF9ptqNxuipDFp8ceX5iLou3y/Eiah8jX0hguLN7kkf2nmeCyBTufEo+L786WvCdwxxjHb4dRi4YriDnPo7CJ4tlGcBNbAnqTDOYgKZCyyC7DILlYm8AXzs3WveNa5b5OZBYnNLSIGdo9CI+HyIgBHVmXbu1eyrpc+4nnDtP73TqnEzcmnb2XnSoiBZYnn/1B7S5iVIGQfHygxaLUpO8E7OcaSWJCoVX20JPkIUPwT8gbFPK6iNUrDsGW9nfHztAlJ7SfwIDAQAB"
