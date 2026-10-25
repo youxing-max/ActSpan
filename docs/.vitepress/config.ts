@@ -34,6 +34,8 @@ export default defineConfig({
               items: [
                 { text: 'Actspan 能做什么？', link: '/guide/examples' },
                 { text: '工作流', link: '/guide/workflows' },
+                { text: '钉钉群机器人', link: '/guide/dingtalk-robot' },
+                { text: '飞书机器人', link: '/guide/feishu-bot' },
                 { text: '使用技巧', link: '/guide/tips' },
               ],
             },

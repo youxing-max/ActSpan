@@ -66,7 +66,7 @@ MCP 服务日志不输出到终端，默认写入：`~/.actspan/mcp-server.log`�
 |---|---|
 | `actspan_status` | 桥接状态（先调它排查连接） |
 | `actspan_status_update` | 用一句 ≤80 字的话告诉用户「准备做什么」，多步任务开始前与计划变更时调用；需要任务已持有 tab lease |
-| `actspan_feishu_push` | 向已启用的飞书/Lark Webhook 推送通知 |
+| `actspan_feishu_push` | 向已启用的飞书/Lark 或钉钉 Webhook 推送通知 |
 
 ### 标签页（5）
 
@@ -135,7 +135,7 @@ MCP 服务日志不输出到终端，默认写入：`~/.actspan/mcp-server.log`�
 
 - `title`：必填，通知标题。
 - `message`：必填，通知正文。
-- `webhookName`：可选，必须与 Options 中已启用的飞书/Lark Webhook 名称**完全匹配**；省略时发送到全部已启用的飞书 Webhook。
+- `webhookName`：可选，必须与 Options 中已启用的飞书/Lark 或钉钉 Webhook 名称**完全匹配**；省略时发送到全部已启用的飞书与钉钉 Webhook。
 - 该工具不需要浏览器标签页、页面权限或用户确认（no tab / no confirmation），可在没有活动标签页时调用。
 
 ## 工具语义（防劫持约定）

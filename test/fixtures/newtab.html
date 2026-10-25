@@ -4,7 +4,8 @@
 <body>
   <h1>New-tab routing fixture</h1>
   <!-- Both launchers target only the local child. #newtab-result indicates the request, not proof of a child tab; the child proves loading via #child-result. -->
-  <a id="data-newtab-launcher" data-newtab-launcher href="newtab-child.html" target="_blank" rel="noopener">Open child fixture link</a>
+  <!-- 刻意写 rel="opener"：Chrome 对 target="_blank" 的 <a> 默认隐含 noopener，不显式要回来就无从验证 opener 追踪（taskManager.withNewTabs）。 -->
+  <a id="data-newtab-launcher" data-newtab-launcher href="newtab-child.html" target="_blank" rel="opener">Open child fixture link</a>
   <button id="newtab-window-open" type="button">Open child using window.open</button>
   <p id="newtab-result" role="status">No launch requested</p>
   <pre id="newtab-event-log" aria-live="polite"></pre>
@@ -15,7 +16,7 @@
       log.textContent += 'data-newtab-launcher:click\n';
     });
     document.getElementById('newtab-window-open').addEventListener('click', () => {
-      window.open('newtab-child.html', '_blank', 'noopener');
+      window.open('newtab-child.html', '_blank');
       document.getElementById('newtab-result').textContent = 'window.open requested (verify child tab separately)';
       log.textContent += 'newtab-window-open:click\n';
     });

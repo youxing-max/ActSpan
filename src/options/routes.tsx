@@ -42,7 +42,7 @@ export const routes: RouteItem[] = [
     key: 'webhook',
     label: 'Webhook',
     icon: <ApiOutlined />,
-    description: '管理远端通知推送地址，支持飞书、Slack 等平台。',
+    description: '管理远端通知推送地址，支持飞书、钉钉、Slack 等平台。',
   },
   {
     key: 'history',

@@ -101,7 +101,17 @@ export function HistoryPage() {
       title: '摘要',
       dataIndex: 'summary',
       ellipsis: true,
-      render: (summary: string) => summary || '(无摘要)',
+      render: (summary: string, record) => {
+        const turnCount = record.turns?.length || 0;
+        return (
+          <span>
+            {summary || '(无摘要)'}
+            {turnCount > 1 ? (
+              <Tag style={{ marginLeft: 8 }}>{turnCount} 轮</Tag>
+            ) : null}
+          </span>
+        );
+      },
     },
     {
       title: '状态',
@@ -208,8 +218,43 @@ export function HistoryPage() {
           </Card>
         ) : null}
 
-        {/* AI 回复 */}
-        {record.assistantReply ? (
+        {/* 多轮对话：用户输入与每轮 AI 回复 */}
+        {(record.turns?.length || 0) > 0 ? (
+          <Card size="small" title={`对话轮次（${record.turns!.length}）`} className="options-nested-card">
+            <Timeline
+              items={record.turns!.map((turn, index) => ({
+                color: turn.status === 'done' ? 'green' : turn.status === 'error' ? 'red' : 'gray',
+                children: (
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                      <strong style={{ fontSize: 13 }}>第 {index + 1} 轮 · {turn.query}</strong>
+                      {turn.durationMs != null ? (
+                        <Text type="secondary" style={{ fontSize: 12 }}>{formatDuration(turn.durationMs)}</Text>
+                      ) : null}
+                    </div>
+                    {turn.reply ? (
+                      <pre className="options-code-block" style={{ marginTop: 6 }}>
+                        {turn.reply}
+                      </pre>
+                    ) : (
+                      <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>
+                        (无回复)
+                      </Text>
+                    )}
+                    {turn.error ? (
+                      <Text type="danger" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>
+                        {turn.error}
+                      </Text>
+                    ) : null}
+                  </div>
+                ),
+              }))}
+            />
+          </Card>
+        ) : null}
+
+        {/* AI 回复（旧记录没有 turns 字段时的兜底） */}
+        {record.assistantReply && (record.turns?.length || 0) === 0 ? (
           <Card size="small" title="AI 回复" className="options-nested-card">
             <pre className="options-code-block">
               {record.assistantReply}

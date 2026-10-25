@@ -593,6 +593,12 @@ export const getStyles = () => `
     pointer-events: none;
   }
 
+  /* 审批卡例外：面板展开时也必须可见可点，否则敏感动作无法批准 */
+  .actspan-trigger.active .actspan-pill-action-card:has([data-type="approval"]) {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
   .actspan-trigger.dragging .actspan-pill-action-card {
     opacity: 0;
     pointer-events: none;
@@ -2082,27 +2088,76 @@ export const getStyles = () => `
     margin: 18px 0;
   }
 
-  .actspan-answer table {
-    width: 100%;
-    border-collapse: collapse;
+  .actspan-answer .actspan-table-wrap {
     margin: 12px 0;
-    font-size: 13px;
+    max-width: 100%;
+    overflow-x: auto;
+    border: 1px solid rgba(219, 227, 238, 0.9);
+    border-radius: 10px;
+    background: #fff;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+    -webkit-overflow-scrolling: touch;
+  }
+  .actspan-answer .actspan-table-wrap::-webkit-scrollbar {
+    height: 8px;
+  }
+  .actspan-answer .actspan-table-wrap::-webkit-scrollbar-thumb {
+    background: rgba(148, 163, 184, 0.45);
+    border-radius: 999px;
   }
 
-  .actspan-answer th, .actspan-answer td {
-    padding: 7px 12px;
-    border: 1px solid rgba(219, 227, 238, 0.7);
+  .actspan-answer .actspan-md-table {
+    width: 100%;
+    min-width: 560px;
+    border-collapse: collapse;
+    table-layout: fixed;
+    font-size: 12.5px;
+    line-height: 1.6;
+    white-space: normal;
+  }
+  .actspan-answer .actspan-md-table.cols-2 { min-width: 320px; }
+  .actspan-answer .actspan-md-table.cols-3 { min-width: 460px; }
+  .actspan-answer .actspan-md-table.cols-4,
+  .actspan-answer .actspan-md-table.cols-5 { min-width: 600px; }
+
+  .actspan-answer .actspan-md-table th,
+  .actspan-answer .actspan-md-table td {
+    padding: 9px 11px;
+    border: none;
+    border-bottom: 1px solid rgba(219, 227, 238, 0.65);
     text-align: left;
+    vertical-align: top;
+    overflow-wrap: anywhere;
   }
 
-  .actspan-answer th {
-    background: rgba(37, 99, 235, 0.05);
-    font-weight: 600;
-    color: #111112;
+  .actspan-answer .actspan-md-table th {
+    background: rgba(37, 99, 235, 0.045);
+    color: #344054;
+    font-size: 11.5px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
   }
 
-  .actspan-answer tr:nth-child(even) td {
-    background: rgba(248, 250, 253, 0.4);
+  .actspan-answer .actspan-md-table tr:last-child td {
+    border-bottom: none;
+  }
+
+  .actspan-answer .actspan-md-table tbody tr:nth-child(even) td {
+    background: rgba(248, 250, 253, 0.55);
+  }
+
+  .actspan-answer .actspan-md-table.cols-4 th:first-child,
+  .actspan-answer .actspan-md-table.cols-4 td:first-child {
+    width: 60px;
+    text-align: center;
+  }
+  .actspan-answer .actspan-md-table.cols-4 th:nth-child(2) { width: 26%; }
+  .actspan-answer .actspan-md-table.cols-4 th:nth-child(3) { width: 30%; }
+
+  .actspan-answer .actspan-md-table .actspan-link-chip {
+    max-width: 100%;
+    vertical-align: middle;
   }
 
   .actspan-answer strong {

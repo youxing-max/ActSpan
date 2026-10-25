@@ -27,6 +27,8 @@ import {
   saveWebhookConfig,
   sendToWebhook,
   getEntryDisplayUrl,
+  isDingTalkWebhookUrl,
+  isFeishuWebhookUrl,
   isFeishuAutoPushEnabled,
   setFeishuAutoPushEnabled,
 } from '../../functions/webhook';
@@ -60,11 +62,25 @@ const maskUrl = (url: string): string => {
 };
 
 /** 类型标签渲染 */
-const TypeTag = ({ type }: { type: WebhookType }) => {
-  if (type === 'bark') {
+const TypeTag = ({ entry }: { entry: WebhookEntry }) => {
+  if (entry.type === 'bark') {
     return (
       <Tag icon={<AppleOutlined />} color="blue">
         Bark
+      </Tag>
+    );
+  }
+  if (entry.url && isDingTalkWebhookUrl(entry.url)) {
+    return (
+      <Tag icon={<ApiOutlined />} color="cyan">
+        钉钉
+      </Tag>
+    );
+  }
+  if (entry.url && isFeishuWebhookUrl(entry.url)) {
+    return (
+      <Tag icon={<ApiOutlined />} color="geekblue">
+        飞书
       </Tag>
     );
   }
@@ -85,6 +101,8 @@ export function WebhookPage() {
   const [autoPush, setAutoPush] = useState(true);
   const [form] = Form.useForm();
   const webhookType = Form.useWatch('type', form) as WebhookType | undefined;
+  const genericUrl = Form.useWatch('url', form) as string | undefined;
+  const isDingTalkUrl = isDingTalkWebhookUrl(genericUrl || '');
 
   /* 加载数据 */
   const loadData = useCallback(async () => {
@@ -138,6 +156,7 @@ export function WebhookPage() {
         type: 'generic',
         name: entry.name,
         url: entry.url,
+        dingtalkSecret: entry.dingtalkSecret || '',
         headers: entry.headers ? JSON.stringify(entry.headers, null, 2) : '',
       });
     }
@@ -168,6 +187,9 @@ export function WebhookPage() {
         entry.bark = bark;
       } else {
         entry.url = values.url;
+        entry.dingtalkSecret = isDingTalkWebhookUrl(values.url || '') && values.dingtalkSecret?.trim()
+          ? values.dingtalkSecret.trim()
+          : undefined;
         if (values.headers?.trim()) {
           try {
             entry.headers = JSON.parse(values.headers);
@@ -247,7 +269,7 @@ export function WebhookPage() {
       title: '类型',
       dataIndex: 'type',
       width: 90,
-      render: (_: unknown, entry: WebhookEntry) => <TypeTag type={entry.type} />,
+      render: (_: unknown, entry: WebhookEntry) => <TypeTag entry={entry} />,
     },
     {
       title: '名称',
@@ -318,7 +340,7 @@ export function WebhookPage() {
       <OptionsPageLayout
         eyebrow="Notifications"
         title="Webhook 配置"
-        description="管理远端通知推送地址。AI 调用 webhook 工具时，会向所有已启用的地址发送通知。深度适配 Bark（iOS 推送），也支持飞书、Slack 等通用 Webhook。"
+        description="管理远端通知推送地址。AI 调用 webhook 工具时，会向所有已启用的地址发送通知。深度适配 Bark（iOS 推送），并支持飞书、钉钉、Slack 等 Webhook。"
         extra={
           <Space>
             <Button icon={<ReloadOutlined />} onClick={() => void loadData()}>
@@ -363,7 +385,7 @@ export function WebhookPage() {
         <div style={{ marginBottom: 16 }}>
         <OptionsSectionCard
           title="自动推送"
-          description="每轮任务完成后，扩展会自动把完整助手回答推送到已启用的飞书 Webhook。关闭后仅保留手动/工具触发的推送。"
+          description="每轮任务完成后，扩展会自动把完整助手回答推送到已启用的飞书和钉钉 Webhook。关闭后仅保留手动/工具触发的推送。"
         >
           <Space>
             <Switch
@@ -382,7 +404,7 @@ export function WebhookPage() {
         </div>
         <OptionsSectionCard
           title="Webhook 列表"
-          description="AI 使用 webhook 工具时，会向所有已启用的地址发送通知。支持 Bark（iOS）和通用 Webhook 两种类型。"
+          description="AI 使用 webhook 工具时，会向所有已启用的地址发送通知。支持 Bark（iOS）和通用 Webhook 两种类型，通用地址会自动识别飞书与钉钉机器人格式。"
         >
           <Table
             rowKey="id"
@@ -423,7 +445,7 @@ export function WebhookPage() {
             name="name"
             rules={[{ required: true, message: '请输入名称' }]}
           >
-            <Input placeholder={webhookType === 'bark' ? '如：我的 iPhone' : '如：飞书通知群'} />
+            <Input placeholder={webhookType === 'bark' ? '如：我的 iPhone' : '如：钉钉通知群 / 飞书通知群'} />
           </Form.Item>
 
           {/* ---- Bark 表单 ---- */}
@@ -505,9 +527,19 @@ export function WebhookPage() {
                   { required: true, message: '请输入 Webhook URL' },
                   { type: 'url', message: '请输入合法的 URL' },
                 ]}
+                extra="飞书填机器人 Webhook；钉钉填 https://oapi.dingtalk.com/robot/send?access_token=xxx"
               >
-                <Input placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/xxx" />
+                <Input placeholder="https://oapi.dingtalk.com/robot/send?access_token=xxx" />
               </Form.Item>
+              {isDingTalkUrl && (
+                <Form.Item
+                  label="加签密钥（可选）"
+                  name="dingtalkSecret"
+                  extra="钉钉机器人启用「加签」时填写 SEC 开头的密钥；使用关键词或 IP 白名单时留空。关键词需出现在推送内容中。"
+                >
+                  <Input.Password placeholder="SEC..." autoComplete="off" />
+                </Form.Item>
+              )}
               <Collapse
                 ghost
                 size="small"

@@ -8,9 +8,9 @@ Actspan is compatible with LLM services that provide the OpenAI Responses API fo
 
 | Setting | Description | Default |
 |---------|-------------|---------|
-| API Endpoint | Full LLM API request URL | `https://ai-api-gateway.app.baizhi.cloud/api/openai/v1/responses` |
-| API Key | Your API key | - |
-| Model | Model name to use | `gpt-6.1-sol` |
+| API Endpoint | Full LLM API request URL | Not configured, must be set |
+| API Key | Your API key | Not configured, must be set |
+| Model | Model name to use | Not configured, must be set |
 
 Settings are stored in `chrome.storage.local` under the key `actspan_ai_settings`.
 
@@ -20,10 +20,9 @@ Actspan theoretically supports any service that provides an OpenAI Responses API
 
 | Service | Endpoint Example | Notes |
 |---------|------------------|-------|
-| OMP anyrouter | `https://ai-api-gateway.app.baizhi.cloud/api/openai/v1/responses` | Current OMP Codex-style Responses service; default model `gpt-6.1-sol` |
 | OpenAI | `https://api.openai.com/v1/responses` | Official service |
 | Azure OpenAI | `https://{resource}.openai.azure.com/openai/deployments/{model}/v1/responses` | Azure hosted |
-| Proxy services | Provider-specific full endpoint | OpenAI Responses API-compatible proxy |
+| Third-party proxies | Provider-specific full endpoint | OpenAI Responses API-compatible proxy |
 | Ollama | `http://localhost:11434/v1/responses` | Local deployment |
 | LM Studio | `http://localhost:1234/v1/responses` | Local deployment |
 

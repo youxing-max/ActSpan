@@ -33,7 +33,11 @@ export const saveWorkflowFunction: FunctionDefinition = {
     properties: {
       workflow_json: {
         type: 'string',
-        description: 'Complete workflow definition as a JSON string. Preferred shape: an English snake_case name, Chinese label and description, 2-5 non-blank trigger strings, and plan.steps with at least one step. plan steps may only use the allowlisted read-only actions: tab_navigate, page, cdp_dom (read-only sub-actions), extract_data, screenshot. A defective shape is saved anyway with data.warnings naming each defect; only unparseable JSON or an empty plan.steps is refused. Example: {"name":"search_product","label":"搜索商品","description":"帮助用户搜索商品","triggers":["搜索商品","查找商品"],"plan":{"steps":[{"action":"tab_navigate","params":{"action":"open","url":"https://shop.example/search"}},{"action":"page","params":{"action":"view"}}]}}',
+        description: 'Complete workflow definition as a JSON string. Preferred shape: an English snake_case name, Chinese label and description, 2-5 non-blank trigger strings, and plan.steps with at least one step. plan steps may only use the allowlisted actions: tab_navigate, page, cdp_dom (read-only sub-actions), extract_data, screenshot, and cdp_input (interactive actions such as click/type/fill/key_press/scroll — these are executed under user approval). A defective shape is saved anyway with data.warnings naming each defect; only unparseable JSON or an empty plan.steps is refused. Example: {"name":"search_product","label":"搜索商品","description":"帮助用户搜索商品","triggers":["搜索商品","查找商品"],"plan":{"steps":[{"action":"tab_navigate","params":{"action":"open","url":"https://shop.example/search"}},{"action":"cdp_input","params":{"action":"fill","selector":"input[name=\\"q\\"]","value":"{{keyword}}"}}]}}',
+      },
+      unique_name: {
+        type: 'boolean',
+        description: 'Recorder-only: when the skill name is already taken, save under name-2/name-3 instead of overwriting an unrelated workflow.',
       },
     },
     required: ['workflow_json'],
@@ -120,7 +124,15 @@ export const saveWorkflowFunction: FunctionDefinition = {
     const now = Date.now();
     const normalized = normalizeWorkflow({ ...draft, updatedAt: now }, now);
     if (!normalized) return { success: false, error: 'Invalid workflow definition' };
-    const name = `user-${normalized.name.replace(/\s+/g, '-')}`;
+    const baseName = `user-${normalized.name.replace(/\s+/g, '-')}`;
+    // 录制审计产出的名字可能撞上已有工作流；撞名时另存为 -2/-3，绝不静默覆盖别人的定义。
+    let name = baseName;
+    if (params.unique_name === true) {
+      for (let suffix = 2; suffix <= 50; suffix++) {
+        if (!(await registryService.get(name, 'domain'))) break;
+        name = `${baseName}-${suffix}`;
+      }
+    }
     try {
       const previous = await registryService.get(name, 'domain');
       const patterns = Array.isArray(draft.url_patterns)

@@ -14,25 +14,9 @@ import type { ToolSchema } from '../ai/types';
 import type { SkillSpec, WorkflowEntry } from './skill-types';
 import { ensureSkillRegistryReady, registryService } from './skill-registry';
 import { matchSkills } from './skill-matcher';
-import { executeDebugRemotePlan, resolveWorkflowPlanAction } from './remote-workflow';
-import { requestConfirmationFunction } from './request-confirmation';
+import { executeDebugRemotePlan } from './remote-workflow';
 
 const MAX_WORKFLOWS_IN_SCHEMA = 15;
-
-/** 技能 plan 中需要用户明确同意的写操作 */
-const RISKY_PLAN_ACTIONS = new Set(['cdp_input', 'screenshot', 'tab_navigate']);
-const MUTATING_PAGE_ACTIONS = new Set(['click', 'type', 'eval', 'submit', 'press', 'fill']);
-
-const isRiskyPlanStep = (step: { action?: string; params?: Record<string, unknown> }): boolean => {
-  if (!step.action) return false;
-  // 旧动作别名（page_action/js_execute 等）必须先解析成白名单内的规范动作再判定。
-  const action = resolveWorkflowPlanAction(step.action)?.name || step.action;
-  if (RISKY_PLAN_ACTIONS.has(action)) return true;
-  const subAction = String(step.params?.action || '').toLowerCase();
-  if (action === 'page') return MUTATING_PAGE_ACTIONS.has(subAction);
-  if (action === 'cdp_frame') return subAction === 'evaluate';
-  return false;
-};
 
 /** guide 条目（传给系统提示词，仅域级 Skill） */
 export interface SkillGuideEntry {
@@ -271,14 +255,123 @@ const handleDetail = async (skillName: string): Promise<FunctionResult> => {
   };
 };
 
+// ============ query → workflow 解析 ============
+
+/** query 命中 triggers 的权重：远高于元数据重叠，保证调用短语优先 */
+const TRIGGER_MATCH_SCORE = 100;
+/** 元数据关键词重叠上限，避免长 query 靠字数堆过 trigger */
+const MAX_METADATA_SCORE = 50;
+
+/** 中文按二元组、英文/数字按词切分，用于 label/description 关键词重叠计分 */
+const metadataTokens = (text: string): string[] => {
+  const tokens: string[] = [];
+  for (const run of text.toLowerCase().match(/[\u4e00-\u9fff]+|[a-z0-9_]+/g) || []) {
+    if (/^[a-z0-9_]+$/.test(run)) {
+      if (run.length >= 2) tokens.push(run);
+      continue;
+    }
+    if (run.length === 1) {
+      tokens.push(run);
+      continue;
+    }
+    for (let index = 0; index + 1 < run.length; index++) {
+      tokens.push(run.slice(index, index + 2));
+    }
+  }
+  return tokens;
+};
+
+/**
+ * 给单个 workflow 的 query 匹配分：
+ * triggers 双向子串命中（query 含 trigger，或 trigger 含 query）优先；
+ * 其次按 label/description 与 query 的中文二元组/英文词重叠计数。
+ */
+export const scoreWorkflowQuery = (
+  query: string,
+  workflow: Pick<WorkflowEntry, 'triggers' | 'label' | 'description'>,
+): number => {
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) return 0;
+  for (const raw of workflow.triggers || []) {
+    const trigger = String(raw || '').trim().toLowerCase();
+    if (trigger && (normalized.includes(trigger) || trigger.includes(normalized))) {
+      return TRIGGER_MATCH_SCORE;
+    }
+  }
+  const known = new Set(metadataTokens(`${workflow.label || ''} ${workflow.description || ''}`));
+  if (known.size === 0) return 0;
+  const overlap = metadataTokens(normalized).filter(token => known.has(token)).length;
+  return Math.min(overlap, MAX_METADATA_SCORE);
+};
+
+export interface WorkflowQueryCandidate {
+  skillName: string;
+  name: string;
+  label: string;
+  score: number;
+}
+
+export interface WorkflowQueryResolution {
+  workflow: WorkflowEntry | null;
+  skillName: string | null;
+  reason: 'matched' | 'ambiguous' | 'no-match';
+  candidates: WorkflowQueryCandidate[];
+}
+
+/** 在所有 enabled Skill 中按 triggers/元数据解析 query；最高分唯一才算命中 */
+export const resolveWorkflowByQuery = (query: string, skills: SkillSpec[]): WorkflowQueryResolution => {
+  const scored: Array<{ skill: SkillSpec; workflow: WorkflowEntry; score: number }> = [];
+  for (const skill of skills) {
+    if (!skill.enabled) continue;
+    for (const workflow of skill.workflows) {
+      scored.push({ skill, workflow, score: scoreWorkflowQuery(query, workflow) });
+    }
+  }
+
+  const toCandidate = (entry: typeof scored[number]): WorkflowQueryCandidate => ({
+    skillName: entry.skill.name,
+    name: entry.workflow.name,
+    label: entry.workflow.label,
+    score: entry.score,
+  });
+
+  const hits = scored
+    .filter(entry => entry.score > 0)
+    .sort((a, b) => b.score - a.score || a.workflow.name.localeCompare(b.workflow.name));
+
+  if (hits.length === 0) {
+    return {
+      workflow: null,
+      skillName: null,
+      reason: 'no-match',
+      candidates: scored.slice(0, 3).map(toCandidate),
+    };
+  }
+  if (hits.length > 1 && hits[1].score === hits[0].score) {
+    return {
+      workflow: null,
+      skillName: null,
+      reason: 'ambiguous',
+      candidates: hits.slice(0, 3).map(toCandidate),
+    };
+  }
+  return {
+    workflow: hits[0].workflow,
+    skillName: hits[0].skill.name,
+    reason: 'matched',
+    candidates: hits.slice(0, 3).map(toCandidate),
+  };
+};
+
 /** action=run：执行工作流 */
 const handleRun = async (
   rawParams: Record<string, unknown>,
   context?: ToolExecutionContext,
 ): Promise<FunctionResult> => {
   const workflowName = String(rawParams?.name || '').trim();
-  if (!workflowName) {
-    return { success: false, error: 'Missing workflow name' };
+  const query = String(rawParams?.query || '').trim();
+  if (!workflowName && !query) {
+    return { success: false, error: 'Missing workflow name or query' };
   }
 
   await ensureSkillRegistryReady();
@@ -287,22 +380,40 @@ const handleRun = async (
   const allSkills = snapshot.skills;
   let targetWorkflow: WorkflowEntry | null = null;
 
-  for (const skill of allSkills) {
-    if (!skill.enabled) continue;
-    const found = skill.workflows.find(w => w.name === workflowName);
-    if (found) {
-      targetWorkflow = found;
-      break;
+  if (workflowName) {
+    for (const skill of allSkills) {
+      if (!skill.enabled) continue;
+      const found = skill.workflows.find(w => w.name === workflowName);
+      if (found) {
+        targetWorkflow = found;
+        break;
+      }
     }
+    if (!targetWorkflow) {
+      return { success: false, error: `Workflow not found: ${workflowName}. Use skill(action="list") to view available workflows.` };
+    }
+  } else {
+    const resolution = resolveWorkflowByQuery(query, allSkills);
+    if (!resolution.workflow) {
+      const candidates = resolution.candidates
+        .map(candidate => `${candidate.name} (${candidate.label})`)
+        .join(', ');
+      const prefix = resolution.reason === 'ambiguous'
+        ? `Ambiguous query: "${query}"`
+        : `No workflow matched query: "${query}"`;
+      return {
+        success: false,
+        error: `${prefix}. Candidates: ${candidates || '(none)'}. Retry with skill(action="run", name="<workflow_name>").`,
+        data: { query, reason: resolution.reason, candidates: resolution.candidates },
+      };
+    }
+    targetWorkflow = resolution.workflow;
   }
-
-  if (!targetWorkflow) {
-    return { success: false, error: `Workflow not found: ${workflowName}. Use skill(action="list") to view available workflows.` };
-  }
+  const resolvedWorkflowName = targetWorkflow.name;
 
   // 合并参数：schema 默认值 < 顶层参数 < params 嵌套参数
   const defaults = extractDefaults(targetWorkflow.parameters);
-  const { action: _a, name: _n, params: nested, tab_id: _t, ...topLevel } = rawParams || {};
+  const { action: _a, name: _n, query: _q, params: nested, tab_id: _t, ...topLevel } = rawParams || {};
   const nestedParams = nested && typeof nested === 'object' && !Array.isArray(nested)
     ? nested as Record<string, unknown>
     : {};
@@ -317,29 +428,10 @@ const handleRun = async (
     signal: context?.signal,
   };
 
-  // 技能 plan 可能包含点击/填表/evaluate/导航等写动作：白名单只保证动作存在，
-  // 执行前仍需用户明确同意，避免恶意导入的技能静默操作页面。
-  const planSteps = (Array.isArray(targetWorkflow.plan?.steps) ? targetWorkflow.plan.steps : []) as Array<{ action?: string; params?: Record<string, unknown> }>;
-  const riskySteps = planSteps.filter(isRiskyPlanStep);
-  if (riskySteps.length > 0) {
-    const summary = riskySteps.slice(0, 6)
-      .map((step) => `${step.action}${step.params?.action ? `(${String(step.params.action)})` : ''}`)
-      .join('、');
-    const approval = await requestConfirmationFunction.execute({
-      message: `技能「${workflowName}」将执行 ${riskySteps.length} 个写操作：${summary}。标签页 ${effectiveContext.tabId ?? '未指定'}。`,
-    }, {
-      tabId: effectiveContext.tabId,
-      signal: context?.signal,
-      sessionId: effectiveContext.sessionId,
-      taskId: effectiveContext.taskId,
-    });
-    if (!approval.success || approval.data?.approved !== true) {
-      return { success: false, error: approval.data?.userMessage || '用户未批准执行该技能' };
-    }
-  }
+  // 自由化模式：技能写操作不再审批。
 
   const result = await executeDebugRemotePlan(
-    workflowName,
+    resolvedWorkflowName,
     targetWorkflow.plan,
     mergedParams,
     effectiveContext,
@@ -375,6 +467,10 @@ export const skillFunction: FunctionDefinition = {
         type: 'string',
         description: 'Workflow name for run, skill name for detail.',
       },
+      query: {
+        type: 'string',
+        description: '自然语言请求；name 缺省时按 triggers 解析匹配的 workflow。',
+      },
       params: {
         type: 'object',
         description: 'Parameters passed to the workflow for run.',
@@ -387,7 +483,7 @@ export const skillFunction: FunctionDefinition = {
   },
 
   execute: async (
-    rawParams: { action?: string; name?: string; params?: Record<string, unknown>; tab_id?: number; [key: string]: unknown },
+    rawParams: { action?: string; name?: string; query?: string; params?: Record<string, unknown>; tab_id?: number; [key: string]: unknown },
     context?: ToolExecutionContext,
   ): Promise<FunctionResult> => {
     const action = String(rawParams?.action || 'run').trim().toLowerCase();

@@ -18,7 +18,18 @@ export const useGlobalEvents = () => {
   stateRef.current = state;
 
   useEffect(() => {
-    // ESC 键
+    // Ctrl/Cmd+M 是文档公开的唤起/关闭快捷键；捕获阶段避免页面先 stopPropagation。
+    const handleShortcut = (event: KeyboardEvent) => {
+      if (event.isComposing || event.altKey || !(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'm') return;
+      event.preventDefault();
+      dispatch({ type: 'TOGGLE_OPEN', payload: !stateRef.current.isOpen });
+    };
+
+    document.addEventListener('keydown', handleShortcut, true);
+    return () => document.removeEventListener('keydown', handleShortcut, true);
+  }, [dispatch]);
+
+  useEffect(() => {
     const handleEscape = () => {
       const s = stateRef.current;
       if (!s.isOpen) return;

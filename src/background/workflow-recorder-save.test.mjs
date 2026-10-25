@@ -33,7 +33,7 @@ test('录制审计结果直接调用保存，不要求二次确认', async () =>
   });
 
   assert.equal(result.success, true);
-  assert.deepEqual(calls, [{ workflow_json: JSON.stringify(workflow) }]);
+  assert.deepEqual(calls, [{ workflow_json: JSON.stringify(workflow), unique_name: true }]);
 });
 
 test('录制审计结果保存失败时返回明确错误', async () => {

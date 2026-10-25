@@ -16,7 +16,7 @@ const TOOL_LAYERS = {
   },
   sessions_meta: {
     label: 'Sessions and meta',
-    description: 'For independent work, ask the user, notifications, storage or Webhook push to Feishu/Lark/Bark/Slack/Discord/WeCom; do not use page reading to configure a push.',
+    description: 'For independent work, ask the user, notifications, storage or Webhook push to Feishu/Lark/DingTalk/Bark/Slack/Discord/WeCom; do not use page reading to configure a push.',
     tools: ['agent', 'ask_user', 'request_confirmation', 'webhook', 'notification', 'clipboard_ops', 'bookmark_ops', 'history_search', 'storage_kv', 'timer', 'resident_runtime', 'selection_context', 'save_workflow', 'load_tools', 'todo', 'compact', 'status', 'adopt', 'site_experience'],
   },
 };
@@ -35,7 +35,7 @@ export const ON_DEMAND_CATEGORIES: Record<string, {
   },
   browser_utils: {
     label: 'Browser Utilities',
-    description: 'Clipboard, notifications, Webhook push to Feishu/Lark/Bark/Slack/Discord/WeCom, bookmarks, history, downloads',
+    description: 'Clipboard, notifications, Webhook push to Feishu/Lark/DingTalk/Bark/Slack/Discord/WeCom, bookmarks, history, downloads',
     tools: ['clipboard_ops', 'notification', 'webhook', 'bookmark_ops', 'history_search', 'download_file'],
   },
   data_storage: {

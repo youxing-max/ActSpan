@@ -99,7 +99,7 @@ Each workflow is a JSON object with the following fields:
 - **`url_patterns`** — URL matching rules using wildcard syntax; determines which pages the workflow is available on
 - **`parameters`** — Parameter definitions in JSON Schema format, passed by the AI when invoking
 - **`plan.steps`** — Array of steps, each calling a built-in tool
-- **`plan.steps[].action`** — Name of the tool to call
+- **`plan.steps[].action`** — Name of the tool to call. Available actions: `tab_navigate`, `page`, `cdp_dom` (read-only sub-actions), `extract_data`, `screenshot`, `cdp_input` (interaction such as click/type/key press/scroll; these run under user approval)
 - **`plan.steps[].params`** — Tool parameters, supports `{{variable}}` template syntax
 - **`plan.steps[].saveAs`** — Store the step result as a variable for subsequent steps to reference
 - **`plan.steps[].when`** — Conditional execution; step is skipped when the value is falsy

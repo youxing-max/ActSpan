@@ -287,8 +287,13 @@ export class TaskManager {
     for (const task of state.tasks) {
       if (!task?.taskId || !task.sessionId) continue;
       if (task.state === 'queued' || task.state === 'running' || task.state === 'waiting_user') {
-        task.state = 'failed';
-        task.error = { ...INTERRUPTED_TASK_ERROR };
+        // loop:* 是聊天轮的内部任务，会话层会单独恢复/报错；
+        // 这里再写成 E_TASK_RUNTIME_INTERRUPTED 会让历史任务列表出现大量误报。
+        const isSessionLoopTask = task.taskId.startsWith('loop:');
+        task.state = isSessionLoopTask ? 'cancelled' : 'failed';
+        task.error = isSessionLoopTask
+          ? { code: 'E_CANCELLED', message: '任务已结束' }
+          : { ...INTERRUPTED_TASK_ERROR };
         task.updatedAt = now;
         interruptedTaskIds.push(task.taskId);
       }

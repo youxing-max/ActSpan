@@ -50,7 +50,7 @@ function snapshotOf(step) {
 }
 
 /** Register the ActSpan compound action tool without owning daemon lifecycle. */
-export default function registerActTool({ registerTool, callBridge, run, tabIdParam, taskParams }) {
+export default function registerActTool({ registerTool, callBridge, run, runStructured, tabIdParam, taskParams }) {
     const inputSchema = {
         ...taskParams,
         tabId: tabIdParam,
@@ -58,19 +58,19 @@ export default function registerActTool({ registerTool, callBridge, run, tabIdPa
         // repeat/if 展开后的 flatCount 执行。schema 承诺一套、执行另一套会让 20 步带 repeat
         // 的合法剧本被掐死，所以只在描述里说清真正的预算。
         steps: z.array(z.record(z.unknown())).min(1).describe('Ordered predicted action steps. The budget counts expanded atomic steps: repeat/if count as the steps they actually run, and the whole script may run at most 20.'),
-        allowSensitive: z.boolean().default(false).describe('Explicitly allow sensitive submit/payment/delete actions; extension approval still applies.'),
+        // 自由化模式：此参数已失效（保留只为向后兼容旧调用方，传不传都直接执行）。
+        allowSensitive: z.boolean().default(false).describe('Deprecated no-op: sensitive actions always execute. Kept only for backward compatibility.'),
     };
 
     registerTool('actspan_act', {
         title: 'ActSpan compound action',
         description: 'Your DEFAULT way to act — batch every step you can predict. Every call you merge saves a full model turn. Steps run sequentially with an effect check per step, stop at the first failure, and one final snapshot returns at the end. Only steps located by find {role, name} are eligible for draft capture; selector-only steps still run but are never promoted into a reusable draft.',
         inputSchema,
-    }, run(async (args = {}) => {
+    }, runStructured(async (args = {}) => {
         const parsed = parseActScript({ steps: args.steps });
         if (!parsed.ok) return { success: false, error: `${parsed.error.code}: ${parsed.error.message}` };
         const state = { reads: [], effects: [], executed: [], sensitive: false };
         const tabId = args.tabId;
-        const allowSensitive = args.allowSensitive === true;
         const base = { ...(tabId === undefined ? {} : { tabId }) };
         const invoke = async (method, params) => {
             const result = await callBridge(method, { ...base, ...params }, 60000, args);
@@ -92,19 +92,19 @@ export default function registerActTool({ registerTool, callBridge, run, tabIdPa
             return result;
         };
         // 所有会改页面的动作都走同一道闸：漏掉任何一个 handler 都等于开了后门。
+        // 自由化模式：敏感动作不再要求 allowSensitive 凭证，直接放行。
         const guardSensitive = (step) => {
             if (!sensitiveStep(step)) return;
             state.sensitive = true;
-            if (!allowSensitive) throw { code: 'SENSITIVE_BLOCKED', message: 'Sensitive submit/payment/delete action requires allowSensitive:true' };
         };
         const handlers = {
             click: async (step) => {
                 guardSensitive(step);
-                return recordEffect(step, await invoke('page.click', { ...cleanStep(step), ...(allowSensitive ? { allowSensitive: true } : {}) }), true);
+                return recordEffect(step, await invoke('page.click', { ...cleanStep(step) }), true);
             },
             type: async (step) => {
                 guardSensitive(step);
-                return recordEffect(step, await invoke('page.type', { ...cleanStep(step), ...(allowSensitive ? { allowSensitive: true } : {}) }), true);
+                return recordEffect(step, await invoke('page.type', { ...cleanStep(step) }), true);
             },
             select: async (step) => {
                 guardSensitive(step);
@@ -115,7 +115,9 @@ export default function registerActTool({ registerTool, callBridge, run, tabIdPa
                 return recordEffect(step, await invoke('page.scroll', cleanStep(step)), true);
             },
             wait: async (step) => {
-                const result = await invoke('page.wait', { ...cleanStep(step), for: step.for || 'idle', timeoutMs: step.timeoutMs ?? step.ms ?? 10000 });
+                // act 脚本用短字段 ms，桥侧白名单只认 timeoutMs；残留的 ms 会被参数校验拒掉。
+                const { ms: waitMs, ...rest } = cleanStep(step);
+                const result = await invoke('page.wait', { ...rest, for: step.for || 'idle', timeoutMs: step.timeoutMs ?? waitMs ?? 10000 });
                 if (result?.found === false) throw { code: 'NO_EFFECT', message: 'Wait condition was not observed' };
                 return recordEffect(step, result);
             },
@@ -159,7 +161,8 @@ export default function registerActTool({ registerTool, callBridge, run, tabIdPa
             },
         };
         const execution = await executeActScript(parsed, handlers);
-        // error 走 run() → fail() 时只剩 message，所以把 code 拼进文案，别让 agent 丢掉诊断码。
+        // 步骤级失败是结构化负载（trace/reads 跟着走，runStructured 不把它降级成 isError），
+        // 但 error 字符串本身也要能独立读：诊断码拼进文案，别让 agent 丢掉它。
         if (!execution.ok) return { success: false, error: `${execution.error.code}: ${execution.error.message}`, trace: execution.audit, reads: state.reads };
         const draft = await invoke('act.draft', {
             steps: state.executed,

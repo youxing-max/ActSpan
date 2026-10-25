@@ -47,6 +47,22 @@ const resolveElementRect = async (
   }
 };
 
+/** Page.captureScreenshot clip 要文档坐标；调用方给的是视口坐标。 */
+const toDocumentClip = async (
+  tabId: number,
+  clip: { x: number; y: number; width: number; height: number },
+): Promise<{ x: number; y: number; width: number; height: number; scale: number }> => {
+  const layout = await CDPSessionManager.sendCommand(tabId, 'Page.getLayoutMetrics');
+  const viewport = layout.success ? layout.result?.visualViewport : undefined;
+  return {
+    x: clip.x + (Number(viewport?.pageX) || 0),
+    y: clip.y + (Number(viewport?.pageY) || 0),
+    width: clip.width,
+    height: clip.height,
+    scale: 1,
+  };
+};
+
 export const screenshotFunction: FunctionDefinition = {
   name: 'screenshot',
   description: 'Capture a tab screenshot. By default captures the visible area; supports region screenshot (clip), full page screenshot (full_page), and element screenshot (element_id). Also supports opening a specified URL before capturing.\n\n⚠️ Do NOT use this tool for:\n- When you only need text information (use page_viewer, screenshots consume more tokens)\n- Getting a list of interactive elements (use page_snapshot)',
@@ -93,7 +109,7 @@ export const screenshotFunction: FunctionDefinition = {
           height: { type: 'number', description: 'Capture height (pixels)' },
         },
         required: ['x', 'y', 'width', 'height'],
-        description: 'Capture a specific region (viewport coordinates). Uses CDP.',
+        description: 'Capture a specific region. x/y are viewport coordinates; the CDP path converts them to document coordinates.',
       },
       full_page: {
         type: 'boolean',
@@ -267,14 +283,7 @@ export const screenshotFunction: FunctionDefinition = {
         }
 
         if (resolvedClip) {
-          // CDP clip 需要 scale 参数
-          cdpParams.clip = {
-            x: resolvedClip.x,
-            y: resolvedClip.y,
-            width: resolvedClip.width,
-            height: resolvedClip.height,
-            scale: 1,
-          };
+          cdpParams.clip = await toDocumentClip(targetTabId, resolvedClip);
           if (!element_id) {
             screenshotMode = `区域截图(${resolvedClip.x},${resolvedClip.y} ${resolvedClip.width}x${resolvedClip.height})`;
           }

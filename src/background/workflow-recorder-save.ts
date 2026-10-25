@@ -6,4 +6,4 @@ type SaveWorkflowExecutor = (params: Record<string, unknown>) => Promise<Functio
 export const saveAuditedWorkflow = async (
   workflow: Record<string, unknown>,
   execute: SaveWorkflowExecutor = saveWorkflowFunction.execute,
-): Promise<FunctionResult> => execute({ workflow_json: JSON.stringify(workflow) });
+): Promise<FunctionResult> => execute({ workflow_json: JSON.stringify(workflow), unique_name: true });

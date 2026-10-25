@@ -46,17 +46,19 @@ export function LLMSettingsPage() {
   useEffect(() => {
     const load = async () => {
       const settings = await getAISettings();
+      // 首次配置时不预填内置网关地址，避免用户误以为这就是自己的服务地址。
+      const hasSavedConnection = isConfigured(settings);
       form.setFieldsValue({
-        endpoint: settings.endpoint || AI_CONFIG.DEFAULT_ENDPOINT,
+        endpoint: hasSavedConnection ? settings.endpoint : '',
         apiKey: settings.apiKey || '',
         model: settings.model || AI_CONFIG.DEFAULT_MODEL,
         apiMode: settings.apiMode || 'responses',
       });
-      if (!isConfigured(settings)) {
+      if (!hasSavedConnection) {
         setupForm.setFieldsValue({
-          endpoint: AI_CONFIG.DEFAULT_ENDPOINT,
+          endpoint: '',
           apiKey: '',
-          model: AI_CONFIG.DEFAULT_MODEL,
+          model: settings.model || AI_CONFIG.DEFAULT_MODEL,
           apiMode: settings.apiMode || 'responses',
         });
         setShowSetup(true);
@@ -70,8 +72,10 @@ export function LLMSettingsPage() {
   const doSave = async (values: Record<string, any>, fromSetup = false) => {
     setSaving(true);
     try {
+      const endpointValue = String(values.endpoint || '').trim();
+      if (!endpointValue) throw new Error('请填写 API Endpoint');
       await saveAISettings({
-        endpoint: String(values.endpoint || AI_CONFIG.DEFAULT_ENDPOINT).trim(),
+        endpoint: endpointValue,
         apiKey: String(values.apiKey || '').trim(),
         model: String(values.model || AI_CONFIG.DEFAULT_MODEL).trim(),
         apiMode: values.apiMode || 'responses',
@@ -79,7 +83,7 @@ export function LLMSettingsPage() {
       if (fromSetup) {
         setShowSetup(false);
         form.setFieldsValue({
-          endpoint: values.endpoint || AI_CONFIG.DEFAULT_ENDPOINT,
+          endpoint: endpointValue,
           apiKey: values.apiKey,
           model: values.model || AI_CONFIG.DEFAULT_MODEL,
           apiMode: values.apiMode || 'responses',
@@ -95,8 +99,12 @@ export function LLMSettingsPage() {
 
   /* 主表单保存 */
   const handleSave = async () => {
-    const values = form.getFieldsValue();
-    await doSave(values);
+    try {
+      const values = await form.validateFields();
+      await doSave(values);
+    } catch {
+      /* 表单校验不通过时由 Form 展示字段错误 */
+    }
   };
 
   /* 引导浮层保存 */
@@ -107,6 +115,12 @@ export function LLMSettingsPage() {
     } catch {
       /* 表单校验不通过，忽略 */
     }
+  };
+
+  /* 重置只清空输入，不把内置网关地址填回去 */
+  const handleReset = () => {
+    form.resetFields();
+    form.setFieldsValue({ endpoint: '' });
   };
 
   if (!loaded) return null;
@@ -124,7 +138,7 @@ export function LLMSettingsPage() {
         description="配置与 OMP anyrouter 一致的 OpenAI Responses API 连接，也可以填写其他兼容服务。"
         extra={
           <Space>
-            <Button onClick={() => form.resetFields()}>重置表单</Button>
+            <Button onClick={handleReset}>重置表单</Button>
             <Button type="primary" loading={saving} onClick={() => void handleSave()}>
               保存设置
             </Button>
@@ -159,12 +173,12 @@ export function LLMSettingsPage() {
             <Form.Item
               label="Endpoint URL"
               name="endpoint"
-              rules={[endpointRule]}
+              rules={[{ required: true, message: '请填写 API Endpoint' }, endpointRule]}
               extra={endpointWarning
                 ? <Text type="warning">{endpointWarning}</Text>
                 : '填写完整 Responses API 地址；默认只允许 https'}
             >
-              <Input placeholder={AI_CONFIG.DEFAULT_ENDPOINT} />
+              <Input placeholder={AI_CONFIG.ENDPOINT_PLACEHOLDER} />
             </Form.Item>
             <Form.Item
               label="API Key"
@@ -229,7 +243,7 @@ export function LLMSettingsPage() {
             rules={[{ required: true, message: '请填写 API Endpoint' }, endpointRule]}
             extra="填写完整 API 地址；默认只允许 https（本机调试可用 localhost）"
           >
-            <Input placeholder={AI_CONFIG.DEFAULT_ENDPOINT} />
+            <Input placeholder={AI_CONFIG.ENDPOINT_PLACEHOLDER} />
           </Form.Item>
           <Form.Item
             label={<span style={{ fontWeight: 500 }}>API 密钥</span>}

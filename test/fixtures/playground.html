@@ -69,6 +69,10 @@
     <p id="amount">Total: $12.34</p>
     <button id="confirm-payment" type="button">Confirm and pay</button>
     <p id="pay-result" role="status">No payment action</p>
+  </section>
+  <!-- 支付判据取按钮父元素的周边文本（mcp-bridge.ts）：金额和通用确认词必须分处两个 section，
+       否则无金额的普通 Confirm 也会被当成 payment，这里就无法验证「普通确认照常执行」。 -->
+  <section aria-label="generic confirmation">
     <button id="confirm-generic" type="button">Confirm</button>
     <p id="confirm-result" role="status">Not confirmed</p>
   </section>

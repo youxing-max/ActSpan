@@ -8,9 +8,9 @@ Actspan 兼容提供 OpenAI Responses API 格式的 LLM 服务。配置入口在
 
 | 配置项 | 说明 | 默认值 |
 |--------|------|--------|
-| API Endpoint | 完整的 LLM API 请求地址 | `https://ai-api-gateway.app.baizhi.cloud/api/openai/v1/responses` |
-| API Key | 你的 API 密钥 | - |
-| Model | 使用的模型名称 | `gpt-6.1-sol` |
+| API Endpoint | 完整的 LLM API 请求地址 | 未配置，需用户填写 |
+| API Key | 你的 API 密钥 | 未配置，需用户填写 |
+| Model | 使用的模型名称 | 未配置，需用户填写 |
 
 配置存储在 `chrome.storage.local` 中，key 为 `actspan_ai_settings`。
 
@@ -20,10 +20,9 @@ Actspan 理论上支持任何提供 OpenAI Responses API 兼容接口的服务�
 
 | 服务 | Endpoint 示例 | 说明 |
 |------|---------------|------|
-| OMP anyrouter | `https://ai-api-gateway.app.baizhi.cloud/api/openai/v1/responses` | 当前 OMP Codex 风格 Responses 服务，默认模型 `gpt-6.1-sol` |
 | OpenAI | `https://api.openai.com/v1/responses` | 官方服务 |
 | Azure OpenAI | `https://{resource}.openai.azure.com/openai/deployments/{model}/v1/responses` | Azure 托管 |
-| 国内中转 | 服务商提供的完整 endpoint | 兼容 OpenAI Responses API 的中转服务 |
+| 第三方中转 | 服务商提供的完整 endpoint | 兼容 OpenAI Responses API 的中转服务 |
 | Ollama | `http://localhost:11434/v1/responses` | 本地部署 |
 | LM Studio | `http://localhost:1234/v1/responses` | 本地部署 |
 

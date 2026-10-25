@@ -142,3 +142,72 @@ test('captures an explicit background tab without activating it', async () => {
   assert.equal(result.success, true);
   assert.deepEqual(updates, [{ id: 1, active: true }]);
 });
+
+test('element screenshot forwards the snapshot id that validates its handle', async () => {
+  const messages = [];
+  globalThis.chrome = {
+    tabs: {
+      query: async () => [{ id: 1, windowId: 7, active: true, status: 'complete' }],
+      get: async () => ({ id: 1, windowId: 7, active: true, status: 'complete' }),
+      sendMessage: (_id, message, callback) => {
+        messages.push(message);
+        callback?.({ success: true, rect: { x: 1, y: 2, width: 3, height: 4 } });
+      },
+    },
+    storage: { local: { get: (_key, callback) => callback({}), set: (_items, callback) => callback?.() } },
+    debugger: {
+      onEvent: { addListener() {} },
+      attach: async () => {},
+      detach: async () => {},
+      sendCommand: async (_target, method) => {
+        if (method === 'Page.getLayoutMetrics') return { visualViewport: { pageX: 0, pageY: 0 } };
+        return method === 'Page.captureScreenshot' ? { data: 'c2NyZWVuc2hvdA==' } : {};
+      },
+    },
+    runtime: { lastError: undefined },
+  };
+
+  const result = await screenshotFunction.execute({ element_id: 'ec-1', snapshot_id: 'snap-1', wait_ms: 3000 });
+
+  assert.equal(result.success, true);
+  assert.deepEqual(messages.find(message => message.type === '__get_element_rect').data, {
+    element_id: 'ec-1',
+    snapshot_id: 'snap-1',
+  });
+});
+
+test('scrolled element screenshot converts viewport rect to document clip', async () => {
+  const commands = [];
+  globalThis.chrome = {
+    tabs: {
+      query: async () => [{ id: 1, windowId: 7, active: true, status: 'complete' }],
+      get: async () => ({ id: 1, windowId: 7, active: true, status: 'complete' }),
+      sendMessage: (_id, _message, callback) => {
+        callback?.({ success: true, rect: { x: 10, y: -20, width: 30, height: 40 } });
+      },
+    },
+    storage: { local: { get: (_key, callback) => callback({}), set: (_items, callback) => callback?.() } },
+    debugger: {
+      onEvent: { addListener() {} },
+      attach: async () => {},
+      detach: async () => {},
+      sendCommand: async (_target, method, params) => {
+        commands.push({ method, params });
+        if (method === 'Page.getLayoutMetrics') return { visualViewport: { pageX: 5, pageY: 240 } };
+        return method === 'Page.captureScreenshot' ? { data: 'c2NyZWVuc2hvdA==' } : {};
+      },
+    },
+    runtime: { lastError: undefined },
+  };
+
+  const result = await screenshotFunction.execute({ element_id: 'ec-1', snapshot_id: 'snap-1', wait_ms: 3000 });
+
+  assert.equal(result.success, true);
+  assert.deepEqual(commands.find(command => command.method === 'Page.captureScreenshot').params.clip, {
+    x: 15,
+    y: 220,
+    width: 30,
+    height: 40,
+    scale: 1,
+  });
+});

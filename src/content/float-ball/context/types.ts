@@ -10,6 +10,7 @@ import type { Side, RecentCompletedTaskItem } from '../constants';
 export interface RoundItem {
   query: string;
   aiText: string;
+  screenshotArtifacts?: Array<{ id: string; dataUrl: string; format: 'png' | 'jpeg'; sizeKB: number }>;
   callStack: Array<{ funcName: string; icon: string; text: string; userSummary?: string }>;
   status: 'done' | 'error';
   errorMsg?: string;
@@ -20,11 +21,16 @@ export interface RoundItem {
 
 export interface TaskItem {
   id: string;                  // sessionId（由 background 生成）
+  /** 是否还在等待 background 返回真实 sessionId（本地临时 ID） */
+  pendingSession?: boolean;
+  /** 发起会话的标签页 ID，用于过滤其他标签页的广播事件 */
+  originTabId?: number;
   activeRunId?: string | null;
   query: string;
   title: string;
   status: 'running' | 'done' | 'error';
   resultHtml: string;
+  screenshotArtifacts?: Array<{ id: string; dataUrl: string; format: 'png' | 'jpeg'; sizeKB: number }>;
   callStack: Array<{ funcName: string; icon: string; text: string; userSummary?: string }>;
   errorMsg: string;
   lastAIText: string;

@@ -14,8 +14,10 @@ interface InputBarProps {
 }
 
 /** 创建新任务的默认状态 */
-const createNewTask = (query: string, id?: string): TaskItem => ({
+const createNewTask = (query: string, originTabId?: number, id?: string): TaskItem => ({
   id: id || Date.now().toString(),
+  pendingSession: true,
+  originTabId,
   query,
   title: buildTaskTitle(query),
   status: 'running',
@@ -51,7 +53,7 @@ export const InputBar: React.FC<InputBarProps> = ({ resultRef: _resultRef }) => 
 
   // 提交新任务
   const submitNewTask = useCallback((value: string) => {
-    const tempTask = createNewTask(value);
+    const tempTask = createNewTask(value, state.selfTabId ?? undefined);
     dispatch({ type: 'SET_TASK', payload: tempTask });
     dispatch({ type: 'PUSH_INPUT_HISTORY', payload: value });
 
@@ -61,6 +63,7 @@ export const InputBar: React.FC<InputBarProps> = ({ resultRef: _resultRef }) => 
           type: 'UPDATE_TASK',
           payload: {
             id: response.sessionId,
+            pendingSession: false,
             ...(response.summary ? { title: buildTaskTitle(response.summary) } : {}),
           },
         });
@@ -125,6 +128,29 @@ export const InputBar: React.FC<InputBarProps> = ({ resultRef: _resultRef }) => 
     );
   }, [task, dispatch, state.selfTabId]);
 
+  // 任务运行中追加指令：不结束当前轮次，交给 background 注入到运行中的上下文
+  const injectInstruction = useCallback((value: string) => {
+    if (!task) return;
+    dispatch({ type: 'PUSH_INPUT_HISTORY', payload: value });
+    dispatch({
+      type: 'UPDATE_TASK',
+      payload: { liveStatusText: `已追加指令：${value.length > 24 ? `${value.slice(0, 24)}…` : value}` },
+    });
+
+    Channel.send(
+      '__session_continue',
+      { sessionId: task.id, query: value, tabId: state.selfTabId ?? undefined },
+      (response: any) => {
+        if (response?.accepted === false) {
+          dispatch({
+            type: 'UPDATE_TASK',
+            payload: { liveStatusText: `追加指令失败：${response?.message || '未知原因'}` },
+          });
+        }
+      },
+    );
+  }, [task, dispatch, state.selfTabId]);
+
   // 键盘事件
   const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
     const el = inputRef.current;
@@ -156,9 +182,15 @@ export const InputBar: React.FC<InputBarProps> = ({ resultRef: _resultRef }) => 
     // Enter 提交
     if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
       const value = el.value.trim();
-      if (!value || isRunning) return;
+      if (!value) return;
 
       el.value = '';
+
+      // 运行中允许继续输入：作为补充指令注入当前任务，而不是被禁用
+      if (isRunning) {
+        injectInstruction(value);
+        return;
+      }
 
       if (!task || task.status === 'error') {
         submitNewTask(value);
@@ -166,7 +198,7 @@ export const InputBar: React.FC<InputBarProps> = ({ resultRef: _resultRef }) => 
         continueTask(value);
       }
     }
-  }, [state, task, isRunning, dispatch, submitNewTask, continueTask]);
+  }, [state, task, isRunning, dispatch, submitNewTask, continueTask, injectInstruction]);
 
   // 终止任务
   const handleStop = useCallback((e: React.MouseEvent) => {
@@ -205,7 +237,7 @@ export const InputBar: React.FC<InputBarProps> = ({ resultRef: _resultRef }) => 
   const placeholder = (() => {
     if (isAuditing) return '正在整理录制的工作流...';
     if (!task) return '有什么想让我做的？';
-    if (isRunning) return task.liveStatusText || `${task.title}...`;
+    if (isRunning) return '处理中，可继续输入补充指令…';
     return '继续对话...';
   })();
 
@@ -221,7 +253,7 @@ export const InputBar: React.FC<InputBarProps> = ({ resultRef: _resultRef }) => 
         type="text"
         placeholder={placeholder}
         autoComplete="off"
-        disabled={isRunning || isAuditing}
+        disabled={isAuditing}
         onKeyDown={handleKeyDown}
       />
       <span className="actspan-input-hint" style={{ display: isRunning ? 'none' : '' }}>ESC</span>

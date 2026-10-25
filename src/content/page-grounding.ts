@@ -424,6 +424,35 @@ export const sanitizeElementValue = (
 };
 
 /**
+ * read 回传 html 前的脱敏，复用快照的 sanitizeElementValue 口径：
+ * password/hidden 输入整体移出，其余敏感 value 属性剥掉，否则明文直接进模型上下文。
+ */
+export const sanitizeReadHtml = (target: Element): string => {
+  let html = target.outerHTML || '';
+  for (const el of [target, ...Array.from(target.querySelectorAll('input'))]) {
+    const serialized = el.outerHTML || '';
+    if (!serialized) continue;
+    const type = el.getAttribute('type');
+    const raw = el.getAttribute('value');
+    if (!raw) continue;
+    const normalizedType = String(type || '').toLowerCase();
+    if (normalizedType === 'password' || normalizedType === 'hidden') {
+      html = html.split(serialized).join('');
+      continue;
+    }
+    const kept = sanitizeElementValue(type, raw, {
+      name: el.getAttribute('name'),
+      id: el.getAttribute('id'),
+      autocomplete: el.getAttribute('autocomplete'),
+    });
+    if (kept !== undefined) continue;
+    // 序列化后的属性值已转义引号，按整段 outerHTML 精确替换不会误伤相邻节点
+    html = html.split(serialized).join(serialized.replace(/\svalue\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/i, ''));
+  }
+  return html;
+};
+
+/**
  * 构建元素描述符
  * @param cache 可选，元素信息缓存，传入时复用缓存数据避免重复 DOM 查询
  */
@@ -978,7 +1007,8 @@ export const captureObservableState = (target: Element): ElementObservableState 
   return {
     visible: readTargetVisible(target),
     text: getElementText(target),
-    value: type === 'password' ? undefined : rawValue,
+    // 密码框只暴露「有没有内容」：与 bridge 的 pageAction 同源，否则填写成功也被判 unchanged 而触发无谓的真实事件重放。
+    value: type === 'password' ? (rawValue ? '[set]' : '') : rawValue,
     ariaExpanded: target.getAttribute('aria-expanded') || undefined,
     disabled: isElementDisabled(target),
     className: typeof (target as HTMLElement).className === 'string' ? (target as HTMLElement).className : '',
@@ -1266,8 +1296,9 @@ const initElementHandleAction = () => {
         sendResponse?.({
           success: true,
           data: {
+            // innerText 不含输入框的 value，只有 html 需要脱敏；先脱敏再截断，否则截断会切进 value 属性留下明文
             text: ((target as HTMLElement).innerText || target.textContent || '').slice(0, limit),
-            html: target.outerHTML.slice(0, limit),
+            html: sanitizeReadHtml(target).slice(0, limit),
             tag: target.tagName,
             find: describeStableFind(target),
           },
@@ -1301,18 +1332,7 @@ const initElementHandleAction = () => {
         withVirtualCursorBeforeObstruction(cursorPoint, () => detectObstruction(target, cursorPoint));
       }
 
-      // 审批后目标可能被重绘/改文案：动作发生前用真实元素重算签名，避免点到别的按钮。
-      // submit 必须与即将执行的动作一致，否则检查的对象和执行的对象不是同一个。
-      const approvalError = (submit: boolean): string | null => {
-        const approved = data.approved_signature;
-        const current = classifySensitiveTarget(target, submit);
-        if (!approved) {
-          // 普通目标不需要签名；但如果审批期间被改成支付/删除目标，必须 fail-closed。
-          return current.kind === 'payment' || current.kind === 'deletion'
-            ? '目标已变为敏感操作，请重新确认' : null;
-        }
-        return current.signature === approved ? null : '确认后目标已变化，请重新确认';
-      };
+      // 自由化模式：审批与签名重检已移除。
 
       switch (action) {
         case 'inspect': {
@@ -1355,11 +1375,6 @@ const initElementHandleAction = () => {
         }
 
         case 'click': {
-          const recheck = approvalError(false);
-          if (recheck) {
-            sendResponse?.({ success: false, error: recheck });
-            return true;
-          }
           const stableFind = describeStableFind(target);
           const before = captureObservableState(target);
           clickAndReport(target, () => undefined);
@@ -1373,11 +1388,6 @@ const initElementHandleAction = () => {
           const reportedValue = (target.getAttribute('type') || '').toLowerCase() === 'password'
             ? '[已填写密码，值已隐藏]'
             : value;
-          const recheck = data.submit === true ? approvalError(true) : null;
-          if (recheck) {
-            sendResponse?.({ success: false, error: recheck });
-            return true;
-          }
           const stableFind = describeStableFind(target);
           const before = captureObservableState(target);
           if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {

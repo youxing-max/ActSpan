@@ -35,6 +35,35 @@ class Channel {
     private static extensionPorts: Set<chrome.runtime.Port> = new Set();
     // 仅 extension page 用：与 background 的 port 连接
     private static _extensionPort: chrome.runtime.Port | null = null;
+    // MV3 background 被回收时 port 会断开；页面必须自行重连才能继续收到广播
+    private static _extensionReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    private static _extensionReconnectAttempts = 0;
+    private static _extensionExplicitlyDisconnected = false;
+    private static _extensionWasDisconnected = false;
+
+    /** 触发本地订阅者（不经过 background） */
+    private static dispatchLocal(type: string, data?: unknown) {
+        const handlers = this.handlers.get(type);
+        if (!handlers) return;
+        for (const handler of handlers) {
+            try {
+                handler(data);
+            } catch (error) {
+                console.error(`[Channel] 处理本地消息 ${type} 时出错:`, error);
+            }
+        }
+    }
+
+    /** extension page 断线后按 1s、2s、4s… 退避重连，最长 30s */
+    private static scheduleExtensionReconnect() {
+        if (this._extensionExplicitlyDisconnected || this._extensionReconnectTimer) return;
+        const delay = Math.min(1000 * 2 ** this._extensionReconnectAttempts, 30000);
+        this._extensionReconnectAttempts += 1;
+        this._extensionReconnectTimer = setTimeout(() => {
+            this._extensionReconnectTimer = null;
+            this.connectAsExtensionPage();
+        }, delay);
+    }
 
     /** 注册消息处理 */
     static on(type: string, handler: ChannelHandler) {
@@ -106,10 +135,20 @@ class Channel {
             }
 
             // content注册tabId
-            if (__channel_tab_register && sender.tab && sender.tab.id !== undefined) {
-                Channel.tabSet.add(sender.tab.id);
-                console.log(`[Channel] Tab ${sender.tab.id} 已注册`);
-                sendResponse({ success: true });
+            if (__channel_tab_register) {
+                if (sender?.tab && sender.tab.id !== undefined) {
+                    Channel.tabSet.add(sender.tab.id);
+                    console.log(`[Channel] Tab ${sender.tab.id} 已注册`);
+                    sendResponse?.({ success: true });
+                    return;
+                }
+                // background 重启后内存中的 tabSet 会丢失。background 向所有标签页
+                // 发送探测消息，content script 收到后回传自己的注册信息。
+                try {
+                    chrome.runtime.sendMessage({ __channel_tab_register: true });
+                } catch { /* 扩展正在卸载时忽略 */ }
+                // 通知页面重新拉取会话状态，补上后台休眠期间错过的完成事件
+                Channel.dispatchLocal('__channel_tab_reconnected');
                 return;
             }
 
@@ -143,6 +182,23 @@ class Channel {
         // content侧注册tabId到background
         if (typeof tabId === 'number') {
             chrome.runtime.sendMessage({ __channel_tab_register: true });
+        }
+        // background 侧：Service Worker 重启后 tabSet 为空，主动让存活的 content script 重新注册
+        if (typeof tabId === 'undefined' && chrome.tabs?.query) {
+            void Promise.resolve(chrome.tabs.query({})).then((tabs) => {
+                for (const tab of tabs) {
+                    if (typeof tab.id !== 'number') continue;
+                    // 先乐观登记；没有 content script 的标签页会在回调里因 lastError 被移除
+                    Channel.tabSet.add(tab.id);
+                    try {
+                        chrome.tabs.sendMessage(tab.id, { __channel_tab_register: true }, () => {
+                            if (chrome.runtime.lastError) Channel.tabSet.delete(tab.id!);
+                        });
+                    } catch {
+                        Channel.tabSet.delete(tab.id);
+                    }
+                }
+            }).catch(() => { /* 查询标签页失败不影响消息监听 */ });
         }
         // background 侧：监听 extension page 的 port 连接
         if (typeof tabId === 'undefined' && chrome.runtime.onConnect) {
@@ -207,10 +263,12 @@ class Channel {
      * 调用方需在页面卸载时调用 disconnectExtensionPage() 清理
      */
     static connectAsExtensionPage(): void {
-        if (Channel._extensionPort) return; // 已连接
+        if (Channel._extensionPort) return;
+        Channel._extensionExplicitlyDisconnected = false;
         try {
             const port = chrome.runtime.connect({ name: EXTENSION_PAGE_PORT_NAME });
             Channel._extensionPort = port;
+            Channel._extensionReconnectAttempts = 0;
             // 监听来自 background 的 broadcast 消息，分发到本地 handlers
             port.onMessage.addListener((message) => {
                 const { type, data } = message || {};
@@ -225,17 +283,32 @@ class Channel {
                 }
             });
             port.onDisconnect.addListener(() => {
-                Channel._extensionPort = null;
+                if (Channel._extensionPort === port) Channel._extensionPort = null;
                 console.log('[Channel] Extension page port 已断开');
+                if (Channel._extensionExplicitlyDisconnected) return;
+                Channel._extensionWasDisconnected = true;
+                Channel.scheduleExtensionReconnect();
             });
             console.log('[Channel] Extension page 已连接到 background');
+            if (Channel._extensionWasDisconnected) {
+                Channel._extensionWasDisconnected = false;
+                Channel.dispatchLocal('__channel_extension_reconnected');
+            }
         } catch (error) {
             console.error('[Channel] Extension page 连接失败:', error);
+            Channel._extensionWasDisconnected = true;
+            Channel.scheduleExtensionReconnect();
         }
     }
 
     /** extension page 侧：断开与 background 的 port 连接 */
     static disconnectExtensionPage(): void {
+        Channel._extensionExplicitlyDisconnected = true;
+        Channel._extensionReconnectAttempts = 0;
+        if (Channel._extensionReconnectTimer) {
+            clearTimeout(Channel._extensionReconnectTimer);
+            Channel._extensionReconnectTimer = null;
+        }
         if (Channel._extensionPort) {
             try {
                 Channel._extensionPort.disconnect();

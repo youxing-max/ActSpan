@@ -11,10 +11,24 @@
 
 import { useEffect, useCallback, useRef } from 'react';
 import Channel from '../../../lib/channel';
+import { ArtifactStore } from '../../../lib/artifact-store';
 import { useActspan } from '../context/useActspan';
 import { buildToolIntentText, buildUserFacingActionSummary } from '../text-utils';
-import { reconcileSessionSyncTask } from '../session-sync';
+import { reconcileSessionSyncTask, isSessionVisibleInTab } from '../session-sync';
 import { FUNCTION_ICONS, FUNCTION_LABELS } from '../icons';
+
+/** 流式告警是内部诊断数据，不能把原始 JSON 直接当成进度文案展示。 */
+const toUserFacingStreamWarning = (raw: unknown): string => {
+  const text = String(raw ?? '').trim();
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed?.code === 'E_SSE_UNRECOGNIZED') {
+      return '模型流式响应中有少量数据未能解析，已跳过并继续处理。';
+    }
+    if (typeof parsed?.message === 'string' && parsed.message.trim()) return parsed.message.trim();
+  } catch { /* 普通文本告警原样展示 */ }
+  return text;
+};
 
 export const useAIStream = (_resultRef: React.RefObject<HTMLDivElement | null>) => {
   const { state, dispatch } = useActspan();
@@ -27,17 +41,15 @@ export const useAIStream = (_resultRef: React.RefObject<HTMLDivElement | null>) 
     const { taskId, type, content } = data;
     const currentTask = stateRef.current.currentTask;
 
-    // 放宽匹配：只要有活跃任务就接受事件
-    // 原因：submitNewTask 先用临时 ID 创建任务，background 稍后返回真实 sessionId
-    // 流式事件在 sessionId 更新前就可能到达，严格匹配会丢弃这些事件
     if (!currentTask) return;
     if (currentTask.id !== taskId) {
-      // 如果任务正在运行，自动绑定到正确的 sessionId
-      if (currentTask.status === 'running') {
-        dispatch({ type: 'UPDATE_TASK', payload: { id: taskId } });
-      } else {
-        return;
-      }
+      // 只有本地刚提交、尚未拿到真实 sessionId 的临时任务才允许自动绑定；
+      // 且必须来自同一个标签页，避免把其他标签页的运行中会话绑过来。
+      if (!currentTask.pendingSession) return;
+      if (!isSessionVisibleInTab(data.originTabId, currentTask.originTabId ?? stateRef.current.selfTabId)) return;
+      dispatch({ type: 'UPDATE_TASK', payload: { id: taskId, pendingSession: false, originTabId: data.originTabId } });
+    } else if (currentTask.pendingSession) {
+      dispatch({ type: 'UPDATE_TASK', payload: { pendingSession: false } });
     }
 
     switch (type) {
@@ -106,12 +118,33 @@ export const useAIStream = (_resultRef: React.RefObject<HTMLDivElement | null>) 
         } catch { /* 忽略 */ }
         break;
 
-      case 'function_result':
+      case 'function_result': {
         dispatch({
           type: 'UPDATE_TASK',
           payload: { liveStatusText: '处理中...' },
         });
+        let artifactId = '';
+        try {
+          artifactId = JSON.parse(content || '{}')?.artifactId || '';
+        } catch { /* 忽略 */ }
+        if (artifactId) {
+          ArtifactStore.getScreenshot(artifactId).then((record) => {
+            if (!record) return;
+            const task = stateRef.current.currentTask;
+            if (!task || task.screenshotArtifacts?.some((s) => s.id === record.id)) return;
+            dispatch({
+              type: 'UPDATE_TASK',
+              payload: {
+                screenshotArtifacts: [
+                  ...(task.screenshotArtifacts || []),
+                  { id: record.id, dataUrl: record.dataUrl, format: record.format, sizeKB: record.sizeKB },
+                ],
+              },
+            });
+          }).catch(() => { /* 图片读取失败不影响任务 */ });
+        }
         break;
+      }
 
       case 'text':
         dispatch({
@@ -200,12 +233,22 @@ export const useAIStream = (_resultRef: React.RefObject<HTMLDivElement | null>) 
         break;
 
       case 'planning':
-      case 'warning':
         dispatch({
           type: 'UPDATE_TASK',
           payload: { liveStatusText: content },
         });
         break;
+
+      case 'warning': {
+        const warningText = toUserFacingStreamWarning(content);
+        if (warningText) {
+          dispatch({
+            type: 'UPDATE_TASK',
+            payload: { liveStatusText: warningText },
+          });
+        }
+        break;
+      }
 
       case 'task_lifecycle':
         // 任务生命周期事件
@@ -243,10 +286,32 @@ export const useAIStream = (_resultRef: React.RefObject<HTMLDivElement | null>) 
     };
   }, [handleStream]);
 
-  // 监听会话同步
+  // content script 没有 chrome.tabs 权限，向 background 询问自身标签页 ID，
+  // 用于过滤其他标签页广播过来的会话事件。
   useEffect(() => {
-    const handleSessionSync = (data: any) => {
+    if (stateRef.current.selfTabId !== null) return;
+    Channel.send('__get_self_tab_id', {}, (response: { tabId?: number } | undefined) => {
+      if (typeof response?.tabId === 'number') {
+        dispatch({ type: 'SET_SELF_TAB_ID', payload: response.tabId });
+      }
+    });
+  }, [dispatch]);
+
+  // 监听会话同步
+  const applySessionSync = useCallback((data: any) => {
       if (!data || typeof data !== 'object' || typeof data.sessionId !== 'string') return;
+
+      const currentTask = stateRef.current.currentTask;
+      if (currentTask) {
+        if (currentTask.id !== data.sessionId) {
+          // 非本地临时任务不允许被其他会话的同步事件替换
+          if (!currentTask.pendingSession) return;
+          if (!isSessionVisibleInTab(data.originTabId, currentTask.originTabId ?? stateRef.current.selfTabId)) return;
+        }
+      } else if (!isSessionVisibleInTab(data.originTabId, stateRef.current.selfTabId)) {
+        // 没有本地任务时，只接受当前标签页的会话
+        return;
+      }
 
       if (data.originTabId !== undefined) {
         dispatch({ type: 'SET_SESSION_ORIGIN_TAB', payload: data.originTabId });
@@ -260,13 +325,31 @@ export const useAIStream = (_resultRef: React.RefObject<HTMLDivElement | null>) 
       } else if (result.kind === 'clear') {
         dispatch({ type: 'SET_TASK', payload: null });
       }
-    };
-
-    Channel.on('__session_sync', handleSessionSync);
-    return () => {
-      Channel.off('__session_sync', handleSessionSync);
-    };
   }, [dispatch]);
+
+  useEffect(() => {
+    Channel.on('__session_sync', applySessionSync);
+    return () => {
+      Channel.off('__session_sync', applySessionSync);
+    };
+  }, [applySessionSync]);
+
+  // background 重启后重新注册成功时，主动拉一次当前会话，
+  // 避免后台休眠期间错过 turn_completed 后页面一直显示“正在执行”。
+  useEffect(() => {
+    const handleReconnected = () => {
+      Channel.send('__session_get_active', {}, (response: any) => {
+        if (!response?.sessionId) return;
+        const currentTask = stateRef.current.currentTask;
+        if (currentTask && !currentTask.pendingSession && currentTask.id !== response.sessionId) return;
+        applySessionSync(response);
+      });
+    };
+    Channel.on('__channel_tab_reconnected', handleReconnected);
+    return () => {
+      Channel.off('__channel_tab_reconnected', handleReconnected);
+    };
+  }, [applySessionSync]);
   // 侧栏作为 extension page 没有 sender.tab，恢复会话时需要自行消费回放事件。
   useEffect(() => {
     const handleSessionReplay = (data: any) => {

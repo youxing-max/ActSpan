@@ -4,7 +4,7 @@ import { build } from 'esbuild';
 
 const bundle = await build({
   stdin: {
-    contents: `export { reconcileSessionSyncTask } from './src/content/float-ball/session-sync.ts';`,
+    contents: `export { reconcileSessionSyncTask, isSessionVisibleInTab } from './src/content/float-ball/session-sync.ts';`,
     resolveDir: process.cwd(),
     loader: 'ts',
   },
@@ -13,7 +13,7 @@ const bundle = await build({
   format: 'esm',
   platform: 'node',
 });
-const { reconcileSessionSyncTask } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].contents).toString('base64')}`);
+const { reconcileSessionSyncTask, isSessionVisibleInTab } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].contents).toString('base64')}`);
 
 const task = (overrides = {}) => ({
   id: 'session-1',
@@ -76,4 +76,15 @@ test('terminal sync binds a temporary running task to the real session id', () =
 test('session clear only removes the matching task', () => {
   assert.equal(reconcileSessionSyncTask(task(), { sessionId: 'other', status: 'cleared' }, 999).kind, 'ignore');
   assert.equal(reconcileSessionSyncTask(task(), { sessionId: 'session-1', status: 'cleared' }, 999).kind, 'clear');
+});
+
+test('isSessionVisibleInTab 只接受当前标签页的会话事件', () => {
+  assert.equal(isSessionVisibleInTab(12, 12), true);
+  assert.equal(isSessionVisibleInTab(12, 34), false);
+});
+
+test('isSessionVisibleInTab 对缺少来源或自身标签页的旧事件保持兼容', () => {
+  assert.equal(isSessionVisibleInTab(undefined, 12), true);
+  assert.equal(isSessionVisibleInTab(12, null), false);
+  assert.equal(isSessionVisibleInTab(undefined, null), true);
 });

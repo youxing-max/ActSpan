@@ -148,7 +148,7 @@ test('successful three-step act returns persisted draft identity to caller', asy
   let handler;
   registerActTool({
     registerTool: (name, _definition, fn) => { if (name === 'actspan_act') handler = fn; },
-    run: fn => fn,
+    run: fn => fn, runStructured: fn => fn,
     tabIdParam: {}, taskParams: {},
     callBridge: async (method, params) => {
       if (method === 'act.draft') return recordSuccessfulActDraft(params);
@@ -169,7 +169,7 @@ test('selector-only steps still execute but are never promoted into a draft', as
   let handler;
   registerActTool({
     registerTool: (name, _definition, fn) => { if (name === 'actspan_act') handler = fn; },
-    run: fn => fn, tabIdParam: {}, taskParams: {},
+    run: fn => fn, runStructured: fn => fn, tabIdParam: {}, taskParams: {},
     callBridge: async (method, params) => {
       calls.push({ method, params });
       if (method === 'act.draft') return recordSuccessfulActDraft(params);
@@ -194,7 +194,7 @@ test('successful ref-only act uses observed names instead of persisting volatile
   let handler;
   registerActTool({
     registerTool: (name, _definition, fn) => { if (name === 'actspan_act') handler = fn; },
-    run: fn => fn, tabIdParam: {}, taskParams: {},
+    run: fn => fn, runStructured: fn => fn, tabIdParam: {}, taskParams: {},
     callBridge: async (method, params) => {
       if (method === 'act.draft') return recordSuccessfulActDraft(params);
       if (method === 'page.read') return { content: 'done', url: 'https://shop.example.com/' };

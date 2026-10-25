@@ -34,7 +34,7 @@ import {
     persistRuntimeSessions,
     RuntimeResourceManager,
 } from './session-manager';
-import { removeSessionHistory } from './session-history';
+import { persistSessionHistory } from './session-history';
 import type {
     SessionOp,
     SessionCreateOp,
@@ -392,6 +392,7 @@ async function handleSessionClearOp(op: SessionClearOp) {
         activeRunId: null,
         status: 'cleared',
         summary: '',
+        originTabId: session?.originTabId,
         agentState: {
             phase: 'idle',
             round: 0,
@@ -407,9 +408,13 @@ async function handleSessionClearOp(op: SessionClearOp) {
         opQueue: buildSessionOpQueueSnapshot(now),
     });
     sessionTaskKinds.delete(op.sessionId);
-    // “清除”必须真正删除内存会话与历史，否则 persistRuntimeSessions 会把它原样写回
+    // “新对话/清除”只是结束当前会话并回到空聊天，历史记录必须保留；
+    // 历史页的“清空全部”才是显式删除入口。
+    if (session) {
+        persistSessionHistory(session);
+    }
+    // persistRuntimeSessions 会把内存会话写回，因此仍需从运行态中移除
     sessions.delete(op.sessionId);
-    removeSessionHistory(op.sessionId);
     resetSensitiveAccessTrust(op.sessionId);
     persistRuntimeSessions();
 }
@@ -658,6 +663,15 @@ Channel.on('__session_get_active', (_data, sender, sendResponse) => {
         sendResponse,
     };
     void submitSessionOp(op);
+    return true;
+});
+
+/**
+ * content script 无法直接读取自己的 tabId，启动时向 background 询问。
+ * 会话事件按 tabId 过滤，避免多个标签页之间串台。
+ */
+Channel.on('__get_self_tab_id', (_data, sender, sendResponse) => {
+    sendResponse?.({ tabId: sender?.tab?.id ?? null });
     return true;
 });
 

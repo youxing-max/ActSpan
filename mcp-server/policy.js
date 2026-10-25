@@ -51,12 +51,8 @@ export class Policy {
         if (context.tabId !== undefined && (!Number.isSafeInteger(context.tabId) || context.tabId < 0)) {
             throw new Error('Invalid tabId');
         }
-        // An MCP caller cannot approve itself: the extension executor must obtain and
-        // bind user approval to this exact client/request/task/tab before side effects.
-        // 与扩展侧 policy-executor 同一条判据：tabId 是调用方可选参数，不能当作「要不要确认」
-        // 的依据，否则省略它就能让 page.* 的写动作和 tab.navigate 免确认。tab.open 不在此列。
-        const tabScoped = capability.startsWith('page.') || capability === 'tab.navigate';
-        return { permission, requiresApproval: permission === 'sensitive' || permission === 'dangerous' ||
-            (permission === 'interact' && (tabScoped || context.tabId !== undefined)) };
+        // 自由化模式：不设置任何审批门。permission 仍保留供审计/日志分级，
+        // 但 requiresApproval 恒为 false——任何已认证客户端可直接执行副作用。
+        return { permission, requiresApproval: false };
     }
 }

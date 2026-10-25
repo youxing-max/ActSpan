@@ -282,6 +282,30 @@ test('chatComplete keeps pure-text part arrays as plain string content', async (
   ]);
 });
 
+test('chatStream treats standard Responses lifecycle events as recognized', async () => {
+  installChrome(responsesSettings);
+  installFetch(() => sseResponse([
+    { type: 'response.created' },
+    { type: 'response.in_progress' },
+    { type: 'response.output_item.added', item: { type: 'message', id: 'msg_1', role: 'assistant', content: [] } },
+    { type: 'response.content_part.added' },
+    { type: 'response.output_text.delta', delta: 'OK' },
+    { type: 'response.output_text.done' },
+    { type: 'response.content_part.done' },
+    {
+      type: 'response.output_item.done',
+      item: { type: 'message', id: 'msg_1', role: 'assistant', content: [{ type: 'output_text', text: 'OK' }] },
+    },
+    { type: 'response.completed' },
+  ]));
+
+  const chunks = await collect(chatStream([{ role: 'user', content: 'hi' }]));
+
+  assert.equal(chunks.map((chunk) => chunk.delta || '').join(''), 'OK');
+  assert.equal(chunks.at(-1).done, true);
+  assert.equal(chunks.at(-1).unrecognizedEventCount, 0);
+});
+
 test('chatStream accepts data: without a space and skips SSE comment lines', async () => {
   installChrome(chatSettings);
   globalThis.fetch = async () => new Response([
