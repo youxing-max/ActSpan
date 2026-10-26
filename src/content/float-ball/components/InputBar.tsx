@@ -222,6 +222,9 @@ export const InputBar: React.FC<InputBarProps> = ({ resultRef: _resultRef }) => 
     if (!task || task.status !== 'running') return;
 
     const sessionId = task.id;
+    // 记下被终止这一轮的开始时间：同一会话里用户可能马上开始新一轮，
+    // 兜底定时器只应该作用于「被终止的这一轮」。
+    const stoppedRunStartedAt = task.startedAt;
     dispatch({
       type: 'UPDATE_TASK',
       payload: { liveStatusText: '正在终止任务…' },
@@ -235,6 +238,8 @@ export const InputBar: React.FC<InputBarProps> = ({ resultRef: _resultRef }) => 
       stopFallbackRef.current = null;
       const current = taskRef.current;
       if (!current || current.id !== sessionId || current.status !== 'running') return;
+      // 用户已经开始新一轮（startedAt 变了），不能把新一轮误判成「已停止」
+      if (current.startedAt !== stoppedRunStartedAt) return;
       dispatch({
         type: 'UPDATE_TASK',
         payload: {
