@@ -37,9 +37,19 @@ const createNewTask = (query: string, originTabId?: number, id?: string): TaskIt
 export const InputBar: React.FC<InputBarProps> = ({ resultRef: _resultRef }) => {
   const { state, dispatch } = useActspan();
   const inputRef = useRef<HTMLInputElement>(null);
+  const stopFallbackRef = useRef<number | null>(null);
   const task = state.currentTask;
   const isRunning = task?.status === 'running';
   const isAuditing = state.isRecorderAuditing;
+  // 兜底定时器回调晚于渲染执行，需要读取最新的任务状态，避免闭包拿到旧值
+  const taskRef = useRef<TaskItem | null>(task);
+  useEffect(() => {
+    taskRef.current = task;
+  }, [task]);
+
+  useEffect(() => () => {
+    if (stopFallbackRef.current !== null) window.clearTimeout(stopFallbackRef.current);
+  }, []);
 
   // 面板打开时自动聚焦
   useEffect(() => {
@@ -192,21 +202,54 @@ export const InputBar: React.FC<InputBarProps> = ({ resultRef: _resultRef }) => 
         return;
       }
 
-      if (!task || task.status === 'error') {
-        submitNewTask(value);
-      } else {
+      // 用户主动停止的轮次仍属于同一段对话：继续在原有上下文里对话，
+      // 而不是另起新会话，否则刚保留的记录又会被新会话覆盖。
+      const continuesExistingSession = !!task
+        && (task.status !== 'error' || task.failureCode === 'E_CANCELLED');
+      if (continuesExistingSession) {
         continueTask(value);
+      } else {
+        submitNewTask(value);
       }
     }
   }, [state, task, isRunning, dispatch, submitNewTask, continueTask, injectInstruction]);
 
-  // 终止任务
+  // 终止任务：只结束当前轮次，保留面板上的对话记录（历史轮次 + 本轮进展）。
+  // 这里不能清空 currentTask —— 那会让用户点“停止”后整段对话凭空消失，
+  // 与 background 把 E_CANCELLED 视为可恢复失败的设计也相悖。
   const handleStop = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
-    if (task?.status === 'running') {
-      Channel.send('__ai_cancel', { sessionId: task.id });
-    }
-    dispatch({ type: 'SET_TASK', payload: null });
+    if (!task || task.status !== 'running') return;
+
+    const sessionId = task.id;
+    // 记下被终止这一轮的开始时间：同一会话里用户可能马上开始新一轮，
+    // 兜底定时器只应该作用于「被终止的这一轮」。
+    const stoppedRunStartedAt = task.startedAt;
+    dispatch({
+      type: 'UPDATE_TASK',
+      payload: { liveStatusText: '正在终止任务…' },
+    });
+    Channel.send('__ai_cancel', { sessionId });
+
+    // 兜底：Service Worker 被回收等极端情况下可能收不到 turn_aborted，
+    // 避免界面一直停在“运行中”。
+    if (stopFallbackRef.current !== null) window.clearTimeout(stopFallbackRef.current);
+    stopFallbackRef.current = window.setTimeout(() => {
+      stopFallbackRef.current = null;
+      const current = taskRef.current;
+      if (!current || current.id !== sessionId || current.status !== 'running') return;
+      // 用户已经开始新一轮（startedAt 变了），不能把新一轮误判成「已停止」
+      if (current.startedAt !== stoppedRunStartedAt) return;
+      dispatch({
+        type: 'UPDATE_TASK',
+        payload: {
+          status: 'error',
+          failureCode: 'E_CANCELLED',
+          errorMsg: '任务已停止',
+          endedAt: Date.now(),
+        },
+      });
+    }, 5000);
   }, [task, dispatch]);
 
   // 新对话
