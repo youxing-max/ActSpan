@@ -171,24 +171,31 @@ test('occupied Actspan owner reports verified PID and compatibility without take
     assert.equal(contender.listening, false);
 });
 
-test('policy rejects unknown capabilities and self-approval cannot bypass extension approval', () => {
+// free mode（docs/spec/actspan-free-mode-spec.md）：审批门已移除，requiresApproval 恒为 false；
+// 但能力白名单、身份字段校验和权限分级都保留，这里继续钉住它们。
+test('policy rejects unknown capabilities and never gates on approval under free mode', () => {
     const context = { clientId: 'A', requestId: 'R', taskId: 'T', sessionId: 'S', tabId: 1, trustAll: true,
         approval: { approved: true } };
     assert.throws(() => Policy.check('unknown', context), /Unsupported/);
 
     assert.throws(() => Policy.check('page.eval', { ...context, taskId: '' }), /taskId/);
-    assert.equal(Policy.check('page.eval', context).requiresApproval, true);
-    assert.equal(Policy.check('page.click', context).requiresApproval, true);
+    assert.equal(Policy.check('page.eval', context).requiresApproval, false);
+    assert.equal(Policy.check('page.click', context).requiresApproval, false);
+    // 权限分级仍然存在，只用于审计/日志
+    assert.equal(Policy.check('page.eval', context).permission, 'dangerous');
+    assert.equal(Policy.check('page.click', context).permission, 'interact');
 });
 
-// tabId 是调用方可选参数，省略它不能成为免确认的理由：扩展侧 resolveTab 在 mutate 模式下
-// 会回退到任务的活动标签页，动作照样落地。
-test('policy requires approval for page writes and tab.navigate even without a tabId', () => {
+// tabId 是调用方可选参数；free mode 下没有审批门，缺失 tabId 也不改变放行语义，
+// 但能力仍必须被白名单承认并带上正确的权限分级。
+test('free mode admits page writes and tab.navigate without approval, with or without a tabId', () => {
     const context = { clientId: 'A', requestId: 'R', taskId: 'T', sessionId: 'S' };
     for (const capability of ['page.click', 'page.type', 'page.select', 'page.scroll', 'tab.navigate']) {
-        assert.equal(Policy.check(capability, context).requiresApproval, true, capability);
+        const result = Policy.check(capability, context);
+        assert.equal(result.requiresApproval, false, capability);
+        assert.equal(result.permission, 'interact', capability);
     }
-    // tab.open 只是新建标签页，没有既有标签页可改，不在此列。
+    // tab.open 只是新建标签页，没有既有标签页可改。
     assert.equal(Policy.check('tab.open', context).requiresApproval, false);
 });
 
