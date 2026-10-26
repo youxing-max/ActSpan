@@ -81,6 +81,10 @@ export interface HandleChatOptions {
   resumeTodoSnapshot?: TodoSnapshot;
   /** Identity bound to tool effects for this Loop task. */
   toolContext?: Omit<ToolExecutionContext, 'tabId' | 'signal' | 'isolatedDebug' | 'debugTabIds'>;
+  /** 本轮随消息附带的图片（data URL），以多模态形式加入用户消息 */
+  queryImages?: string[];
+  /** 用户开启「联网搜索」：要求先检索再作答 */
+  webSearch?: boolean;
 }
 
 /** 阶段控制信号（phaseOrchestrator ↔ agenticLoop 通信） */

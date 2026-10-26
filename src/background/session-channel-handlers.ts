@@ -33,6 +33,7 @@ import {
     dispatchSessionOp,
     persistRuntimeSessions,
     RuntimeResourceManager,
+    restoreSessionFromHistory,
 } from './session-manager';
 import { persistSessionHistory } from './session-history';
 import type {
@@ -648,6 +649,47 @@ Channel.on('__session_resume', (data, sender, sendResponse) => {
         sendResponse,
     };
     void submitSessionOp(op);
+    return true;
+});
+
+/**
+ * 从历史记录恢复会话
+ * 侧边栏「历史记录」面板点击某条记录时调用，恢复后该会话可继续对话
+ */
+Channel.on('__session_restore', (data, _sender, sendResponse) => {
+    const sessionId = typeof data?.sessionId === 'string' ? data.sessionId.trim() : '';
+    if (!sessionId) {
+        sendResponse?.({
+            success: false,
+            code: 'E_PARAM_RESOLVE',
+            message: '缺少 sessionId',
+        });
+        return true;
+    }
+
+    void (async () => {
+        try {
+            const session = await restoreSessionFromHistory(sessionId);
+            if (!session) {
+                sendResponse?.({
+                    success: false,
+                    code: 'E_SESSION_RUNTIME',
+                    message: `找不到历史会话：${sessionId}`,
+                });
+                return;
+            }
+            const payload = buildSessionSyncPayload(session);
+            Channel.broadcast('__session_sync', payload);
+            sendResponse?.({ success: true, ...payload });
+        } catch (error) {
+            sendResponse?.({
+                success: false,
+                code: 'E_SESSION_RUNTIME',
+                message: error instanceof Error ? error.message : '恢复会话失败',
+            });
+        }
+    })();
+
     return true;
 });
 

@@ -84,7 +84,7 @@ import { persistRuntimeSessions, persistRuntimeSessionsImmediate } from './sessi
 import { acquireServiceWorkerKeepAlive } from './service-worker-keepalive';
 
 // 历史
-import { persistSessionHistory } from './session-history';
+import { persistSessionHistory, readSessionHistoryRecords } from './session-history';
 
 // 回放
 import { buildSessionReplayPayload, buildSessionSyncPayload } from './session-replay';
@@ -328,7 +328,23 @@ export function extractExecuteSessionOptions(raw: Record<string, unknown>): Part
         maxSameToolCalls: normalizeExecuteNumberOption(raw.maxSameToolCalls, 1, 20),
         appendUserQuery: raw.appendUserQuery === false ? false : undefined,
         suppressNextStepHint: raw.suppressNextStepHint === true ? true : undefined,
+        queryImages: normalizeQueryImages(raw.images ?? raw.queryImages),
+        webSearch: raw.webSearch === true ? true : undefined,
     };
+}
+
+/** 附件图片：仅接受 data:image 的 data URL，最多 4 张，单张上限 8MB 的 base64 文本 */
+const MAX_QUERY_IMAGES = 4;
+const MAX_QUERY_IMAGE_DATA_URL_CHARS = 8 * 1024 * 1024;
+
+function normalizeQueryImages(raw: unknown): string[] | undefined {
+    if (!Array.isArray(raw)) return undefined;
+    const images = raw
+        .filter((item): item is string => typeof item === 'string')
+        .map((item) => item.trim())
+        .filter((item) => item.startsWith('data:image/') && item.length <= MAX_QUERY_IMAGE_DATA_URL_CHARS)
+        .slice(0, MAX_QUERY_IMAGES);
+    return images.length > 0 ? images : undefined;
 }
 
 // ============ 命令解析 ============
@@ -752,6 +768,8 @@ type TaskScopedHandleChatOptions = Pick<
     | 'maxSameToolCalls'
     | 'appendUserQuery'
     | 'suppressNextStepHint'
+    | 'queryImages'
+    | 'webSearch'
 >;
 
 async function runSessionTaskChat(
@@ -793,6 +811,8 @@ async function runSessionTaskChat(
             maxSameToolCalls: taskScopedOptions.maxSameToolCalls,
             appendUserQuery: taskScopedOptions.appendUserQuery,
             suppressNextStepHint: taskScopedOptions.suppressNextStepHint,
+            queryImages: taskScopedOptions.queryImages,
+            webSearch: taskScopedOptions.webSearch,
             maxInputItems: MAX_MODEL_CONTEXT_ITEMS,
             onCheckpoint: createSessionCheckpointHandler(session),
             toolContext: { clientId, requestId, taskId, sessionId: session.id, owner: 'extension-agent' },
@@ -833,6 +853,8 @@ function buildRegularTaskScopedOptions(options: ExecuteSessionOptions | undefine
         maxSameToolCalls: options?.maxSameToolCalls,
         appendUserQuery: options?.appendUserQuery,
         suppressNextStepHint: options?.suppressNextStepHint,
+        queryImages: options?.queryImages,
+        webSearch: options?.webSearch,
     };
 }
 
@@ -1286,6 +1308,62 @@ export function createSession(summary: string, originTabId?: number): Session {
     }
 
     setActiveSessionId(id);
+    persistRuntimeSessions();
+    return session;
+}
+
+/**
+ * 从历史记录恢复一个会话，使其可以被「继续对话」
+ *
+ * 历史记录只保存了轮次摘要（query / reply），这里据此重建上下文；
+ * 已存在于运行态时直接复用，避免覆盖正在执行的任务。
+ */
+export async function restoreSessionFromHistory(sessionId: string): Promise<Session | null> {
+    const existing = sessions.get(sessionId);
+    if (existing) {
+        setActiveSessionId(sessionId);
+        persistRuntimeSessions();
+        return existing;
+    }
+
+    const records = await readSessionHistoryRecords();
+    const record = records.find((item) => item.sessionId === sessionId);
+    if (!record) return null;
+
+    const turns = Array.isArray(record.turns) ? record.turns : [];
+    const rebuiltContext: InputItem[] = [];
+    for (const turn of turns) {
+        const query = String(turn?.query || '').trim();
+        if (query) rebuiltContext.push({ role: 'user', content: query });
+        const reply = String(turn?.reply || '').trim();
+        if (reply) rebuiltContext.push({ role: 'assistant', content: reply });
+    }
+
+    const startedAt = record.startedAt || Date.now();
+    const session: Session = {
+        id: record.sessionId,
+        // 历史会话一律视为已结束：'cleared' 也表示本轮不再运行
+        status: record.status === 'done' ? 'done' : 'error',
+        context: compactSessionContext(rebuiltContext),
+        eventLog: [],
+        createdAt: startedAt,
+        startedAt,
+        endedAt: record.endedAt ?? record.updatedAt,
+        durationMs: record.durationMs,
+        summary: record.summary || '',
+        agentState: {
+            phase: 'finalize',
+            round: turns.length,
+            reason: '从历史记录恢复',
+            updatedAt: Date.now(),
+        },
+        failureCode: record.failureCode,
+        lastError: record.lastError,
+        turns: turns as Session['turns'],
+    };
+
+    sessions.set(session.id, session);
+    setActiveSessionId(session.id);
     persistRuntimeSessions();
     return session;
 }

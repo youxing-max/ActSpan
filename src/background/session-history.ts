@@ -419,6 +419,16 @@ export function buildSessionHistoryRecord(session: Session): SessionHistoryRecor
 /** 会话历史写入队列，避免并发覆盖 */
 let sessionHistoryPersistQueue: Promise<void> = Promise.resolve();
 
+/** 读取全部会话历史记录（供侧边栏历史面板与会话恢复使用） */
+export async function readSessionHistoryRecords(): Promise<SessionHistoryRecord[]> {
+    const history = (await readMigratedStorage<SessionHistoryRecord[]>(
+        chrome.storage.local,
+        SESSION_HISTORY_STORAGE_KEY,
+        LEGACY_SESSION_HISTORY_STORAGE_KEY,
+    )) || [];
+    return Array.isArray(history) ? history : [];
+}
+
 /** 删除指定会话的历史记录（会话“清除”后必须真正消失） */
 export function removeSessionHistory(sessionId: string) {
     sessionHistoryPersistQueue = sessionHistoryPersistQueue

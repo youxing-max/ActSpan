@@ -2430,3 +2430,269 @@ body {
   50% { opacity: 0.3; }
 }
 
+/* ============ 输入区工具行：附件 / 联网搜索 / 历史记录 ============ */
+
+.actspan-input-shell {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
+.actspan-tools-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 20px 0;
+}
+
+.actspan-tool-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--ec-text-muted, #667085);
+  background: var(--ec-surface-soft, #f5f7fa);
+  border: 1px solid var(--ec-border-soft, #e4e7ec);
+  border-radius: 999px;
+  cursor: pointer;
+  transition: color 0.18s ease, background-color 0.18s ease, border-color 0.18s ease;
+}
+
+.actspan-tool-btn:hover:not(:disabled) {
+  color: var(--ec-primary, #1677ff);
+  border-color: var(--ec-primary, #1677ff);
+  background: rgba(22, 119, 255, 0.08);
+}
+
+.actspan-tool-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.actspan-tool-btn.active {
+  color: var(--ec-primary, #1677ff);
+  border-color: var(--ec-primary, #1677ff);
+  background: rgba(22, 119, 255, 0.12);
+  font-weight: 600;
+}
+
+.actspan-tool-icon {
+  font-size: 14px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+}
+
+.actspan-tool-badge {
+  min-width: 16px;
+  padding: 0 4px;
+  font-size: 11px;
+  line-height: 16px;
+  text-align: center;
+  color: #fff;
+  background: var(--ec-primary, #1677ff);
+  border-radius: 999px;
+}
+
+/* 附件预览 */
+.actspan-attachments {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 20px 0;
+}
+
+.actspan-attachment {
+  position: relative;
+  display: inline-flex;
+  width: 48px;
+  height: 48px;
+}
+
+.actspan-attachment-thumb {
+  width: 48px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid var(--ec-border-soft, #e4e7ec);
+  background: #fff;
+}
+
+.actspan-attachment-remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-size: 12px;
+  line-height: 1;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.55);
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.actspan-attachment-remove:hover {
+  background: var(--ec-danger, #d4380d);
+}
+
+.actspan-attachments-hint {
+  font-size: 11px;
+  color: var(--ec-text-muted, #98a2b3);
+}
+
+/* 历史记录：底部弹出层 */
+.actspan-sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483000;
+  background: rgba(16, 24, 40, 0.32);
+  animation: actspan-sheet-fade 0.16s ease-out;
+}
+
+.actspan-sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  max-height: 72%;
+  display: flex;
+  flex-direction: column;
+  padding: 6px 12px 14px;
+  background: var(--ec-surface, #fff);
+  border-radius: 16px 16px 0 0;
+  box-shadow: 0 -12px 32px rgba(16, 24, 40, 0.18);
+  animation: actspan-sheet-up 0.22s cubic-bezier(0.22, 0.61, 0.36, 1);
+  box-sizing: border-box;
+}
+
+.actspan-sheet-handle {
+  width: 36px;
+  height: 4px;
+  margin: 2px auto 6px;
+  border-radius: 999px;
+  background: var(--ec-border, #d0d5dd);
+}
+
+@keyframes actspan-sheet-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes actspan-sheet-up {
+  from { transform: translateY(16px); opacity: 0.6; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.actspan-sheet-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--ec-text-muted, #667085);
+  background: transparent;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.actspan-sheet-close:hover {
+  background: var(--ec-surface-soft, #f5f7fa);
+  color: var(--ec-text, #101828);
+}
+
+.actspan-history-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 4px 8px;
+}
+
+.actspan-history-head-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ec-text, #101828);
+}
+
+.actspan-history-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.actspan-history-refresh,
+.actspan-history-all {
+  padding: 2px 8px;
+  font-size: 11px;
+  color: var(--ec-text-muted, #667085);
+  background: transparent;
+  border: 1px solid var(--ec-border-soft, #e4e7ec);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.actspan-history-refresh:hover,
+.actspan-history-all:hover {
+  color: var(--ec-primary, #1677ff);
+  border-color: var(--ec-primary, #1677ff);
+}
+
+.actspan-history-empty {
+  padding: 12px 6px;
+  font-size: 12px;
+  color: var(--ec-text-muted, #98a2b3);
+  text-align: center;
+}
+
+.actspan-history-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.actspan-history-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 8px 10px;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.actspan-history-item:hover {
+  background: var(--ec-surface-soft, #f5f7fa);
+}
+
+.actspan-history-item-title {
+  font-size: 13px;
+  color: var(--ec-text, #101828);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.actspan-history-item-meta {
+  font-size: 11px;
+  color: var(--ec-text-muted, #98a2b3);
+}
+
+

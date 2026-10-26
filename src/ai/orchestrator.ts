@@ -150,6 +150,19 @@ export const handleChat = async (
 
   systemPrompt += buildToolCatalog(tools.map(tool => tool.name));
 
+  // 用户在输入区打开了「联网搜索」：要求先检索再作答，并在结论里给出信息来源
+  if (options?.webSearch) {
+    systemPrompt += [
+      '',
+      '## 联网搜索（本轮已开启）',
+      '用户已打开「联网搜索」开关，本轮回答必须先获取实时网络信息：',
+      '1. 优先用 fetch_url 打开搜索引擎结果页（如 https://www.bing.com/search?q=关键词）或目标站点，必要时用 tab_navigate 在真实标签页里检索；',
+      '2. 交叉核对至少一个独立来源，避免只采信单条结果；',
+      '3. 回答末尾用「来源：<URL>」列出实际引用的链接；',
+      '4. 若网络不可用或检索被拦截，明确说明「未能联网」，再给出基于已有知识的回答并标注这一点。',
+    ].join('\n');
+  }
+
   // 标签页生命周期追踪：任务结束后自动关闭 AI 打开的标签页
   const tabTracker = new TabTracker();
   await tabTracker.startListening();

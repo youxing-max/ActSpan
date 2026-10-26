@@ -125,6 +125,10 @@ export interface ExecuteSessionOptions {
     allowConcurrent?: boolean;
     signal?: AbortSignal;
     taskKind?: SessionTaskKind;
+    /** 本轮随消息附带的图片（data URL），以多模态形式进入用户消息 */
+    queryImages?: string[];
+    /** 用户开启了「联网搜索」：要求先检索再作答 */
+    webSearch?: boolean;
 }
 
 export type SessionChannelResponder = ((response?: unknown) => void) | undefined;

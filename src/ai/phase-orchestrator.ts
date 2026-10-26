@@ -7,7 +7,7 @@
 
 import type {
   InputItem, ToolSchema, AIStreamEvent,
-  FunctionCallOutputItem,
+  FunctionCallOutputItem, ContentPart,
 } from './types';
 import { getTextContent } from './context-manager';
 import { TodoManager } from './todo-manager';
@@ -27,6 +27,22 @@ import { agenticLoop } from './core-loop';
 import { shouldSkipReview, runReviewAgent } from './review-agent';
 
 // ============ 阶段编排辅助函数 ============
+
+/**
+ * 构造本轮用户消息内容
+ * - 没有图片：保持纯字符串，避免无谓的多模态包装
+ * - 有图片：文本 + input_image 片段数组
+ */
+const buildUserMessageContent = (query: string, images?: string[]): string | ContentPart[] => {
+  const validImages = Array.isArray(images)
+    ? images.filter((item) => typeof item === 'string' && item.startsWith('data:image/'))
+    : [];
+  if (validImages.length === 0) return query;
+  return [
+    { type: 'input_text' as const, text: query },
+    ...validImages.map((imageUrl) => ({ type: 'input_image' as const, image_url: imageUrl })),
+  ];
+};
 
 /**
  * 提取浏览器客观状态
@@ -260,14 +276,16 @@ export const phaseOrchestrator = async (
 
   for (let phase = 0; phase < MAX_PHASES; phase++) {
     let context: InputItem[];
+    // 用户随消息附带的图片以多模态片段加入本轮用户消息；没有图片时保持纯字符串
+    const userContent = buildUserMessageContent(query, options?.queryImages);
     if (phase === 0) {
       context = previousContext ? [...previousContext] : [];
       const shouldAppendQuery = options?.appendUserQuery !== false;
       if (shouldAppendQuery && query.trim()) {
-        context.push({ role: 'user' as const, content: query });
+        context.push({ role: 'user' as const, content: userContent });
       }
     } else {
-      context = [{ role: 'user' as const, content: query }];
+      context = [{ role: 'user' as const, content: userContent }];
     }
 
     // ── 阶段控制信号 ──
