@@ -105,6 +105,37 @@ test('buildSessionHistoryRecord 同时输出多轮与最新回复', () => {
   assert.deepEqual(record.turns.map((turn) => turn.reply), ['晴', '25 度']);
 });
 
+test('buildSessionHistoryRecord 保留用户中断的轮次（点停止后历史仍可查）', () => {
+  const record = buildSessionHistoryRecord({
+    id: 'session-abort',
+    status: 'error',
+    failureCode: 'E_CANCELLED',
+    lastError: '任务已取消',
+    context: [],
+    eventLog: [
+      { type: 'turn_started', content: JSON.stringify({ query: '整理这份报告', startedAt: 100 }), timestamp: 100 },
+      { type: 'text', content: '正在读取页面…', timestamp: 200 },
+      {
+        type: 'turn_aborted',
+        content: lifecycle('error', { reason: '任务已取消', failureCode: 'E_CANCELLED', abortReason: 'interrupted' }),
+        timestamp: 300,
+      },
+    ],
+    createdAt: 50,
+    startedAt: 100,
+    endedAt: 300,
+    durationMs: 200,
+    summary: '整理这份报告',
+    agentState: { phase: 'finalize', round: 1, reason: '用户中断任务', updatedAt: 300 },
+  });
+
+  assert.equal(record.status, 'error');
+  assert.equal(record.failureCode, 'E_CANCELLED');
+  assert.equal(record.turns.length, 1);
+  assert.equal(record.turns[0].query, '整理这份报告');
+  assert.equal(record.turns[0].status, 'error');
+});
+
 test('mergeSessionTurns 合并旧记录，避免 eventLog 裁剪丢失早期轮次', () => {
   const previous = [
     { runId: 'r1', query: '第一轮', reply: '一', status: 'done', startedAt: 100 },
