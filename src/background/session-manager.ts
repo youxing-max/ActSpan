@@ -1329,8 +1329,6 @@ export async function abortSessionTask(
     };
     if (reason === 'interrupted') {
         appendInterruptedTurnMarker(runningSession);
-        // 中断的轮次同样要落库：否则用户点“停止”后，历史页里这次对话会整条消失。
-        persistSessionHistory(runningSession);
     }
 
     const pushEvent = createSessionPushEvent(runningSession);
