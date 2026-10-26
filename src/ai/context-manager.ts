@@ -218,10 +218,15 @@ export const microCompact = (context: InputItem[], keepRecentOutputs: number = 6
     if (getMicroCompactSkipTools().has(toolName)) continue;
 
     // 判断执行结果成功/失败
-    let status = '完成';
+    const status = '完成';
     try {
       const parsed = JSON.parse(output);
-      if (parsed.success === false) status = '失败';
+      if (parsed.success === false) {
+        const error = typeof parsed.error === 'string' ? parsed.error : JSON.stringify(parsed.error ?? '操作失败');
+        item.output = JSON.stringify({ success: false, error: error.slice(0, 350) });
+        compressedCount++;
+        continue;
+      }
     } catch {
       // 非 JSON 格式，默认为完成
     }

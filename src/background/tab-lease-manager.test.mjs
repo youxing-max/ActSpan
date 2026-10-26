@@ -113,3 +113,25 @@ test('reclaim explicitly takes over an expired lease, releaseTab frees a closed 
   assert.equal(leases.get(36), undefined);
   assert.throws(() => leases.authorize(context(task, 36), 36), /未拥有/);
 });
+
+test('select rejects an unknown or closed tab without changing the default slot', () => {
+  const leases = new TabLeaseManager();
+  const task = makeTask();
+  leases.acquire(task, 37);
+  const before = leases.snapshotOwnTabs();
+  assert.throws(() => leases.selectTab(context(task), 999001), (error) => error.code === 'E_TAB_OWNERSHIP');
+  assert.deepEqual(leases.snapshotOwnTabs(), before);
+  leases.releaseTab(37);
+  assert.throws(() => leases.selectTab(context(task), 37), (error) => error.code === 'E_TAB_OWNERSHIP');
+});
+
+test('select still switches the default slot between registered session tabs', () => {
+  const leases = new TabLeaseManager();
+  const task = makeTask();
+  leases.acquire(task, 38);
+  leases.acquire(task, 39);
+  assert.deepEqual(leases.selectTab(context(task), 39), { tabId: 39 });
+  assert.deepEqual(leases.listTabs(context(task)).map(({ tabId, marker }) => ({ tabId, marker })), [
+    { tabId: 38, marker: '+' }, { tabId: 39, marker: '*' },
+  ]);
+});

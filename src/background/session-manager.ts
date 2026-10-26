@@ -643,10 +643,18 @@ export function createSessionPushEvent(session: Session) {
         }
 
         const eventTimestamp = Date.now();
-        session.eventLog.push({
+        const logItem: SessionEventLogItem = {
             ...event,
             timestamp: eventTimestamp,
-        } as SessionEventLogItem);
+        };
+        const previousEvent = session.eventLog.at(-1);
+        // text 是累计全文；只合并连续的前缀扩展，避免逐 token 快照挤掉工具证据。
+        if (event.type === 'text' && previousEvent?.type === 'text'
+            && event.content.startsWith(previousEvent.content)) {
+            session.eventLog[session.eventLog.length - 1] = logItem;
+        } else {
+            session.eventLog.push(logItem);
+        }
         applyEventToSessionTurns(session, event, eventTimestamp);
         // 内存中同样裁剪，避免长会话 eventLog 无上限增长（持久化只截断快照副本）。
         if (session.eventLog.length > MAX_RUNTIME_EVENT_LOG) {

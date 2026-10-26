@@ -225,3 +225,67 @@ test('a rejected auto-pair token is cleared from storage so the transport can re
     transport.stop();
   }
 });
+
+test('rejecting an expired auto token preserves the proof needed to re-pair', async (t) => {
+  const { module, chromeDouble, sockets } = await loadTransport();
+  const transport = module.mcpOffscreenTransport;
+  chromeDouble.store.actspan_mcp_bridge_settings = { enabled: true, port: 30121 };
+  let auto = { port: 30121, token: 'expired-token', pairingSecret: 'existing-proof' };
+  chromeDouble.runtime.sendMessage = (message, callback) => {
+    if (message?.type === 'actspan_mcp_settings_get') {
+      callback?.({ settings: chromeDouble.store.actspan_mcp_bridge_settings, auto });
+    } else {
+      if (message?.type === 'actspan_mcp_settings_set_auto') auto = message.value;
+      callback?.({ accepted: true });
+    }
+  };
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
+  try {
+    transport.start();
+    await flush();
+    sockets.at(-1).onclose({ code: 4001 });
+    await flush();
+    assert.equal(auto.token, undefined);
+    assert.equal(auto.pairingSecret, 'existing-proof');
+    t.mock.timers.tick(1000);
+    await flush();
+    const pair = sockets.at(-1).sent[0];
+    assert.equal(pair.type, 'pair');
+    assert.equal(pair.role, 'extension');
+    assert.equal(pair.protocolVersion, 1);
+    assert.equal(pair.pairingSecret, 'existing-proof');
+    assert.equal(pair.token, undefined);
+  } finally { transport.stop(); }
+});
+
+test('authentication failures back off until hello_ok, not just a socket opening', async (t) => {
+  const { module, sockets } = await loadTransport();
+  const transport = module.mcpOffscreenTransport;
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
+  try {
+    transport.start();
+    await flush();
+    for (const delay of [1000, 2000, 4000, 8000, 16000, 30000, 30000]) {
+      const count = sockets.length;
+      sockets.at(-1).onclose({ code: 4001 });
+      await flush();
+      t.mock.timers.tick(delay - 1);
+      await flush();
+      assert.equal(sockets.length, count, `must wait the full ${delay}ms after failed authentication`);
+      t.mock.timers.tick(1);
+      await flush();
+      assert.equal(sockets.length, count + 1);
+    }
+    const authenticated = sockets.at(-1);
+    authenticated.onmessage({ data: JSON.stringify({ type: 'hello_ok', protocolVersion: 1 }) });
+    await flush();
+    authenticated.onclose({ code: 1000 });
+    await flush();
+    const count = sockets.length;
+    t.mock.timers.tick(1000);
+    await flush();
+    assert.equal(sockets.length, count + 1, 'successful authentication resets backoff');
+  } finally { transport.stop(); }
+});

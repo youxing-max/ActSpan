@@ -177,34 +177,38 @@ const performClick = async (
   clickCount: number,
   signal?: AbortSignal,
 ): Promise<FunctionResult> => {
-  // 先移动鼠标到目标位置
-  const moveResult = await CDPSessionManager.sendCommand(tabId, 'Input.dispatchMouseEvent', {
-    type: 'mouseMoved', x, y, button: 'none',
-  });
-  if (!moveResult.success) return { success: false, error: moveResult.error };
+  // 后台页会接收移动却丢弃按下事件；仅在本次点击期间模拟焦点，不激活用户标签页。
+  const focused = await CDPSessionManager.sendCommand(tabId, 'Emulation.setFocusEmulationEnabled', { enabled: true });
+  if (!focused.success) return { success: false, error: focused.error };
+  try {
+    const moveResult = await CDPSessionManager.sendCommand(tabId, 'Input.dispatchMouseEvent', {
+      type: 'mouseMoved', x, y, button: 'none',
+    });
+    if (!moveResult.success) return { success: false, error: moveResult.error };
 
-  await sleep(20, signal);
+    await sleep(20, signal);
 
-  // 按下
-  const pressResult = await CDPSessionManager.sendCommand(tabId, 'Input.dispatchMouseEvent', {
-    type: 'mousePressed', x, y, button, clickCount,
-  });
-  if (!pressResult.success) return { success: false, error: pressResult.error };
+    const pressResult = await CDPSessionManager.sendCommand(tabId, 'Input.dispatchMouseEvent', {
+      type: 'mousePressed', x, y, button, clickCount,
+    });
+    if (!pressResult.success) return { success: false, error: pressResult.error };
 
-  await sleep(30, signal);
+    await sleep(30, signal);
 
-  // 释放
-  const releaseResult = await CDPSessionManager.sendCommand(tabId, 'Input.dispatchMouseEvent', {
-    type: 'mouseReleased', x, y, button, clickCount,
-  });
-  if (!releaseResult.success) return { success: false, error: releaseResult.error };
+    const releaseResult = await CDPSessionManager.sendCommand(tabId, 'Input.dispatchMouseEvent', {
+      type: 'mouseReleased', x, y, button, clickCount,
+    });
+    if (!releaseResult.success) return { success: false, error: releaseResult.error };
 
-  const buttonLabel = button === 'right' ? '右键' : button === 'middle' ? '中键' : '';
-  const clickLabel = clickCount > 1 ? '双击' : '点击';
-  return {
-    success: true,
-    data: { x, y, button, clickCount, message: `CDP ${buttonLabel}${clickLabel} (${x}, ${y})` },
-  };
+    const buttonLabel = button === 'right' ? '右键' : button === 'middle' ? '中键' : '';
+    const clickLabel = clickCount > 1 ? '双击' : '点击';
+    return {
+      success: true,
+      data: { x, y, button, clickCount, message: `CDP ${buttonLabel}${clickLabel} (${x}, ${y})` },
+    };
+  } finally {
+    await CDPSessionManager.sendCommand(tabId, 'Emulation.setFocusEmulationEnabled', { enabled: false });
+  }
 };
 
 /** 鼠标悬停 */
@@ -416,18 +420,20 @@ export const resolveFrameOffset = async (
   for (let depth = 0; depth < 10 && current !== 0; depth += 1) {
     const owner = await CDPSessionManager.sendCommand(tabId, 'DOM.getFrameOwner', { frameId: current });
     const backendNodeId = owner?.result?.backendNodeId;
-    if (!owner?.success || !backendNodeId) break;
+    if (!owner?.success || !backendNodeId) throw new Error(`无法解析 iframe 所属节点：${owner?.error || 'frame owner missing'}`);
     const box = await CDPSessionManager.sendCommand(tabId, 'DOM.getBoxModel', { backendNodeId });
     const quad = box?.result?.model?.border;
-    if (!box?.success || !Array.isArray(quad) || quad.length < 4) break;
+    if (!box?.success || !Array.isArray(quad) || quad.length < 4) throw new Error('无法读取 iframe 的可靠坐标');
     totalX += Number(quad[0]) || 0;
     totalY += Number(quad[1]) || 0;
     const described = await CDPSessionManager.sendCommand(tabId, 'DOM.describeNode', { backendNodeId });
     const parentFrameId = described?.result?.node?.frameId;
-    if (!described?.success || typeof parentFrameId !== 'number' || parentFrameId === current) break;
+    if (!described?.success || typeof parentFrameId !== 'number' || parentFrameId === current) throw new Error('无法解析 iframe 的父框架');
     current = parentFrameId;
   }
+  if (current !== 0) throw new Error('iframe 层级过深，无法安全换算坐标');
   const layout = await CDPSessionManager.sendCommand(tabId, 'Page.getLayoutMetrics');
+  if (!layout.success) throw new Error('无法读取 iframe 所属页面的视口');
   const viewport = layout?.result?.visualViewport;
   return {
     x: totalX - (Number(viewport?.pageX) || 0),
@@ -443,7 +449,13 @@ export const realClickAt = async (
   frameId?: number,
 ): Promise<{ success: boolean; error?: string }> => {
   // 目标在 iframe 内时，x/y 是帧内视口坐标，先换算到顶层视口
-  const offset = await resolveFrameOffset(tabId, frameId);
+  let offset: { x: number; y: number };
+  try {
+    offset = await resolveFrameOffset(tabId, frameId);
+  } catch (error) {
+    // Chrome 与 CDP 的 frameId 不是同一种标识；解析失败时禁止把帧内坐标当作父页面坐标。
+    return { success: false, error: error instanceof Error ? error.message : String(error) };
+  }
   const result = await performClick(tabId, x + offset.x, y + offset.y, 'left', 1, signal);
   return result.success ? { success: true } : { success: false, error: result.error };
 };
@@ -1127,7 +1139,9 @@ export const cdpInputFunction: FunctionDefinition = {
     'Scroll: scroll/scroll_into_view.',
     'Wait: wait_for_element/wait_text/wait_navigation.',
     'Other: hover/drag/get_info.',
-    'Targeting: element_id (from page_snapshot, preferred) or selector (CSS selector) or x/y coordinates.',
+    'Mouse targeting: click/double_click/right_click/hover/drag require element_id with snapshot_id, or x/y coordinates; not a CSS selector.',
+    'Get handles from page(action="snapshot", query="visible target text"); after a stale handle, take a fresh snapshot or use click_text with observed visible text.',
+    'CSS selectors are supported only by fill/clear/select/type/focus/scroll_into_view/get_info/wait_for_element.',
   ].join(' ') + '\n\n⚠️ Do NOT use this tool for:\n- Reading page content (use page_viewer)\n- Checking element existence (use page_snapshot or page_assert)\n- Getting element text (use cdp_dom get_text)',
   supportsParallel: false,
   permissionLevel: 'interact',
@@ -1158,7 +1172,7 @@ export const cdpInputFunction: FunctionDefinition = {
       },
       element_id: {
         type: 'string',
-        description: 'Element handle returned by page_snapshot. Used to locate the target element, takes priority over selector and x/y coordinates',
+        description: 'Element handle returned by page_snapshot. Pass snapshot_id from the same snapshot; do not combine with selector or x/y coordinates.',
       },
       snapshot_id: {
         type: 'string',
@@ -1166,7 +1180,7 @@ export const cdpInputFunction: FunctionDefinition = {
       },
       selector: {
         type: 'string',
-        description: 'CSS selector. Available for fill/clear/select/focus/scroll_into_view/get_info/wait_for_element/click_text',
+        description: 'CSS selector. Available only for fill/clear/select/type/focus/scroll_into_view/get_info/wait_for_element. For mouse actions use element_id + snapshot_id or x/y.',
       },
       x: {
         type: 'number',
@@ -1288,8 +1302,11 @@ export const cdpInputFunction: FunctionDefinition = {
 
     // 需要坐标的原始鼠标操作（不包含 scroll，scroll 有多种模式）
     const needCoords = ['click', 'double_click', 'right_click', 'hover'];
+    if ([...needCoords, 'drag'].includes(params.action) && params.selector) {
+      return `${params.action}: selector is not supported. Use page(action="snapshot", query="visible target text"), then pass element_id and snapshot_id from that snapshot, or observed (x, y) coordinates.`;
+    }
     if (needCoords.includes(params.action) && !params.element_id && (typeof params.x !== 'number' || typeof params.y !== 'number')) {
-      return `${params.action} requires element_id or (x, y) coordinates`;
+      return `${params.action} requires element_id with snapshot_id from page(action="snapshot"), or observed (x, y) coordinates`;
     }
 
     if (params.action === 'drag') {

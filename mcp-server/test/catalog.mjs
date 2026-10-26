@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmdirSync, unlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 import {
     RegistryCatalog,
@@ -12,6 +14,27 @@ import { extensionIdFromKey } from '../install.js';
 import { stopBridgeDaemon } from '../bridge-lock.js';
 
 const packageJson = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+
+test('tool documentation excludes transport frames but still rejects nonexistent public tools', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'actspan-tool-docs-'));
+    const doc = join(dir, 'tools.md');
+    const text = [...TOOL_NAMES, 'actspan_mcp_cancel', 'actspan_mcp_socket_event'].join('\n');
+    const check = () => spawnSync(process.execPath, ['check-tool-docs.mjs', doc], {
+        cwd: new URL('..', import.meta.url), encoding: 'utf8',
+    });
+    try {
+        writeFileSync(doc, text);
+        const valid = check();
+        assert.equal(valid.status, 0, valid.stdout + valid.stderr);
+        writeFileSync(doc, `${text}\nactspan_timer`);
+        const invalid = check();
+        assert.equal(invalid.status, 1);
+        assert.match(invalid.stdout, /extra: actspan_timer/);
+    } finally {
+        unlinkSync(doc);
+        rmdirSync(dir);
+    }
+});
 
 test('exports the fixed Actspan tool catalog', () => {
     assert.deepEqual(TOOL_NAMES, [

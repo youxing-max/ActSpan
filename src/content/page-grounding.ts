@@ -250,6 +250,10 @@ export const isElementClickable = (el: Element, style?: CSSStyleDeclaration): bo
 };
 
 const getElementText = (el: Element): string => {
+  if (el.tagName.toLowerCase() === 'input' &&
+    ['button', 'submit', 'reset'].includes((el.getAttribute('type') || '').toLowerCase())) {
+    return clipText((el as HTMLInputElement).value || '', 220);
+  }
   const htmlEl = el as HTMLElement;
   const innerText = 'innerText' in htmlEl ? (htmlEl.innerText || '') : '';
   return clipText(innerText || el.textContent || '', 220);
@@ -553,18 +557,30 @@ const getScopeRoot = (scopeSelector?: string): Element | null => {
   return document.querySelector(scopeSelector);
 };
 
+const tokenizeQuery = (query: string): string[] => {
+  if (typeof Intl.Segmenter === 'function') {
+    return Array.from(new Intl.Segmenter(undefined, { granularity: 'word' }).segment(query))
+      .filter((part) => part.isWordLike)
+      .map((part) => part.segment);
+  }
+  // Older browsers still need short Chinese labels to match compound queries.
+  return Array.from(new Set([
+    ...query.split(/\s+/).filter(Boolean),
+    ...Array.from(query.matchAll(/(?=([\p{Script=Han}]{2}))/gu), (match) => match[1]),
+  ]));
+};
+
 /**
  * 对元素进行 query 匹配评分
  * @param cache 可选，元素信息缓存，传入时复用缓存的 text/label 等数据
  */
-const scoreElementAgainstQuery = (el: Element, query: string, cache?: Map<Element, CachedElementInfo>): { score: number; reasons: string[] } => {
+const scoreElementAgainstQuery = (el: Element, query: string, tokens: string[], cache?: Map<Element, CachedElementInfo>): { score: number; reasons: string[] } => {
   const normalizedQuery = normalizeText(query).toLowerCase();
   if (!normalizedQuery) return { score: 0, reasons: [] };
 
   // 有缓存时使用缓存数据，否则实时计算
   const info = cache ? getElementInfo(el, cache) : null;
 
-  const tokens = normalizedQuery.split(/\s+/).filter(Boolean);
   const fields: Array<[string, string]> = [
     ['text', info ? info.text : getElementText(el)],
     ['label', info ? info.label : getElementLabel(el)],
@@ -595,18 +611,13 @@ const scoreElementAgainstQuery = (el: Element, query: string, cache?: Map<Elemen
       if (token.length < 2) continue;
       if (fieldValue.includes(token)) {
         score += fieldName === 'text' || fieldName === 'label' ? 3 : 2;
-      }
-    }
-
-    // 优化 5：检查完 text 和 label 后，如果 score 仍为 0 且元素既不可点击也不可编辑，提前退出
-    if (i === 1 && score === 0) {
-      const clickable = info ? info.clickable : isElementClickable(el);
-      const editable = info ? info.editable : isElementEditable(el);
-      if (!clickable && !editable) {
-        return { score: 0, reasons: [] };
+        reasons.push(`${fieldName}:token:${token}`);
       }
     }
   }
+
+  // Visibility and interactivity rank matches; they are not query matches themselves.
+  if (reasons.length === 0) return { score: 0, reasons: [] };
 
   const clickable = info ? info.clickable : isElementClickable(el);
   const editable = info ? info.editable : isElementEditable(el);
@@ -668,6 +679,7 @@ const dedupeNestedCandidates = <T extends { el: Element }>(items: T[], cache: Ma
 const collectSnapshotElements = (params: PageSnapshotParams) => {
   const snapshotId = normalizeText(params.snapshot_id) || createSnapshotId();
   const query = normalizeText(params.query || '');
+  const tokens = tokenizeQuery(query.toLowerCase());
   const limit = Math.min(Math.max(Number(params.limit) || 20, 1), 60);
   const includeHidden = params.include_hidden === true;
   const onlyViewport = params.only_viewport === true;
@@ -708,7 +720,7 @@ const collectSnapshotElements = (params: PageSnapshotParams) => {
       return true;
     })
     .map((el) => {
-      const match = scoreElementAgainstQuery(el, query, cache);
+      const match = scoreElementAgainstQuery(el, query, tokens, cache);
       let baseScore = match.score;
       if (!query) {
         // 使用缓存数据避免重复 DOM 查询

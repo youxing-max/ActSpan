@@ -12,6 +12,10 @@ export const CDPSessionManager = {
   attach: async () => ({ success: true }),
   sendCommand: async (tabId, method, params) => {
     const f = owners();
+    (f.commands ??= []).push({ method, params });
+    if (method === 'DOM.getFrameOwner' && f.rejectNumericFrames && typeof params.frameId !== 'string') {
+      return { success: false, error: 'Invalid parameters: frameId must be a string' };
+    }
     if (method === 'DOM.getFrameOwner') return { success: true, result: { backendNodeId: f.ownerByFrame[params.frameId] } };
     if (method === 'DOM.getBoxModel') return { success: true, result: { model: { border: f.quadByNode[params.backendNodeId] } } };
     if (method === 'DOM.describeNode') return { success: true, result: { node: { frameId: f.parentFrameByNode[params.backendNodeId] } } };
@@ -31,7 +35,7 @@ const plugin = {
 
 const out = await build({
   stdin: {
-    contents: `export { resolveFrameOffset } from './src/functions/cdp-input.ts';`,
+    contents: `export { resolveFrameOffset, realClickAt } from './src/functions/cdp-input.ts';`,
     resolveDir: process.cwd(),
     loader: 'ts',
   },
@@ -41,7 +45,7 @@ const out = await build({
   platform: 'node',
   plugins: [plugin],
 });
-const { resolveFrameOffset } = await import(
+const { resolveFrameOffset, realClickAt } = await import(
   `data:text/javascript;base64,${Buffer.from(out.outputFiles[0].contents).toString('base64')}`
 );
 
@@ -71,13 +75,20 @@ test('嵌套 iframe：沿 owner 链累加各级偏移', async () => {
   assert.deepEqual(await resolveFrameOffset(1, 5), { x: 113, y: 57 });
 });
 
-test('frame owner 查询失败时返回部分偏移而不是抛错', async () => {
+test('frame owner 查询失败时拒绝使用零偏移或部分偏移', async () => {
   globalThis.__fakeFrames = {
     ownerByFrame: {},
     quadByNode: {},
     parentFrameByNode: {},
     viewport: { pageX: 0, pageY: 0 },
   };
-  const offset = await resolveFrameOffset(1, 999);
-  assert.deepEqual(offset, { x: 0, y: 0 });
+  await assert.rejects(() => resolveFrameOffset(1, 999), /iframe/);
+});
+
+test('Chrome frame ids rejected by CDP never produce a click in the parent frame', async () => {
+  globalThis.__fakeFrames = { rejectNumericFrames: true };
+  const result = await realClickAt(1, 10, 20, undefined, 476);
+  assert.equal(result.success, false);
+  assert.match(result.error, /iframe/);
+  assert.equal(globalThis.__fakeFrames.commands.some(({ method }) => method.startsWith('Input.')), false);
 });

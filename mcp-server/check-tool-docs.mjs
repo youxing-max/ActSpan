@@ -8,6 +8,7 @@ import { TOOL_NAMES } from './catalog.js';
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const DEFAULT_DOCS = ['MCP-BRIDGE.md', 'README.md'];
 const TOOL_NAME_PATTERN = /\bactspan_[a-z_]+\b/g;
+const TRANSPORT_FRAMES = new Set(['actspan_mcp_cancel', 'actspan_mcp_socket_event']);
 
 const targets = process.argv.slice(2);
 const docs = targets.length > 0 ? targets : DEFAULT_DOCS;
@@ -22,7 +23,9 @@ for (const doc of docs) {
         console.error(`check-tool-docs: cannot read ${path}: ${err.message}`);
         process.exit(2);
     }
-    for (const match of text.matchAll(TOOL_NAME_PATTERN)) documented.add(match[0]);
+    for (const match of text.matchAll(TOOL_NAME_PATTERN)) {
+        if (!TRANSPORT_FRAMES.has(match[0])) documented.add(match[0]);
+    }
 }
 
 const known = new Set(TOOL_NAMES);

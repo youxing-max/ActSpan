@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { build } from 'esbuild';
+import { readFileSync } from 'node:fs';
 
 const bundle = await build({
   stdin: {
@@ -20,6 +21,29 @@ const { getWorkflowPlanForExecution, resolveWorkflowPlanAction, isWorkflowPlanSu
   await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].contents).toString('base64')}`);
 
 const planWith = (action, params) => ({ plan: { steps: [{ action, params }] } });
+
+test('every bundled workflow uses supported plan actions and sub-actions', () => {
+  const manifest = JSON.parse(readFileSync('public/skills/domains/manifest.json', 'utf8'));
+  for (const skill of manifest.skills) {
+    for (const workflow of skill.workflows || []) {
+      if (!workflow.plan) continue;
+      assert.doesNotThrow(() => getWorkflowPlanForExecution(workflow), workflow.name);
+    }
+  }
+});
+
+test('bundled search workflows extract their documented fields with a result limit', () => {
+  const manifest = JSON.parse(readFileSync('public/skills/domains/manifest.json', 'utf8'));
+  for (const [name, fields] of [['jd', ['name', 'price', 'link']], ['baidu', ['title', 'snippet', 'link']]]) {
+    const workflow = manifest.skills.find((skill) => skill.name === name).workflows[0];
+    const step = getWorkflowPlanForExecution(workflow).steps.at(-1);
+    assert.equal(step.action, 'extract_data');
+    assert.equal(step.params.mode, 'schema');
+    assert.equal(step.params.max_items, '{{max_results}}');
+    assert.deepEqual(step.params.schema.fields.map((field) => field.name), fields);
+    assert.equal(step.params.schema.fields.find((field) => field.name === 'link').attribute, 'href');
+  }
+});
 
 test('cdp_input click passes plan validation', () => {
   const plan = getWorkflowPlanForExecution(planWith('cdp_input', { action: 'click', selector: '#target' }));

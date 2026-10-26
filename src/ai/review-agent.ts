@@ -8,7 +8,8 @@ import type { InputItem, ToolSchema, AIStreamEvent, FunctionCallInputItem } from
 import { getTextContent } from './context-manager';
 import { TodoManager } from './todo-manager';
 import { agenticLoop } from './core-loop';
-import type { LoopBudget, HandoffArtifact } from './loop-config';
+import type { LoopBudget, HandoffArtifact, HandleChatOptions } from './loop-config';
+import type { DeadlineSignal } from './deadline';
 import { DEFAULT_BUDGET, SUBAGENT_LOOP_CONFIGS, WRITE_TOOLS } from './loop-config';
 
 /**
@@ -54,6 +55,14 @@ export const buildReviewGoal = (artifact: HandoffArtifact): string => {
   parts.push('请审查以下执行阶段的结果：');
   parts.push('');
 
+  parts.push('## 本阶段审查范围');
+  parts.push('只核验本阶段声称已完成的步骤及已交付内容。未完成的待办不应单独判为失败；只有声称它已完成却无证据时才指出矛盾。');
+  parts.push('草稿不代表已提交；对话文本可证明已给出总结，但不能单独证明浏览器动作成功。');
+  for (const item of artifact.todoSnapshot?.items ?? []) {
+    if (item.status !== 'completed') parts.push(`- 未完成：#${item.id} ${item.title} (${item.status})`);
+  }
+  parts.push('');
+
   parts.push('## 任务目标');
   parts.push(artifact.taskGoal);
   parts.push('');
@@ -71,6 +80,12 @@ export const buildReviewGoal = (artifact: HandoffArtifact): string => {
   parts.push('## 预期页面状态');
   parts.push(`当前 URL 应为：${artifact.browserState.currentUrl || '(未知)'}`);
   parts.push('');
+
+  if (artifact.recentMessages?.length) {
+    parts.push('## 前序对话记录（动作陈述仍需工具证据核验）');
+    parts.push(JSON.stringify(artifact.recentMessages));
+    parts.push('');
+  }
 
   const dataKeys = Object.keys(artifact.collectedData);
   if (dataKeys.length > 0) {
@@ -121,6 +136,8 @@ export const runReviewAgent = async (
   tabId: number | undefined,
   signal: AbortSignal | undefined,
   emit: (event: AIStreamEvent) => void,
+  options?: HandleChatOptions,
+  parentTaskDeadline?: DeadlineSignal,
 ): Promise<{ passed: boolean; feedback?: string }> => {
   const config = SUBAGENT_LOOP_CONFIGS.review;
 
@@ -138,9 +155,15 @@ export const runReviewAgent = async (
       maxSubtaskDepth: 0,
     };
 
+    // 继承任务身份与禁用规则，但不让审查覆盖主任务检查点或消费用户输入。
+    const reviewOptions: HandleChatOptions = {
+      toolContext: options?.toolContext,
+      disallowTools: options?.disallowTools,
+    };
     const resultContext = await agenticLoop(
       reviewContext, reviewTools, config.buildPrompt(), reviewBudget,
-      tabId, signal, emit, undefined, 1,
+      tabId, signal, emit, reviewOptions, 1,
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined, parentTaskDeadline,
     );
 
     const verdict = parseReviewVerdict(resultContext);

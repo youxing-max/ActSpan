@@ -115,6 +115,8 @@ export interface HandoffArtifact {
   observations: string[];
   /** 风险提示 */
   warnings: string[];
+  /** 有界保留原始对话文本，避免总结、草稿和后补用户指令在交接时丢失 */
+  recentMessages: Array<{ role: 'user' | 'assistant'; content: string }>;
   /** 审查反馈（仅重试时存在） */
   reviewFeedback?: string;
 }
@@ -189,7 +191,7 @@ export const EXPLORE_ALLOWED_TOOLS: ReadonlySet<string> = new Set([
 export const REVIEW_ALLOWED_TOOLS: ReadonlySet<string> = new Set([
   'page',
   'screenshot',
-  // 审查代理没有 tabTracker/toolContext，开放 tab_navigate 会留下未追踪标签页并绕过租约。
+  // 审查代理不跟踪新标签页，也不应导航或修改页面。
   'extract_data',
 ]);
 

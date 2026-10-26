@@ -97,6 +97,7 @@ class McpOffscreenTransport {
     start(): void {
         if (this.started) return;
         this.started = true;
+        this.backoffMs = 1_000;
         chrome.runtime.onMessage.addListener(this.onRuntimeMessage);
         void this.connect();
     }
@@ -155,6 +156,7 @@ class McpOffscreenTransport {
         if (!isRecord(message) || message.type !== SETTINGS_CHANGED_MESSAGE) return false;
         this.autoToken = null;
         this.autoPort = undefined;
+        this.backoffMs = 1_000;
         this.reconnectTimer && clearTimeout(this.reconnectTimer);
         this.reconnectTimer = null;
         const socket = this.socket;
@@ -240,7 +242,6 @@ class McpOffscreenTransport {
         socket.onopen = () => {
             if (this.socket !== socket) return;
             this.connecting = false;
-            this.backoffMs = 1_000;
             socket.send(JSON.stringify(token
                 ? { type: 'hello', role: 'extension', token, appVersion: VERSION, protocolVersion: PROTOCOL_VERSION }
                 : {
@@ -257,11 +258,13 @@ class McpOffscreenTransport {
             this.authenticated = false;
             this.reportStatus('disconnected');
             if (event.code === 4001 && token && !settings.token) {
-                // 只清内存不够：下次 connect 又会从 storage 里把同一个死令牌读回来，
-                // 于是 hello→4001→清内存→重读死令牌 无限循环。必须连落盘的 auto 一起清掉。
+                // 令牌失效不代表配对证明失效；重新配对仍需原证明。
                 this.autoToken = null;
                 this.autoPort = undefined;
-                void sendRuntimeMessage({ type: SETTINGS_SET_AUTO_MESSAGE, value: {} }).catch(() => undefined);
+                void sendRuntimeMessage({
+                    type: SETTINGS_SET_AUTO_MESSAGE,
+                    value: this.autoPairingSecret ? { port, pairingSecret: this.autoPairingSecret } : {},
+                }).catch(() => undefined);
             }
             void this.getSettings().then(({ settings: current }) => {
                 if (this.started && current.enabled !== false) this.scheduleReconnect();
@@ -310,6 +313,7 @@ class McpOffscreenTransport {
                 this.reportStatus('version_warning', { appVersion: message.appVersion });
             }
             this.authenticated = true;
+            this.backoffMs = 1_000;
             this.reportStatus('connected', { appVersion: message.appVersion, protocolVersion: peerProtocol });
             return;
         }

@@ -22,6 +22,25 @@ test('rejects ambiguous element_id and selector locators', () => {
   );
 });
 
+test('mouse targeting errors explain the supported recovery instead of suggesting selector retries', () => {
+  for (const action of ['click', 'double_click', 'right_click', 'hover', 'drag']) {
+    const error = cdpInputFunction.validate({ action, selector: '#comment-entry' });
+    assert.match(error, /selector.*not supported/i, action);
+    assert.match(error, /snapshot_id/, action);
+    assert.match(error, /page.*snapshot/i, action);
+  }
+  assert.equal(cdpInputFunction.validate({ action: 'click', x: 10, y: 20 }), null);
+  assert.equal(cdpInputFunction.validate({ action: 'click', element_id: 'ec-1', snapshot_id: 'snap-1' }), null);
+  assert.equal(cdpInputFunction.validate({ action: 'fill', selector: '#comment', value: 'draft' }), null);
+});
+
+test('selector help lists only actions that actually use a CSS selector', () => {
+  const help = cdpInputFunction.parameters.properties.selector.description;
+  assert.match(help, /type/);
+  assert.doesNotMatch(help, /click_text/);
+  assert.match(cdpInputFunction.description, /click\/double_click\/right_click\/hover\/drag.*not.*selector/i);
+});
+
 // 用假的 CDPSessionManager + 假页面状态验证 performType：CDP 按键只发给 activeElement，
 // 焦点不对时事件全部丢失但 sendCommand 仍返回 success，这正是要挡住的路径。
 const FAKE_SESSION_SRC = `
@@ -31,6 +50,11 @@ export const CDPSessionManager = {
   attach: async () => ({ success: true }),
   sendCommand: async (tabId, method, params) => {
     const p = page();
+    (p.commands ??= []).push({ method, params });
+    if (method === 'Emulation.setFocusEmulationEnabled') p.focusEmulated = params.enabled;
+    if (method === 'Input.dispatchMouseEvent' && params.type === 'mousePressed' && p.failMousePress) {
+      return { success: false, error: 'Mouse press rejected' };
+    }
     if (method === 'Runtime.evaluate') {
       const f = p.focus;
       const value = f
@@ -52,7 +76,7 @@ export const CDPSessionManager = {
 const bundleWithFakeSession = async () => {
   const out = await build({
     stdin: {
-      contents: `export { cdpInputFunction } from './src/functions/cdp-input.ts';`,
+      contents: `export { cdpInputFunction, realClickAt } from './src/functions/cdp-input.ts';`,
       resolveDir: process.cwd(),
       loader: 'ts',
     },
@@ -69,14 +93,37 @@ const bundleWithFakeSession = async () => {
     }],
   });
   const mod = await import(`data:text/javascript;base64,${Buffer.from(out.outputFiles[0].contents).toString('base64')}`);
-  return mod.cdpInputFunction;
+  return mod;
 };
 
-const cdpInputWithFakePage = await bundleWithFakeSession();
+const { cdpInputFunction: cdpInputWithFakePage, realClickAt } = await bundleWithFakeSession();
 const setPage = (focus, dropKeys = false) => {
   globalThis.__actspanFakePage = { focus, dispatched: 0, dropKeys };
   return globalThis.__actspanFakePage;
 };
+
+test('real clicks temporarily emulate focus so hidden tabs receive the complete mouse sequence', async () => {
+  const page = setPage(null);
+  assert.deepEqual(await realClickAt(5, 10, 20), { success: true });
+  assert.deepEqual(page.commands.map(({ method, params }) =>
+    method === 'Emulation.setFocusEmulationEnabled' ? `focus:${params.enabled}` : params.type),
+  ['focus:true', 'mouseMoved', 'mousePressed', 'mouseReleased', 'focus:false']);
+  assert.equal(page.focusEmulated, false);
+});
+
+test('real clicks restore focus emulation when pressing fails or the operation is aborted', async () => {
+  const page = setPage(null);
+  page.failMousePress = true;
+  assert.deepEqual(await realClickAt(5, 10, 20), { success: false, error: 'Mouse press rejected' });
+  assert.equal(page.focusEmulated, false);
+  assert.deepEqual(page.commands.at(-1), {
+    method: 'Emulation.setFocusEmulationEnabled', params: { enabled: false },
+  });
+
+  const aborted = setPage(null);
+  await assert.rejects(() => realClickAt(5, 10, 20, AbortSignal.abort()), { name: 'AbortError' });
+  assert.equal(aborted.focusEmulated, false);
+});
 
 test('type fails when no element has focus', async () => {
   const page = setPage(null);

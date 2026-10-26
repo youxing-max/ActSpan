@@ -394,7 +394,7 @@ interface RealOutcome {
 }
 // Serialized by chrome.scripting.executeScript; keep this function self-contained.
 // `text` 参数在 'read' 动作下承载 maxChars（字符串形式），其余动作是输入文本。
-async function pageAction(action: 'inspect' | 'click' | 'type' | 'observe' | 'read' | 'focus', descriptor: ActionTarget, text: string, submit: boolean, approvedSignature?: string) {
+async function pageAction(action: 'inspect' | 'click' | 'type' | 'observe' | 'read' | 'focus' | 'scroll_into_view', descriptor: ActionTarget, text: string, submit: boolean, approvedSignature?: string) {
     // 注入函数必须自包含：executeScript 把页面侧 throw 吞成 {result:null} 且不带 error 字段，
     // 桥侧无法分辨「返回 null」与「抛错」，所以动作体自己把结果装进信封，由调用方还原。
     const body = async (): Promise<Record<string, unknown>> => {
@@ -584,7 +584,8 @@ async function pageAction(action: 'inspect' | 'click' | 'type' | 'observe' | 're
             return { text: ((target as HTMLElement).innerText || target.textContent || '').slice(0, limit),
                 html: target.outerHTML.slice(0, limit), tag: target.tagName, find: stableFind };
         }
-        if (action === 'click') target.scrollIntoView({ block: 'center' });
+        if (action === 'click' || action === 'scroll_into_view') target.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+        if (action === 'scroll_into_view') return { center: centerOf(target) };
         const form = (target as HTMLInputElement).form;
         // 与 content script 的 classifySensitiveTarget 同源：提交语义检查表单提交按钮（type+submit 会 requestSubmit），
         // 普通点击检查目标自身或它最近的按钮祖先（click 只点目标本身）。
@@ -664,7 +665,7 @@ function assertSafeNavigableTarget(value: unknown): string {
  * 页面无法用公开属性把 ref 重定向到别的元素。
  */
 async function runRefAction<T = Record<string, unknown>>(
-    context: TaskContext, tabId: number, action: 'inspect' | 'read' | 'click' | 'type' | 'observe' | 'focus', target: ActionTarget,
+    context: TaskContext, tabId: number, action: 'inspect' | 'read' | 'click' | 'type' | 'observe' | 'focus' | 'scroll_into_view', target: ActionTarget,
     payload: Record<string, unknown> = {}, frameId?: number): Promise<T> {
     const result = await sendToTabWithRetry<{ success: boolean; error?: string; data?: T }>(
         tabId, '__page_grounding_action',
@@ -987,7 +988,8 @@ export async function dispatch(method: string, params: Record<string, unknown>, 
                         ...(routed?.target.ref ? { element_id: routed.target.ref, snapshot_id: routed.target.snapshotId } : {}),
                         ...(routed?.target.selector ? { selector: routed.target.selector } : {}),
                         ...(routed?.target.find ? { find: routed.target.find } : {}) },
-                    { signal: context.signal, deadlineMs: 5000, timeoutMessage: '页面状态探针超时', frameId: routed?.frameId });
+                    // 未定向的消息会投递到全部框架，子框架可能抢先回传错误的状态。
+                    { signal: context.signal, deadlineMs: 5000, timeoutMessage: '页面状态探针超时', frameId: routed?.frameId ?? MAIN_FRAME_ID });
                 if (!probe?.success) throw new Error(probe?.error || '页面状态探针失败');
                 return { url: redactSensitive({ url: currentUrl }).url, ...(probe.data || {}) };
             }
@@ -1120,6 +1122,14 @@ export async function dispatch(method: string, params: Record<string, unknown>, 
             };
             // A1：真实事件通道复用 cdp-input 的 CDP 事件序列；坐标由内容脚本解析，桥只负责派发。
             const replayReal = async (): Promise<RealOutcome> => {
+                if (action === 'click') {
+                    try {
+                        if (target.ref) await runRefAction(context, tab.id!, 'scroll_into_view', target, {}, routed.frameId);
+                        else await execInTab(tab.id!, pageAction as never, ['scroll_into_view', target, '', false], 'ISOLATED', context.signal);
+                    } catch {
+                        return { success: false, error: '无法将目标滚动到视口', changed: false, changedFields: [], before: null, after: null };
+                    }
+                }
                 const before = await observe();
                 if (!before) return { success: false, error: '无法观测目标状态', changed: false, changedFields: [], before: null, after: null };
                 let real: { success: boolean; error?: string };

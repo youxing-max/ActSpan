@@ -5,16 +5,31 @@ import { build } from 'esbuild';
 const bundle = await build({
   stdin: {
     contents: `
-      export { getTextContent, stripImagesFromContent, estimateContextTokens, compactContext } from './src/ai/context-manager.ts';
+      export { getTextContent, stripImagesFromContent, estimateContextTokens, compactContext, microCompact } from './src/ai/context-manager.ts';
     `,
     resolveDir: process.cwd(),
     loader: 'ts',
   },
   bundle: true, write: false, format: 'esm', platform: 'node',
 });
-const { getTextContent, stripImagesFromContent, estimateContextTokens, compactContext } = await import(
+const { getTextContent, stripImagesFromContent, estimateContextTokens, compactContext, microCompact } = await import(
   `data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].contents).toString('base64')}`
 );
+
+test('micro compaction retains actionable failure diagnostics as structured output', () => {
+  const context = [
+    { type: 'function_call', id: 'failed', call_id: 'failed', name: 'cdp_input', arguments: '{"action":"click","selector":"#comment"}' },
+    { type: 'function_call_output', call_id: 'failed', output: JSON.stringify({
+      success: false, error: 'click does not support selector; get element_id and snapshot_id from page snapshot', detail: 'x'.repeat(900),
+    }) },
+    ...Array.from({ length: 7 }, (_, i) => ({ type: 'function_call_output', call_id: `ok-${i}`, output: '{"success":true}' })),
+  ];
+  assert.equal(microCompact(context), 1);
+  const result = JSON.parse(context[1].output);
+  assert.equal(result.success, false);
+  assert.match(result.error, /snapshot_id/);
+  assert.ok(context[1].output.length <= 500);
+});
 
 test('getTextContent reads assistant output_text parts', () => {
   // Responses API 的助手消息使用 output_text；旧实现只识别 input_text，会返回空串。

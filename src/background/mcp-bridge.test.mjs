@@ -303,6 +303,10 @@ function browserFixture({ label = 'Continue', nearby = label, approved = true, f
       },
       async detach(target) { debuggerAttached.delete(target.tabId); },
       async sendCommand(_target, method, options) {
+      if (method === 'Emulation.setFocusEmulationEnabled') {
+        effects.focusEmulated = options.enabled;
+        return {};
+      }
       if (method === 'Input.dispatchMouseEvent') {
         effects.realMouse++;
         if (options.type === 'mouseReleased' && onRealInput?.('click')) button.innerText = 'Done';
@@ -341,6 +345,26 @@ function browserFixture({ label = 'Continue', nearby = label, approved = true, f
   return { effects, context, button, input, knownTabs, createdListeners,
     restore: () => { requestConfirmationFunction.execute = prior; unregister.forEach((stop) => stop()); void CDPSessionManager.detachTab(id); debuggerAttached.clear(); } };
 }
+
+test('page.read state probes target the main frame unless a ref names another frame', async () => {
+  const fixture = browserFixture();
+  const frames = [];
+  globalThis.chrome.runtime = {};
+  globalThis.chrome.tabs.sendMessage = (_tabId, message, options, callback) => {
+    if (typeof options === 'function') { callback = options; options = undefined; }
+    if (message.type !== '__page_grounding_action') { callback?.({}); return; }
+    frames.push(options?.frameId);
+    callback({ success: true, data: { exists: true, matched: options?.frameId !== undefined } });
+  };
+  try {
+    const results = [];
+    for (const target of [{ selector: '#target' }, {}, { ref: 'ec-child@f47', snapshotId: 'snap-one' }]) {
+      results.push(await executeBridgeRequest('page.read', { ...target, attr: 'text', expect: 'Continue' }, fixture.context));
+    }
+    assert.deepEqual(frames, [0, 0, 47]);
+    assert.ok(results.every((result) => result.matched));
+  } finally { fixture.restore(); }
+});
 
 test('payment clicks execute without confirmation in free mode', async () => {
   for (const [label, nearby] of [['Pay now', 'Pay now $29.99'], ['Confirm', 'Total ¥129.00 Confirm']]) {
@@ -505,6 +529,20 @@ test('no-effect click escalates to real CDP events and reports the channel', asy
     assert.equal(result.changed, true);
     assert.equal(result.effect.status, 'changed');
     assert.deepEqual(result.effect.changed_fields, ['text']);
+  } finally { fixture.restore(); }
+});
+
+test('explicit real clicks scroll the target into view before resolving CDP coordinates', async () => {
+  let scrolled = false;
+  const fixture = browserFixture({ onRealInput: (kind) => kind === 'click' && scrolled });
+  fixture.button.getBoundingClientRect = () => ({ left: 10, top: scrolled ? 20 : 2000, width: 40, height: 20 });
+  fixture.button.scrollIntoView = () => { scrolled = true; };
+  try {
+    const result = await executeBridgeRequest('page.click', { selector: '#target', real: true, tabId: fixture.context.tabId }, fixture.context);
+    assert.equal(scrolled, true);
+    assert.equal(result.changed, true);
+    assert.equal(fixture.effects.clicks, 0, 'must not depend on a synthetic fallback');
+    assert.equal(fixture.effects.focusEmulated, false);
   } finally { fixture.restore(); }
 });
 

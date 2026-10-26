@@ -7,7 +7,7 @@
 
 import type {
   InputItem, ToolSchema, AIStreamEvent,
-  FunctionCallOutputItem,
+  FunctionCallInputItem, FunctionCallOutputItem,
 } from './types';
 import { getTextContent } from './context-manager';
 import { TodoManager } from './todo-manager';
@@ -22,6 +22,7 @@ import {
   TODO_COMPLETION_THRESHOLD, MAX_REVIEW_RETRIES, MAX_PHASES, DEFAULT_BUDGET,
 } from './loop-config';
 import { createDeadlineSignal } from './deadline';
+import { taskManager } from '../background/task-manager';
 
 import { agenticLoop } from './core-loop';
 import { shouldSkipReview, runReviewAgent } from './review-agent';
@@ -69,6 +70,10 @@ const extractDataFromContext = (context: InputItem[]): {
   const collectedData: Record<string, unknown> = {};
   const observationSet = new Set<string>();
   const warningSet = new Set<string>();
+  const calls = new Map<string, FunctionCallInputItem>();
+  for (const item of context) {
+    if ('type' in item && item.type === 'function_call') calls.set(item.call_id, item);
+  }
 
   for (const item of context) {
     if (!('type' in item) || item.type !== 'function_call_output') continue;
@@ -77,7 +82,17 @@ const extractDataFromContext = (context: InputItem[]): {
 
     try {
       const parsed = JSON.parse(output);
+      const call = calls.get(item.call_id);
+      if (parsed?.success === false) {
+        const error = typeof parsed.error === 'string' ? parsed.error : JSON.stringify(parsed.error ?? '操作失败');
+        let args: Record<string, unknown> = {};
+        try { args = (call ? JSON.parse(call.arguments) : {}) ?? {}; } catch { /* Preserve the error even for malformed arguments. */ }
+        const target = JSON.stringify({ action: args.action, selector: args.selector, element_id: args.element_id });
+        warningSet.add(`${call?.name ?? 'tool'}(${target.slice(0, 250)}): ${error.slice(0, 400)}`);
+        continue;
+      }
       if (!parsed?.success) continue;
+      if (call?.name === 'todo') continue;
       const data = parsed.data;
       if (!data) continue;
 
@@ -120,15 +135,32 @@ const extractDataFromContext = (context: InputItem[]): {
 /**
  * 提取交接工件
  */
-const extractHandoffArtifact = async (
+export const extractHandoffArtifact = async (
   context: InputItem[],
   todoManager: TodoManager,
   tabId: number | undefined,
   originalQuery: string,
   phaseIndex: number,
+  previousArtifact?: HandoffArtifact,
 ): Promise<HandoffArtifact> => {
   const browserState = await getBrowserState(tabId);
   const { collectedData, observations, warnings } = extractDataFromContext(context);
+  const recentMessages = [...(previousArtifact?.recentMessages ?? [])];
+  for (const item of context) {
+    if (!('role' in item) || (item.role !== 'user' && item.role !== 'assistant')) continue;
+    const content = getTextContent(item.content).trim();
+    if (!content || content.startsWith('## 任务接续\n')) continue;
+    const retainedContent = content.slice(0, 6000);
+    const duplicate = recentMessages.findIndex(message => message.role === item.role && message.content === retainedContent);
+    if (duplicate >= 0) recentMessages.splice(duplicate, 1);
+    recentMessages.push({ role: item.role, content: retainedContent });
+  }
+  // 不携带截图或嵌套交接 prompt；保留最近的原始用户指令和助手文本。
+  let messageChars = 0;
+  const retainedMessages = recentMessages.reverse().filter(message => {
+    messageChars += message.content.length;
+    return messageChars <= 16000;
+  }).reverse();
 
   const completedSummaries: string[] = [];
   for (const item of todoManager.all) {
@@ -144,19 +176,21 @@ const extractHandoffArtifact = async (
     completedSummaries,
     browserState,
     collectedData,
-    observations,
-    warnings,
+    observations: [...new Set([...(previousArtifact?.observations ?? []), ...observations])].slice(-8),
+    warnings: [...new Set([...(previousArtifact?.warnings ?? []), ...warnings])].slice(-8),
+    recentMessages: retainedMessages,
   };
 };
 
 /**
  * 构建交接注入 prompt（新阶段的首条用户消息）
  */
-const buildHandoffPrompt = (artifact: HandoffArtifact): string => {
+export const buildHandoffPrompt = (artifact: HandoffArtifact): string => {
   const parts: string[] = [];
 
   parts.push('## 任务接续');
   parts.push('你正在接手一个进行中的任务。以下是前序阶段的执行状态：');
+  parts.push('后附原始对话保留了已输出的总结、草稿和后补用户指令；以最新用户指令为准。助手陈述和草稿不代表操作已完成或已提交。');
   parts.push('');
 
   parts.push('### 用户目标');
@@ -242,6 +276,7 @@ export const phaseOrchestrator = async (
 ): Promise<InputItem[]> => {
   const originalQuery = query;
   let lastContext: InputItem[] = [];
+  let previousArtifact: HandoffArtifact | undefined;
   let reviewRetries = 0;
   // 阶段交接共享同一个墙钟 deadline，避免每个阶段重新计时。
   const taskDeadline = createDeadlineSignal(
@@ -267,15 +302,16 @@ export const phaseOrchestrator = async (
         context.push({ role: 'user' as const, content: query });
       }
     } else {
-      context = [{ role: 'user' as const, content: query }];
+      context = [{ role: 'user' as const, content: query }, ...(previousArtifact?.recentMessages ?? [])];
     }
 
     // ── 阶段控制信号 ──
     let todoCompletedSinceHandoff = 0;
+    const phaseStartRound = sharedUsage.rounds;
     const phaseControl: PhaseControl = {
       shouldHandoff: (tokens, round) => {
         if (tokens > HANDOFF_TOKEN_THRESHOLD) return true;
-        if (round >= FORCE_HANDOFF_ROUNDS) return true;
+        if (round - phaseStartRound >= FORCE_HANDOFF_ROUNDS) return true;
         return false;
       },
       onTodoCompleted: () => {
@@ -312,13 +348,18 @@ export const phaseOrchestrator = async (
       }),
     });
 
+    // 执行器会更新任务工作页；交接和审查必须跟随它，而不是会话最初的标签页。
+    const task = options?.toolContext?.taskId ? taskManager.get(options.toolContext.taskId) : undefined;
+    const activeTabId = typeof task?.activeTabId === 'number' && task.activeTabId > 0
+      ? task.activeTabId : tabId;
     const artifact = await extractHandoffArtifact(
-      resultContext, todoManager, tabId, originalQuery, phase,
+      resultContext, todoManager, activeTabId, originalQuery, phase, previousArtifact,
     );
 
     // ── 审查流程 ──
-    if (!shouldSkipReview(todoManager, resultContext)) {
-      const verdict = await runReviewAgent(artifact, tools, tabId, signal, emit);
+    // Budget handoffs continue unfinished work; review only completed milestones.
+    if (handoffReason === 'todo_completed' && !shouldSkipReview(todoManager, resultContext)) {
+      const verdict = await runReviewAgent(artifact, tools, activeTabId, signal, emit, options, taskDeadline);
 
       if (!verdict.passed) {
         if (reviewRetries < MAX_REVIEW_RETRIES) {
@@ -328,6 +369,7 @@ export const phaseOrchestrator = async (
       }
     }
 
+    previousArtifact = artifact;
     query = buildHandoffPrompt(artifact);
   }
 

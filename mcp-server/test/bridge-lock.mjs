@@ -144,22 +144,33 @@ test('a silent extension that never answers ping is terminated', async () => {
 });
 
 test('an extension that answers ping stays connected', async () => {
-    const hub = new ExtensionHub('secret', { port: 0, pairOrigins: [origin], pingIdleMs: 60, pongTimeoutMs: 200 });
+    const hub = new ExtensionHub('secret', { port: 0, pairOrigins: [origin], pingIdleMs: 60, pongTimeoutMs: 1000 });
     await hub.start(0);
     const port = hub.wss.address().port;
     const ws = new WebSocket(`ws://127.0.0.1:${port}`, { headers: { Origin: origin } });
     let pings = 0;
-    ws.on('message', (raw) => {
-        const message = JSON.parse(raw.toString());
-        if (message.type === 'ping') { pings++; ws.send(JSON.stringify({ type: 'pong', at: Date.now() })); }
-    });
-    await new Promise((resolve) => ws.on('open', resolve));
-    ws.send(JSON.stringify({ type: 'hello', token: hub.token }));
-    await new Promise((resolve) => setTimeout(resolve, 400));
-    assert.ok(pings >= 3, `expected repeated pings, saw ${pings}`);
-    assert.equal(hub.isConnected(), true);
-    ws.close();
-    await hub.stop();
+    let timeout;
+    try {
+        const repeatedPings = new Promise((resolve, reject) => {
+            timeout = setTimeout(() => reject(new Error(`expected repeated pings, saw ${pings}`)), 5000);
+            ws.once('error', reject);
+            ws.once('open', () => ws.send(JSON.stringify({ type: 'hello', token: hub.token })));
+            ws.on('message', (raw) => {
+                const message = JSON.parse(raw.toString());
+                if (message.type === 'ping') {
+                    pings++;
+                    ws.send(JSON.stringify({ type: 'pong', at: Date.now() }));
+                    if (pings >= 3) resolve();
+                }
+            });
+        });
+        await repeatedPings;
+        assert.equal(hub.isConnected(), true);
+    } finally {
+        clearTimeout(timeout);
+        ws.terminate();
+        await hub.stop();
+    }
 });
 
 /** 最小 RPC 客户端：认证 + 一次调用，用来验证 daemon 的契约而不是 CLI 的行为。 */

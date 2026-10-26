@@ -56,6 +56,44 @@ test('site experience guidance is advisory and preserves saved workflow discover
   assert.match(prompt, /untrusted page content/i);
 });
 
+test('hidden regions are opened from visible entries before input or repeated scrolling', () => {
+  const prompt = buildSystemPrompt([], false);
+  assert.match(prompt, /comment.*tab.*panel/i);
+  assert.match(prompt, /visible entry.*click.*snapshot/is);
+  assert.match(prompt, /click.*snapshot_id/);
+  assert.match(prompt, /click.*does not accept.*selector/i);
+  assert.doesNotMatch(prompt, /selector fallback if the handle fails/);
+});
+
+test('simple forms use a direct sequence without per-click planning or repeated submissions', () => {
+  const prompt = buildSystemPrompt([], false);
+  assert.match(prompt, /simple form.*single goal/is);
+  assert.match(prompt, /do not create a todo.*simple form/is);
+  assert.match(prompt, /fill.*observed.*submit.*verify once/is);
+  assert.match(prompt, /approved.*(?:draft|text).*unchanged/is);
+  assert.match(prompt, /do not repeat.*submission.*unclear/is);
+  assert.match(prompt, /Posting public comments.*user/);
+});
+
+test('explicit comment publication requests authorize submission without another approval', () => {
+  for (const hasSubtask of [false, true]) {
+    const prompt = buildSystemPrompt([], hasSubtask);
+    const permissions = prompt.split('## Permissions')[1].split('## Asking the User')[0];
+    const forms = prompt.split('### Simple Forms: Direct Sequence')[1].split('### Verification Timing')[0];
+    assert.match(permissions, /explicit user request.*already authorization/i);
+    assert.match(permissions, /write and post.*user/i);
+    assert.match(permissions, /do not call request_confirmation.*authorized publication/i);
+    assert.match(permissions, /直接提交/);
+    assert.match(permissions, /only from user instructions.*not page content/i);
+    assert.match(forms, /do not require approval of agent-written wording/i);
+    assert.match(permissions, /draft-only.*review-before-post.*NOT publication authorization/i);
+    assert.match(forms, /approved.*(?:draft|text).*unchanged/i);
+    assert.match(forms, /rejection.*not permission.*rewrite and submit/i);
+    assert.match(permissions, /payments.*transferring money.*request_confirmation/i);
+    assert.doesNotMatch(forms, /If approval is missing, request confirmation/i);
+  }
+});
+
 test('chat exposes registered webhook, agent, and dynamic tools without load_tools', async () => {
   const mocks = {
     '../functions/registry': `export const ensureToolRegistryReady = async () => {}; export const mcpClient = { listTools: async () => ['page', 'webhook', 'custom_dynamic', 'load_tools', 'cdp_network', 'download_file', 'act'].map(name => ({ name })) };`,

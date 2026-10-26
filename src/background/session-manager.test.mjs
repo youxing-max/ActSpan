@@ -48,6 +48,7 @@ const bundle = await build({
   stdin: {
     contents: `
       export { createSessionPushEvent, flushFeishuCompletionNotifications } from './src/background/session-manager.ts';
+      export { buildSessionHistoryRecord } from './src/background/session-history.ts';
     `,
     resolveDir: process.cwd(),
     loader: 'ts',
@@ -57,11 +58,57 @@ const bundle = await build({
   format: 'esm',
   platform: 'node',
 });
-const { createSessionPushEvent, flushFeishuCompletionNotifications } = await import(
+const { createSessionPushEvent, flushFeishuCompletionNotifications, buildSessionHistoryRecord } = await import(
   `data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].contents).toString('base64')}`
 );
 
 const waitForAsyncWork = () => new Promise((resolve) => setImmediate(resolve));
+
+test('long cumulative text streams retain tool evidence and the complete reply', () => {
+  const session = {
+    id: 'session-long-stream', status: 'running', context: [], eventLog: [],
+    createdAt: 1, startedAt: 1, summary: 'Read the page',
+    agentState: { phase: 'act', round: 1, reason: '', updatedAt: 1 },
+  };
+  const pushEvent = createSessionPushEvent(session);
+  pushEvent({ type: 'turn_started', content: JSON.stringify({ query: 'Read the page', runId: 'stream-run', startedAt: 1 }) });
+  pushEvent({ type: 'function_call', content: JSON.stringify({ name: 'page', callId: 'page-1', arguments: '{}' }) });
+  pushEvent({ type: 'function_result', content: JSON.stringify({ name: 'page', callId: 'page-1', success: true }) });
+  for (let length = 1; length <= 600; length++) {
+    pushEvent({ type: 'text', content: 'x'.repeat(length) });
+  }
+
+  const record = buildSessionHistoryRecord(session);
+  assert.equal(session.eventLog.filter(event => event.type === 'text').length, 1);
+  assert.equal(record.toolCalls.length, 1);
+  assert.equal(record.toolCallChain.length, 1);
+  assert.equal(record.assistantReply, 'x'.repeat(600));
+  assert.equal(record.turns[0].reply, 'x'.repeat(600));
+});
+
+test('text coalescing preserves new responses, phase boundaries and turns', () => {
+  const session = {
+    id: 'session-stream-boundaries', status: 'running', context: [], eventLog: [],
+    createdAt: 1, startedAt: 1,
+    agentState: { phase: 'act', round: 1, reason: '', updatedAt: 1 },
+  };
+  const pushEvent = createSessionPushEvent(session);
+  pushEvent({ type: 'turn_started', content: JSON.stringify({ query: 'First', runId: 'first' }) });
+  pushEvent({ type: 'text', content: 'First' });
+  pushEvent({ type: 'text', content: 'First answer' });
+  pushEvent({ type: 'text', content: 'Other' });
+  pushEvent({ type: 'text', content: 'Other answer' });
+  pushEvent({ type: 'phase_handoff', content: '{}' });
+  pushEvent({ type: 'text', content: 'Other answer after handoff' });
+  pushEvent({ type: 'turn_started', content: JSON.stringify({ query: 'Second', runId: 'second' }) });
+  pushEvent({ type: 'text', content: 'Other answer after handoff and new turn' });
+
+  assert.deepEqual(session.eventLog.filter(event => event.type === 'text').map(event => event.content), [
+    'First answer', 'Other answer', 'Other answer after handoff', 'Other answer after handoff and new turn',
+  ]);
+  assert.equal(session.turns[0].reply, 'Other answer after handoff');
+  assert.equal(session.turns[1].reply, 'Other answer after handoff and new turn');
+});
 
 test('pushes a completed investigation result to enabled Feishu webhooks once', async () => {
   const originalFetch = globalThis.fetch;

@@ -97,7 +97,8 @@ export class TabLeaseManager {
   selectTab(context: Pick<TaskContext, 'taskId' | 'sessionId' | 'clientId'>, tabId: number): { tabId: number; warning?: string } {
     if (this.conflict(context, tabId)) return { tabId, warning: this.ownershipError(tabId).message };
     const record = this.ownTabs.get(tabId);
-    if (record && this.sessionKey(record) === this.sessionKey(context)) {
+    if (!record) throw this.ownershipError(tabId);
+    if (this.sessionKey(record) === this.sessionKey(context)) {
       for (const item of this.ownTabs.values()) if (this.sessionKey(item) === this.sessionKey(context)) item.defaultSlot = item.tabId === tabId;
       this.onChange();
     }

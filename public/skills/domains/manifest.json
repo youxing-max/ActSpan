@@ -40,9 +40,20 @@
                 "params": { "action": "wait_for_element", "selector": "[data-sku],#J_goodsList", "timeout_ms": 12000 }
               },
               {
-                "action": "cdp_dom",
-                "note": "采集商品卡片原始节点",
-                "params": { "action": "query", "selector": "[data-sku]", "limit": "{{max_results}}" },
+                "action": "extract_data",
+                "note": "采集商品名称、价格和链接",
+                "params": {
+                  "mode": "schema",
+                  "max_items": "{{max_results}}",
+                  "schema": {
+                    "item_selector": "[data-sku]",
+                    "fields": [
+                      { "name": "name", "selector": ".p-name a" },
+                      { "name": "price", "selector": ".p-price" },
+                      { "name": "link", "selector": ".p-name a", "attribute": "href" }
+                    ]
+                  }
+                },
                 "saveAs": "items"
               }
             ],
@@ -89,9 +100,20 @@
                 "params": { "action": "wait_for_element", "selector": "#content_left", "timeout_ms": 10000 }
               },
               {
-                "action": "cdp_dom",
-                "note": "采集搜索结果原始节点",
-                "params": { "action": "query", "selector": "#content_left .c-container", "limit": "{{max_results}}" },
+                "action": "extract_data",
+                "note": "采集搜索结果标题、摘要和链接",
+                "params": {
+                  "mode": "schema",
+                  "max_items": "{{max_results}}",
+                  "schema": {
+                    "item_selector": "#content_left .c-container",
+                    "fields": [
+                      { "name": "title", "selector": "h3" },
+                      { "name": "snippet", "selector": ".c-abstract, [class*='content-right'], .c-span-last" },
+                      { "name": "link", "selector": "h3 a", "attribute": "href" }
+                    ]
+                  }
+                },
                 "saveAs": "items"
               }
             ],

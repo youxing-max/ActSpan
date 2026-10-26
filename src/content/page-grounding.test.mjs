@@ -382,8 +382,7 @@ const domNode = (tagName, { text = '', attrs = {}, cursor = 'default', children 
   return el;
 };
 
-/** 用假 DOM 跑一次 page snapshot，返回响应体 */
-const snapshotOf = (nodes, params = {}) => {
+const withSnapshotDom = (nodes, run) => {
   const saved = {
     document: globalThis.document,
     window: globalThis.window,
@@ -393,39 +392,62 @@ const snapshotOf = (nodes, params = {}) => {
     HTMLSelectElement: globalThis.HTMLSelectElement,
   };
   const byId = new Map(nodes.filter((node) => node.id).map((node) => [node.id, node]));
-  const handles = [];
-  let response;
+  const existingHandles = new Set(elementHandleMap.keys());
+  const registeredHandlers = new Map(Channel.handlers);
   try {
     globalThis.HTMLAnchorElement = class {};
     globalThis.HTMLInputElement = class {};
     globalThis.HTMLTextAreaElement = class {};
     globalThis.HTMLSelectElement = class {};
+    for (const node of nodes) {
+      if (node.tagName === 'INPUT') {
+        Object.setPrototypeOf(node, HTMLInputElement.prototype);
+        node.type = node.getAttribute('type') || 'text';
+        node.value = node.getAttribute('value') || '';
+      } else if (node.tagName === 'TEXTAREA') {
+        Object.setPrototypeOf(node, HTMLTextAreaElement.prototype);
+        node.value = '';
+      }
+    }
     globalThis.document = {
       title: 'Login',
       body: { querySelectorAll: () => nodes, shadowRoot: null },
       getElementById: (id) => byId.get(id) || null,
-      querySelector: () => null,
+      querySelector: (selector) => byId.get(selector.slice(1)) || null,
+      querySelectorAll: () => nodes,
     };
     globalThis.window = {
       innerWidth: 800,
       innerHeight: 600,
       location: { href: 'https://example.test/login' },
-      getComputedStyle: (el) => ({ display: 'block', visibility: 'visible', opacity: '1', cursor: el.cursor }),
+      getComputedStyle: (el) => ({ display: el.hidden ? 'none' : 'block', visibility: 'visible', opacity: '1', cursor: el.cursor }),
     };
+    Channel.handlers.clear();
     initPageGrounding();
-    for (const handler of Channel.handlers.get('__page_grounding_snapshot')) {
-      handler(params, null, (value) => { response = value; });
-    }
-    for (const descriptor of response?.data?.elements || []) handles.push(descriptor.element_id);
+    return run();
   } finally {
-    for (const handle of handles) {
+    for (const handle of elementHandleMap.keys()) {
+      if (existingHandles.has(handle)) continue;
       elementHandleMap.delete(handle);
       elementHandleSnapshotMap.delete(handle);
     }
+    Channel.handlers.clear();
+    for (const [type, handlers] of registeredHandlers) Channel.handlers.set(type, handlers);
     Object.assign(globalThis, saved);
   }
+};
+
+const groundingRequest = (type, params) => {
+  let response;
+  for (const handler of Channel.handlers.get(`__page_grounding_${type}`)) {
+    handler(params, null, (value) => { response = value; });
+  }
+  assert.equal(response?.success, true, JSON.stringify(response));
   return response;
 };
+
+/** 用假 DOM 跑一次 page snapshot，返回响应体 */
+const snapshotOf = (nodes, params = {}) => withSnapshotDom(nodes, () => groundingRequest('snapshot', params));
 
 test('snapshot descriptors expose aria-selected as a tri-state', () => {
   const selected = domNode('button', { text: 'A', attrs: { role: 'tab', 'aria-selected': 'true' } });
@@ -477,6 +499,104 @@ test('snapshot folds nested decorations and labels but keeps weak candidates', (
   assert.equal(response.data.elements.find((el) => el.tag === 'input').label, 'Email');
   // 弱候选（tabindex）可能是独立操作，必须保留且可寻址
   assert.ok(response.data.elements.find((el) => el.tag === 'span').element_id, '弱候选必须保留');
+});
+
+test('Chinese queries find short comment labels without returning unrelated navigation', () => {
+  const navigation = Array.from({ length: 25 }, (_, index) => domNode('button', { text: `Navigation ${index}` }));
+  const comment = domNode('button', { text: '评论' });
+  const input = domNode('input', { attrs: { placeholder: '输入评论', type: 'text' } });
+  const response = snapshotOf([...navigation, comment, input], { query: '评论输入框', limit: 2 });
+  assert.equal(response.success, true, JSON.stringify(response));
+  assert.equal(response.data.elements.length, 2);
+  assert.ok(response.data.elements.some(element => element.text === '评论'));
+  assert.ok(response.data.elements.some(element => element.placeholder === '输入评论'));
+  assert.ok(response.data.elements.every(element => element.match_reasons?.length));
+});
+
+test('queries with no semantic match return no unrelated clickable controls', () => {
+  const response = snapshotOf([domNode('button', { text: 'Help' })], { query: '发表评论' });
+  assert.equal(response.success, true, JSON.stringify(response));
+  assert.deepEqual(response.data.elements, []);
+});
+
+test('submit input captions are searchable without exposing editable or password values', () => {
+  for (const type of ['button', 'submit', 'reset']) {
+    const submit = domNode('input', { attrs: { type, value: '评论', class: 'btn-comment-input' } });
+    const password = domNode('input', { attrs: { type: 'password', value: '评论' } });
+    const editable = domNode('input', { attrs: { type: 'text', value: '评论' } });
+    const response = snapshotOf([password, editable, submit], { query: '发表评论 提交按钮' });
+    assert.equal(response.data.elements.length, 1, type);
+    assert.equal(response.data.elements[0].text, '评论', type);
+    assert.equal(response.data.elements[0].clickable, true, type);
+  }
+});
+
+test('Chinese compound queries still find short labels when Intl.Segmenter is unavailable', () => {
+  const descriptor = Object.getOwnPropertyDescriptor(Intl, 'Segmenter');
+  try {
+    Object.defineProperty(Intl, 'Segmenter', { ...descriptor, value: undefined });
+    const response = snapshotOf([domNode('button', { text: '评论' })], { query: '发表评论输入框' });
+    assert.equal(response.data.elements.length, 1);
+    assert.ok(response.data.elements[0].match_reasons.includes('text:token:评论'));
+  } finally {
+    Object.defineProperty(Intl, 'Segmenter', descriptor);
+  }
+});
+
+test('query matching checks later attributes on non-interactive elements', () => {
+  const response = snapshotOf([domNode('div', { attrs: { placeholder: '评论说明' } })], { query: '评论' });
+  assert.equal(response.data.elements.length, 1);
+  assert.ok(response.data.elements[0].match_reasons.includes('placeholder:contains'));
+});
+
+test('an offline comment form opens, fills, submits once and verifies through observed handles', () => {
+  const entry = domNode('button', { text: '评论' });
+  const input = domNode('textarea', { attrs: { id: 'comment_content', placeholder: '说说你的看法，或者提个问题' } });
+  const submit = domNode('input', { attrs: { type: 'button', value: '评论' } });
+  const panel = domNode('div', { attrs: { id: 'comment-panel' }, children: [input, submit] });
+  const status = domNode('div', { attrs: { id: 'comment-status' } });
+  panel.querySelectorAll = () => [input, submit];
+  for (const node of [panel, input, submit]) node.hidden = true;
+  const actions = [];
+  entry.click = () => {
+    actions.push('open');
+    for (const node of [panel, input, submit]) node.hidden = false;
+  };
+  input.focus = () => actions.push('fill');
+  input.dispatchEvent = () => true;
+  submit.click = () => {
+    actions.push('submit');
+    assert.equal(input.value, 'Approved offline draft');
+    status.innerText = '评论已提交';
+  };
+  withSnapshotDom([entry, panel, input, submit, status], () => {
+    const initial = groundingRequest('snapshot', { query: '评论入口' });
+    assert.deepEqual(initial.data.elements.map(element => element.text), ['评论']);
+    const act = (action, descriptor, extra = {}) => groundingRequest('action', {
+      action, element_id: descriptor.element_id, snapshot_id: descriptor.snapshot_id, ...extra,
+    });
+    act('click', initial.data.elements[0]);
+    const opened = groundingRequest('snapshot', { scope_selector: '#comment-panel' });
+    const field = opened.data.elements.find(element => element.tag === 'textarea');
+    const button = opened.data.elements.find(element => element.text === '评论');
+    assert.ok(field?.visible && button?.visible);
+    act('fill', field, { value: 'Approved offline draft' });
+    act('click', button);
+    const verified = groundingRequest('assert', {
+      scope_selector: '#comment-status', assertions: [{ type: 'text_includes', value: '评论已提交' }],
+    });
+    assert.equal(verified.data.passed, true);
+    actions.push('verify');
+  });
+  assert.deepEqual(actions, ['open', 'fill', 'submit', 'verify']);
+});
+
+test('English query tokens and unfiltered snapshots retain their existing behavior', () => {
+  const help = domNode('button', { text: 'Help' });
+  const save = domNode('button', { text: 'Save' });
+  const response = snapshotOf([help, save], { query: 'save changes' });
+  assert.deepEqual(response.data.elements.map(element => element.text), ['Save']);
+  assert.equal(snapshotOf([help, save]).data.elements.length, 2);
 });
 
 test('sanitizeElementValue hides password, OTP, card and hidden values', () => {

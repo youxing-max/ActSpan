@@ -21,7 +21,7 @@
     <img src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg" alt="License">
   </a>
   <img src="https://img.shields.io/badge/Manifest-V3-green.svg" alt="Manifest V3">
-  <img src="https://img.shields.io/badge/MCP-35%20tools-orange.svg" alt="MCP 35 tools">
+  <img src="https://img.shields.io/badge/MCP-34%20tools-orange.svg" alt="MCP 34 tools">
   <img src="https://img.shields.io/badge/node-%3E%3D20-brightgreen.svg" alt="Node >= 20">
 </p>
 
@@ -33,7 +33,7 @@
 - [适合什么场景](#适合什么场景)
 - [核心能力](#核心能力)
 - [整体架构](#整体架构)
-- [MCP 工具全清单（35 个）](#mcp-工具全清单35-个)
+- [MCP 工具全清单（34 个）](#mcp-工具全清单34-个)
 - [Free Mode 安全模型](#free-mode-安全模型)
 - [技能体系](#技能体系)
 - [双向机器人与通知](#双向机器人与通知)
@@ -58,7 +58,7 @@ Actspan 是一个运行在 Chrome 中的 AI 浏览器助手（Manifest V3 扩展
 | 执行位置 | 本地 Chrome，数据不出机 | 云端浏览器 | 本地但需专门客户端 |
 | 接入方式 | 悬浮球 / Side Panel / MCP 标准协议 | 自家 API | 专有脚本 |
 | 模型 | 任何 OpenAI 兼容 Endpoint（含本地模型） | 绑定厂商模型 | 通常无模型 |
-| 扩展性 | MCP 35 工具 + 动态 HTTP 工具 + 技能/工作流 | 封闭 | 录制脚本 |
+| 扩展性 | MCP 34 工具 + 动态 HTTP 工具 + 技能/工作流 | 封闭 | 录制脚本 |
 
 ## 适合什么场景
 
@@ -68,7 +68,7 @@ Actspan 是一个运行在 Chrome 中的 AI 浏览器助手（Manifest V3 扩展
 - **定时巡检**：创建延时 / 周期 / 每日 / 每周定时任务，到点自动起 AI 会话执行并通知。
 - **团队通知**：调查完成后，将结果摘要推送到已配置的飞书 / Lark 或钉钉机器人 Webhook。
 - **群聊机器人**：钉钉 Stream 模式 / 飞书长连接双向机器人，群里 @机器人 即执行浏览器任务并回复结果。
-- **IDE Agent 的浏览器手脚**：通过 MCP 把 35 个浏览器工具暴露给 Claude Code / Codex 等客户端，让编程 Agent 直接操作真实网页。
+- **IDE Agent 的浏览器手脚**：通过 MCP 把 34 个浏览器工具暴露给 Claude Code / Codex 等客户端，让编程 Agent 直接操作真实网页。
 - **本地与自定义能力**：连接你选择的模型服务（含 Ollama、LM Studio 等本地模型），或通过 MCP 和动态工具扩展能力。
 
 ## 核心能力
@@ -101,9 +101,9 @@ Actspan 直接运行在 Chrome 扩展环境中，复用当前浏览器已有的�
 
 ### 6. MCP 工具与协议扩展
 
-- 本地 MCP Server（`actspan-mcp`）把浏览器能力以 **35 个 `actspan_` 前缀工具**暴露给任何 MCP 客户端。
+- 本地 MCP Server（`actspan-mcp`）把浏览器能力以 **34 个 `actspan_` 前缀工具**暴露给任何 MCP 客户端。
 - 支持动态 HTTP 工具和远程 Manifest，可按需接入已有服务。
-- 完整清单见下文 [MCP 工具全清单](#mcp-工具全清单35-个)。
+- 完整清单见下文 [MCP 工具全清单](#mcp-工具全清单34-个)。
 
 ### 7. 模型由你选择
 
@@ -151,7 +151,7 @@ Background mcp-bridge：协议校验 → Tab 租约授权 → 工具执行 → �
 - **桥接守护进程**：`bridge-daemon` + `bridge-lock` 保证同一机器只有一条桥；`actspan-doctor` 一键诊断连接问题。
 - **审计日志**：`bridge.js` 对敏感操作落审计记录（事后追溯）。
 
-## MCP 工具全清单（35 个）
+## MCP 工具全清单（34 个）
 
 统一 `actspan_` 前缀，按能力分为九组。单一事实源是 `mcp-server/catalog.js` 的 `TOOL_NAMES`（可用 `node mcp-server/check-tool-docs.mjs MCP-BRIDGE.md` 校验文档与代码一致性）。
 
@@ -233,12 +233,6 @@ Background mcp-bridge：协议校验 → Tab 租约授权 → 工具执行 → �
 | `actspan_agent_result` | 读取任务保留的结果 |
 | `actspan_agent_cancel` | 按 taskId 取消任务 |
 
-### 定时任务（1）
-
-| 工具 | 说明 |
-|---|---|
-| `actspan_timer` | 创建/列出/取消定时任务：`set_timeout`（延时一次）、`set_interval`（周期）、`set_schedule`（每日/每周）；到点以 `task_action` 为输入自动起 AI 会话执行，原标签页已关闭也照跑，完成后发系统通知；alarm 最小粒度 1 分钟，更短延时走内存调度（浏览器关闭即丢失） |
-
 MCP 配置、鉴权、参数细节和端到端测试见 [MCP Bridge 文档](MCP-BRIDGE.md)。
 
 ## Free Mode 安全模型
@@ -299,7 +293,7 @@ MCP 配置、鉴权、参数细节和端到端测试见 [MCP Bridge 文档](MCP-
 
 ## 定时任务
 
-`actspan_timer` 让浏览器任务摆脱「人盯着触发」：
+扩展内部的 `timer` 工具支持定时执行浏览器任务，不属于公开 MCP 工具：
 
 - **三种触发**：`set_timeout`（延时一次）、`set_interval`（周期）、`set_schedule`（每日/每周定点）。
 - **鲁棒执行**：原标签页被关闭后任务仍会以无 tabId 方式执行，完成后弹系统通知；扩展重载后自动重建 alarm（过期任务立即补触发，周期任务保留原周期）。
@@ -359,7 +353,7 @@ npm run feishu         # 飞书 / Lark 长连接机器人
 每天早上 9 点抓一次今日热榜，推到钉钉群。
 ```
 
-在 MCP 客户端（如 Claude Code）中，模型会自动组合 35 个工具完成同样的任务——例如先 `actspan_page_snapshot` 拿语义快照，再用 `actspan_act` 一次性跑完「搜索 → 翻页 → 提取」。
+在 MCP 客户端（如 Claude Code）中，模型会自动组合 34 个工具完成同样的任务——例如先 `actspan_page_snapshot` 拿语义快照，再用 `actspan_act` 一次性跑完「搜索 → 翻页 → 提取」。
 
 ## 开发
 
