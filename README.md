@@ -83,7 +83,7 @@ Actspan 直接运行在 Chrome 扩展环境中，复用当前浏览器已有的�
 
 ### 3. 双入口：悬浮球 + Side Panel
 
-- **悬浮球**：任意页面按 `Ctrl+M`（Windows/Linux）或 `Cmd+M`（macOS）唤起，不打断当前浏览。
+- **悬浮球**：任意页面右侧悬浮球，鼠标悬停后点击唤起，不打断当前浏览。
 - **Side Panel**：Chrome 侧边栏常驻，适合长任务观察与多会话管理。
 - **Options 页**：配置模型 Endpoint / API Key / Model、Webhook、机器人等。
 
@@ -307,7 +307,7 @@ MCP 配置、鉴权、参数细节和端到端测试见 [MCP Bridge 文档](MCP-
 2. 解压文件，在 Chrome 地址栏打开 `chrome://extensions/`。
 3. 开启**开发者模式**，点击**加载已解压的扩展程序**，选择 `actspan-extension/` 文件夹。
 4. 右键点击 Actspan 扩展图标，打开**选项**，填写模型 Endpoint、API Key 和 Model。
-5. 打开任意网页，按 `Ctrl+M`（Windows/Linux）或 `Cmd+M`（macOS）唤起助手。
+5. 打开任意网页，鼠标悬停右侧悬浮球并点击唤起助手。
 
 ### 方式二：从源码构建
 

@@ -81,7 +81,7 @@ Actspan works with OpenAI-compatible model services, including cloud APIs and lo
 2. Extract it and open `chrome://extensions/` in Chrome.
 3. Enable **Developer mode**, click **Load unpacked**, and select the `actspan-extension/` folder.
 4. Right-click the Actspan extension icon, open **Options**, and enter your model Endpoint, API Key, and Model.
-5. Open any webpage and press `Ctrl+M` (Windows/Linux) or `Cmd+M` (macOS) to summon the assistant.
+5. Open any webpage, hover over the floating ball on the right edge and click to summon the assistant.
 
 ### Build from Source
 
