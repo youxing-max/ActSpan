@@ -54,6 +54,9 @@ body {
     display: flex;
     align-items: center;
     gap: 8px;
+    /* 撑开左侧，让右侧的视图切换与设置按钮贴住右边缘 */
+    flex: 1 1 auto;
+    min-width: 0;
 }
 
 .sidepanel-header-logo {
@@ -2702,7 +2705,7 @@ body {
   align-items: center;
   gap: 2px;
   padding: 2px;
-  margin: 0 8px;
+  margin: 0 6px 0 0;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.08);
 }

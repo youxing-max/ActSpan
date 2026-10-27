@@ -215,30 +215,30 @@ const SidePanelInner: React.FC = () => {
                     <img className="sidepanel-header-logo" src={logoUrl} alt="" />
                     <span className="sidepanel-header-title">Actspan</span>
                 </div>
-                {/* 视图切换：对话 / 翻译 */}
-                <div className="sidepanel-header-tabs" role="tablist" aria-label="视图切换">
-                    <button
-                        type="button"
-                        role="tab"
-                        aria-selected={view === 'chat'}
-                        className={`sidepanel-header-tab${view === 'chat' ? ' active' : ''}`}
-                        title="对话"
-                        onClick={() => setView('chat')}
-                    >
-                        <CommentOutlined />对话
-                    </button>
-                    <button
-                        type="button"
-                        role="tab"
-                        aria-selected={view === 'translate'}
-                        className={`sidepanel-header-tab${view === 'translate' ? ' active' : ''}`}
-                        title="翻译"
-                        onClick={() => setView('translate')}
-                    >
-                        <TranslationOutlined />翻译
-                    </button>
-                </div>
                 <div className="sidepanel-header-actions">
+                    {/* 视图切换：对话 / 翻译（固定在顶栏右侧） */}
+                    <div className="sidepanel-header-tabs" role="tablist" aria-label="视图切换">
+                        <button
+                            type="button"
+                            role="tab"
+                            aria-selected={view === 'chat'}
+                            className={`sidepanel-header-tab${view === 'chat' ? ' active' : ''}`}
+                            title="对话"
+                            onClick={() => setView('chat')}
+                        >
+                            <CommentOutlined />对话
+                        </button>
+                        <button
+                            type="button"
+                            role="tab"
+                            aria-selected={view === 'translate'}
+                            className={`sidepanel-header-tab${view === 'translate' ? ' active' : ''}`}
+                            title="翻译"
+                            onClick={() => setView('translate')}
+                        >
+                            <TranslationOutlined />翻译
+                        </button>
+                    </div>
                     {view === 'chat' && (
                         <button
                             className="sidepanel-header-btn"
