@@ -8,6 +8,7 @@ import { WorkflowsPage } from './pages/WorkflowsPage';
 import { BlocklistPage } from './pages/BlocklistPage';
 import { HistoryPage } from './pages/HistoryPage';
 import { WebhookPage } from './pages/WebhookPage';
+import { TranslateSettingsPage } from './pages/TranslateSettingsPage';
 
 /** 路由 key → 页面组件映射 */
 const PAGE_MAP: Record<string, React.ComponentType> = {
@@ -15,6 +16,7 @@ const PAGE_MAP: Record<string, React.ComponentType> = {
   workflows: WorkflowsPage,
   blocklist: BlocklistPage,
   webhook: WebhookPage,
+  translate: TranslateSettingsPage,
   history: HistoryPage,
 };
 

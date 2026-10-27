@@ -2695,4 +2695,228 @@ body {
   color: var(--ec-text-muted, #98a2b3);
 }
 
+/* ============ 顶栏视图切换：对话 / 翻译 ============ */
+
+.sidepanel-header-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  margin: 0 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.sidepanel-header-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: rgba(255, 255, 255, 0.72);
+  background: transparent;
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.sidepanel-header-tab:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.sidepanel-header-tab.active {
+  color: #14253a;
+  background: #fff;
+  font-weight: 600;
+}
+
+/* ============ 翻译面板 ============ */
+
+.sidepanel-content-translate {
+  padding: 0;
+  overflow-y: auto;
+}
+
+.actspan-translate {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px 20px;
+  box-sizing: border-box;
+}
+
+.actspan-translate-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.actspan-translate-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.actspan-translate-label {
+  font-size: 12px;
+  color: var(--ec-text-muted, #667085);
+}
+
+.actspan-translate-select {
+  flex: 1 1 120px;
+  min-width: 0;
+  padding: 7px 8px;
+  font-size: 13px;
+  color: var(--ec-text, #101828);
+  background: var(--ec-surface, #fff);
+  border: 1px solid var(--ec-border-soft, #e4e7ec);
+  border-radius: 8px;
+}
+
+.actspan-translate-select:disabled {
+  opacity: 0.6;
+}
+
+.actspan-translate-swap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  color: var(--ec-text-muted, #667085);
+  background: transparent;
+  border: 1px solid var(--ec-border-soft, #e4e7ec);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.actspan-translate-swap:hover:not(:disabled) {
+  color: var(--ec-primary, #1677ff);
+  border-color: var(--ec-primary, #1677ff);
+}
+
+.actspan-translate-swap:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.actspan-translate-link {
+  padding: 0 2px;
+  font-size: 12px;
+  color: var(--ec-primary, #1677ff);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+.actspan-translate-link:disabled {
+  color: var(--ec-text-muted, #98a2b3);
+  cursor: default;
+}
+
+.actspan-translate-ok {
+  font-size: 11px;
+  color: #12b76a;
+}
+
+.actspan-translate-input,
+.actspan-translate-output {
+  width: 100%;
+  min-height: 130px;
+  padding: 10px 12px;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--ec-text, #101828);
+  background: var(--ec-surface, #fff);
+  border: 1px solid var(--ec-border-soft, #e4e7ec);
+  border-radius: 10px;
+  box-sizing: border-box;
+  resize: vertical;
+}
+
+.actspan-translate-output {
+  min-height: 150px;
+  background: var(--ec-surface-soft, #f8fafc);
+}
+
+.actspan-translate-input:focus {
+  outline: none;
+  border-color: var(--ec-primary, #1677ff);
+  box-shadow: 0 0 0 3px rgba(22, 119, 255, 0.12);
+}
+
+.actspan-translate-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--ec-text-muted, #98a2b3);
+}
+
+.actspan-translate-actions {
+  display: inline-flex;
+  gap: 8px;
+}
+
+.actspan-translate-btn {
+  padding: 6px 16px;
+  font-size: 13px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.actspan-translate-btn.primary {
+  color: #fff;
+  background: var(--ec-primary, #1677ff);
+}
+
+.actspan-translate-btn.primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.actspan-translate-btn.ghost {
+  color: #475467;
+  background: transparent;
+  border-color: var(--ec-border-soft, #e4e7ec);
+}
+
+.actspan-translate-error {
+  padding: 8px 10px;
+  font-size: 12px;
+  color: #d4380d;
+  background: #fff2ee;
+  border: 1px solid #ffd8c8;
+  border-radius: 8px;
+}
+
+.actspan-translate-result {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.actspan-translate-result-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--ec-text-muted, #98a2b3);
+}
+
+.actspan-translate-hint {
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--ec-text-muted, #98a2b3);
+}
+
+
 

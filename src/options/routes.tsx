@@ -10,6 +10,7 @@ import {
   StopOutlined,
   HistoryOutlined,
   ApiOutlined,
+  TranslationOutlined,
 } from '@ant-design/icons';
 
 export interface RouteItem {
@@ -43,6 +44,12 @@ export const routes: RouteItem[] = [
     label: 'Webhook',
     icon: <ApiOutlined />,
     description: '管理远端通知推送地址，支持飞书、钉钉、Slack 等平台。',
+  },
+  {
+    key: 'translate',
+    label: '翻译服务',
+    icon: <TranslationOutlined />,
+    description: '接入 DeepL、Google、有道、百度等翻译服务，密钥仅保存在本机。',
   },
   {
     key: 'history',
