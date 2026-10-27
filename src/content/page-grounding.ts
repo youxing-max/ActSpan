@@ -1032,10 +1032,12 @@ export const buildEffectEvidence = (
   target: Element,
   before: ElementObservableState,
   elementId?: string,
+  documentChanged = false,
 ): EffectEvidence => {
   const after = captureObservableState(target);
-  const changedFields = (['visible', 'text', 'value', 'ariaExpanded', 'disabled', 'className'] as const)
+  const changedFields: string[] = (['visible', 'text', 'value', 'ariaExpanded', 'disabled', 'className'] as const)
     .filter((field) => before[field] !== after[field]);
+  if (documentChanged) changedFields.push('document');
   const invalid = typeof target.matches === 'function' && target.matches(':invalid');
   const formInvalid = !invalid && typeof target.closest === 'function'
     ? target.closest('form')?.querySelector(':invalid')
@@ -1389,8 +1391,18 @@ const initElementHandleAction = () => {
         case 'click': {
           const stableFind = describeStableFind(target);
           const before = captureObservableState(target);
-          clickAndReport(target, () => undefined);
-          const effect = buildEffectEvidence('click', target, before, data.element_id);
+          // Track the synchronous effect, not just changes to the clicked element.
+          const root = document.documentElement || document.body;
+          const observer = typeof MutationObserver === 'function' && root ? new MutationObserver(() => undefined) : null;
+          observer?.observe(root, { subtree: true, childList: true, characterData: true, attributes: true });
+          let documentChanged = false;
+          try {
+            clickAndReport(target, () => undefined);
+            documentChanged = (observer?.takeRecords().length ?? 0) > 0;
+          } finally {
+            observer?.disconnect();
+          }
+          const effect = buildEffectEvidence('click', target, before, data.element_id, documentChanged);
           sendResponse?.({ success: true, data: { effect, changed: effect.changed, ...buildActionInfo(target, data.snapshot_id), find: stableFind, kind: classifySensitiveTarget(target, false).kind, center: getElementCenter(target) || undefined, message: '已触发目标元素点击' } });
           return true;
         }

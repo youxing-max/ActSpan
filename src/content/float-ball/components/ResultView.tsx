@@ -310,7 +310,17 @@ export const ResultView: React.FC = () => {
   const rounds = task.rounds || [];
 
   return (
-    <div className="actspan-result visible" ref={resultRef} onScroll={handleScroll}>
+    <div
+      className="actspan-result visible"
+      ref={resultRef}
+      onScroll={handleScroll}
+      onErrorCapture={(event) => {
+        const image = event.target;
+        if (image instanceof HTMLImageElement && image.classList.contains('actspan-link-favicon')) {
+          image.style.display = 'none';
+        }
+      }}
+    >
       {/* 历史轮次 */}
       {rounds.map((round, idx) => (
         <HistoryRound key={idx} round={round} index={idx} />

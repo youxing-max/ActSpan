@@ -7,6 +7,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { WebSocket } from 'ws';
 import { ExtensionHub } from '../bridge.js';
+import { createLazyBridgeDaemonClient } from '../daemon-rpc.js';
 import net from 'node:net';
 import { bridgePaths, lockIsStale, processAlive, readCredential, tryAcquireStartLock, releaseStartLock, takeOverStartLock, STALE_LOCK_MS } from '../bridge-lock.js';
 
@@ -118,7 +119,7 @@ test('stopBridge only signals the pid recorded in bridge.json', async () => {
     try {
         const result = await runCli(['stop', '--port', String(port)]);
         const parsed = JSON.parse(result.out.trim());
-        assert.equal(parsed.stopped, true);
+        assert.equal(parsed.stopped, true, JSON.stringify(parsed));
         assert.equal(parsed.pid, child.pid);
         assert.equal(processAlive(child.pid), false);
     } finally {
@@ -256,4 +257,96 @@ test('bridge-cli help, invalid origins and status never silently start a daemon'
     assert.equal(status.code, 0);
     assert.equal(JSON.parse(status.out).state, 'not_running');
     assert.equal(fs.existsSync(metadataPath), false);
+});
+
+test('a lazy RPC client reconnects after daemon replacement with its original identity', async () => {
+    const port = randomPort();
+    const client = createLazyBridgeDaemonClient({ port, pairOrigins: [origin], clientId: 'reconnect-client', sessionId: 'reconnect-session', label: 'codex' });
+    try {
+        const started = await runCli(['start', '--port', String(port), '--origins-json', JSON.stringify([origin])]);
+        assert.equal(started.code, 0, started.out);
+        await client.status();
+        const originalPid = readCredential(port).pid;
+        const stopped = await runCli(['stop', '--port', String(port)]);
+        assert.equal(stopped.code, 0, stopped.out);
+        const deadline = Date.now() + 5000;
+        while (client.isConnected() && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
+        assert.equal(client.isConnected(), false);
+        const restarted = await runCli(['start', '--port', String(port), '--origins-json', JSON.stringify([origin])]);
+        assert.equal(restarted.code, 0, restarted.out);
+        assert.notEqual(readCredential(port).pid, originalPid);
+        const statuses = await Promise.all([client.status(), client.status(), client.call('status.get')]);
+        assert.ok(statuses.every((status) => status.listening === true));
+        assert.equal(client.isConnected(), true);
+        assert.equal(client.label, 'codex');
+        assert.throws(() => { client.label = 'other'; }, /frozen/);
+        assert.throws(() => { client.sessionId = 'other'; }, /frozen/);
+    } finally {
+        client.stop();
+        await runCli(['stop', '--port', String(port)]);
+    }
+});
+
+test('lazy RPC recovery shares one connection, restores listeners, and never replays a disconnected write', async () => {
+    const port = randomPort();
+    const sockets = new Set();
+    const authentications = [];
+    let writes = 0;
+    const server = net.createServer((socket) => {
+        sockets.add(socket);
+        socket.on('close', () => sockets.delete(socket));
+        socket.on('error', () => {});
+        let buffered = '';
+        socket.on('data', (chunk) => {
+            buffered += chunk.toString('utf8');
+            let end;
+            while ((end = buffered.indexOf('\n')) >= 0) {
+                const message = JSON.parse(buffered.slice(0, end));
+                buffered = buffered.slice(end + 1);
+                if (message.type === 'auth') {
+                    authentications.push(message);
+                    socket.write(`${JSON.stringify({ type: 'auth_ok', port, listening: true })}\n`);
+                } else if (message.method === 'write.once') {
+                    writes++;
+                    socket.destroy();
+                } else {
+                    socket.write(`${JSON.stringify({ type: 'event', event: { type: 'probe' } })}\n`);
+                    socket.write(`${JSON.stringify({ type: 'result', id: message.id, ok: true, result: { listening: true } })}\n`);
+                }
+            }
+        });
+    });
+    await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
+    const { credentialPath: rpcPath } = bridgePaths(port);
+    fs.writeFileSync(rpcPath, JSON.stringify({ protocol: 'actspan-bridge-rpc-v1', pid: process.pid, rpcPort: server.address().port,
+        secret: 'test-only-rpc-secret', nonce: 'test-only-rpc-nonce', origins: [origin] }));
+    const client = createLazyBridgeDaemonClient({ port, pairOrigins: [origin], clientId: 'safe-client', sessionId: 'safe-session', label: 'codex' });
+    const events = [];
+    client.on('event', (event) => events.push(event.type));
+    try {
+        await client.status();
+        await assert.rejects(client.call('write.once'), /Bridge daemon disconnected/);
+        assert.equal(authentications.length, 1);
+        await Promise.all([client.status(), client.status(), client.call('status.get')]);
+        assert.equal(authentications.length, 2);
+        assert.ok(authentications.every((auth) => auth.clientId === 'safe-client' && auth.sessionId === 'safe-session' && auth.label === 'codex'));
+        assert.deepEqual(events, ['probe', 'probe', 'probe', 'probe']);
+        assert.equal(writes, 1);
+        client.stop();
+        await assert.rejects(client.connect(), /stopped/);
+        await assert.rejects(client.status(), /stopped/);
+        assert.equal(authentications.length, 2);
+        const pendingClient = createLazyBridgeDaemonClient({ port, pairOrigins: [origin], clientId: 'stopped-client', sessionId: 'stopped-session' });
+        const connection = pendingClient.connect();
+        pendingClient.stop();
+        await assert.rejects(connection, /stopped/);
+        assert.equal(pendingClient.isConnected(), false);
+        await assert.rejects(pendingClient.status(), /stopped/);
+        assert.equal(authentications.length, 3);
+    } finally {
+        client.stop();
+        for (const socket of sockets) socket.destroy();
+        await new Promise((resolve) => server.close(resolve));
+        fs.rmSync(rpcPath, { force: true });
+    }
 });

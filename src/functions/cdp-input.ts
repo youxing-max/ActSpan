@@ -406,39 +406,86 @@ const performType = async (
  * 计算 iframe 视口坐标 → 顶层视口坐标的偏移。
  * 内容脚本在子 frame 里用 getBoundingClientRect 拿到的是「帧内视口」坐标，
  * 而 Input.dispatchMouseEvent 要的是顶层视口坐标，不换算 iframe 内必打偏。
- * 沿 DOM.getFrameOwner 链累加各级 iframe 内容框在各自文档中的位置，
- * 最后减去主 frame visualViewport 滚动量（各中间 frame 自身滚动在换算中自然抵消）。
+ * 使用 Chrome frame 链和消息来源窗口定位父页面里的实际 iframe，避免混用 CDP frameId。
+ * 每级矩形已经是视口坐标；累加内容框偏移即可，不再减一次页面滚动。
  */
 export const resolveFrameOffset = async (
   tabId: number,
   frameId?: number,
+  signal?: AbortSignal,
 ): Promise<{ x: number; y: number }> => {
   if (typeof frameId !== 'number' || frameId === 0) return { x: 0, y: 0 };
+  const frames = await chrome.webNavigation.getAllFrames({ tabId });
   let totalX = 0;
   let totalY = 0;
   let current = frameId;
+  const visited = new Set<number>();
   for (let depth = 0; depth < 10 && current !== 0; depth += 1) {
-    const owner = await CDPSessionManager.sendCommand(tabId, 'DOM.getFrameOwner', { frameId: current });
-    const backendNodeId = owner?.result?.backendNodeId;
-    if (!owner?.success || !backendNodeId) throw new Error(`无法解析 iframe 所属节点：${owner?.error || 'frame owner missing'}`);
-    const box = await CDPSessionManager.sendCommand(tabId, 'DOM.getBoxModel', { backendNodeId });
-    const quad = box?.result?.model?.border;
-    if (!box?.success || !Array.isArray(quad) || quad.length < 4) throw new Error('无法读取 iframe 的可靠坐标');
-    totalX += Number(quad[0]) || 0;
-    totalY += Number(quad[1]) || 0;
-    const described = await CDPSessionManager.sendCommand(tabId, 'DOM.describeNode', { backendNodeId });
-    const parentFrameId = described?.result?.node?.frameId;
-    if (!described?.success || typeof parentFrameId !== 'number' || parentFrameId === current) throw new Error('无法解析 iframe 的父框架');
-    current = parentFrameId;
+    if (signal?.aborted) throw new Error('iframe 坐标解析已取消');
+    const frame = frames?.find((item) => item.frameId === current);
+    if (!frame || frame.parentFrameId < 0 || visited.has(current)) throw new Error('无法解析 iframe 的父框架');
+    visited.add(current);
+    const parentId = frame.parentFrameId;
+    const parentFrame = frames?.find((item) => item.frameId === parentId);
+    if (!parentFrame) throw new Error('iframe 的父框架已移除');
+    const nonce = `__actspan_frame_offset_${crypto.randomUUID()}`;
+    const target = { tabId, frameIds: [parentId] };
+    try {
+      const installed = await chrome.scripting.executeScript({ target, world: 'ISOLATED', args: [nonce], func: (key: string) => {
+        const parentWindow = window;
+        const parentDocument = document;
+        const getStyle = getComputedStyle;
+        const state = parentWindow as unknown as Record<string, { promise: Promise<{ x: number; y: number } | null>; cancel: () => void }>;
+        let finish: (value: { x: number; y: number } | null) => void;
+        const promise = new Promise<{ x: number; y: number } | null>((resolve) => { finish = resolve; });
+        const cleanup = () => { clearTimeout(timer); parentWindow.removeEventListener('message', receive); };
+        const receive = (event: MessageEvent) => {
+          if (event.data !== key) return;
+          const owner = Array.from(parentDocument.querySelectorAll<HTMLIFrameElement>('iframe, frame'))
+            .find((element) => element.contentWindow === event.source);
+          if (!owner) return;
+          cleanup();
+          // 偏移接口不能表达缩放/旋转；此时拒绝真实重放，不能冒险点到邻近控件。
+          for (let ancestor: Element | null = owner; ancestor; ancestor = ancestor.parentElement) {
+            const style = getStyle(ancestor);
+            const matrix = style.transform.match(/^matrix\(([^)]+)\)$/)?.[1].split(',').map(Number);
+            if ((style.transform !== 'none' && (!matrix || matrix[0] !== 1 || matrix[1] !== 0 || matrix[2] !== 0 || matrix[3] !== 1))
+                || (style.zoom && style.zoom !== 'normal' && Number(style.zoom) !== 1)) { finish(null); return; }
+          }
+          const rect = owner.getBoundingClientRect();
+          if (rect.width <= 0 || rect.height <= 0 || Math.abs(rect.width - owner.offsetWidth) > 1 || Math.abs(rect.height - owner.offsetHeight) > 1) { finish(null); return; }
+          const style = getStyle(owner);
+          finish({ x: rect.left + owner.clientLeft + (parseFloat(style.paddingLeft) || 0),
+            y: rect.top + owner.clientTop + (parseFloat(style.paddingTop) || 0) });
+        };
+        const timer = setTimeout(() => { cleanup(); finish(null); }, 1000);
+        state[key] = { promise, cancel: () => { cleanup(); finish(null); } };
+        parentWindow.addEventListener('message', receive);
+      } });
+      if (!installed.some((item) => item.frameId === parentId && (!parentFrame.documentId || item.documentId === parentFrame.documentId))) throw new Error('iframe 的父文档已改变');
+      const child = await chrome.scripting.executeScript({ target: { tabId, frameIds: [current] }, world: 'ISOLATED', args: [nonce],
+        func: (key: string) => { window.parent.postMessage(key, '*'); } });
+      if (!child.some((item) => item.frameId === current && (!frame.documentId || item.documentId === frame.documentId))) throw new Error('iframe 文档已改变或移除');
+      const results = await chrome.scripting.executeScript({ target, world: 'ISOLATED', args: [nonce], func: async (key: string) => {
+        const state = window as unknown as Record<string, { promise: Promise<{ x: number; y: number } | null>; cancel: () => void }>;
+        return state[key] ? await state[key].promise : null;
+      } });
+      const offset = results.find((item) => item.frameId === parentId && (!parentFrame.documentId || item.documentId === parentFrame.documentId))?.result;
+      if (!offset || !Number.isFinite(offset.x) || !Number.isFinite(offset.y)) throw new Error('无法读取 iframe 的可靠坐标');
+      totalX += offset.x;
+      totalY += offset.y;
+    } catch (error) {
+      throw new Error(`无法解析 iframe 坐标：${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      await chrome.scripting.executeScript({ target, world: 'ISOLATED', args: [nonce], func: (key: string) => {
+        const state = window as unknown as Record<string, { cancel: () => void }>;
+        state[key]?.cancel(); delete state[key];
+      } }).catch(() => undefined);
+    }
+    current = parentId;
   }
   if (current !== 0) throw new Error('iframe 层级过深，无法安全换算坐标');
-  const layout = await CDPSessionManager.sendCommand(tabId, 'Page.getLayoutMetrics');
-  if (!layout.success) throw new Error('无法读取 iframe 所属页面的视口');
-  const viewport = layout?.result?.visualViewport;
-  return {
-    x: totalX - (Number(viewport?.pageX) || 0),
-    y: totalY - (Number(viewport?.pageY) || 0),
-  };
+  return { x: totalX, y: totalY };
 };
 
 export const realClickAt = async (
@@ -448,14 +495,16 @@ export const realClickAt = async (
   signal?: AbortSignal,
   frameId?: number,
 ): Promise<{ success: boolean; error?: string }> => {
+  signal?.throwIfAborted();
   // 目标在 iframe 内时，x/y 是帧内视口坐标，先换算到顶层视口
   let offset: { x: number; y: number };
   try {
-    offset = await resolveFrameOffset(tabId, frameId);
+    offset = await resolveFrameOffset(tabId, frameId, signal);
   } catch (error) {
     // Chrome 与 CDP 的 frameId 不是同一种标识；解析失败时禁止把帧内坐标当作父页面坐标。
     return { success: false, error: error instanceof Error ? error.message : String(error) };
   }
+  signal?.throwIfAborted();
   const result = await performClick(tabId, x + offset.x, y + offset.y, 'left', 1, signal);
   return result.success ? { success: true } : { success: false, error: result.error };
 };

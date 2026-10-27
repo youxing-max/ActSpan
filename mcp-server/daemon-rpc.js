@@ -245,17 +245,25 @@ export async function connectBridgeDaemon(options = {}) {
 export function createLazyBridgeDaemonClient(options = {}) {
     let client = null;
     let pending = null;
+    let stopped = false;
     const listeners = [];
     const connect = () => {
+        if (stopped) return Promise.reject(new Error('Bridge daemon IPC client stopped'));
+        if (client?.isConnected()) return Promise.resolve(client);
         if (pending) return pending;
         pending = connectBridgeDaemonClient(options).then((value) => {
+            if (stopped) {
+                value.stop();
+                throw new Error('Bridge daemon IPC client stopped');
+            }
             client = value;
             for (const [event, listener] of listeners) value.on(event, listener);
             return value;
-        }, (error) => { pending = null; throw error; });
+        }).finally(() => { pending = null; });
         return pending;
     };
-    const require = () => client ?? connect();
+    // Reconnect only for a new call; a disconnected in-flight write must never be replayed.
+    const require = () => connect();
     return {
         connect,
         /** K2：连上之后 label 冻结，改口只能发生在连桥之前。 */
@@ -281,8 +289,8 @@ export function createLazyBridgeDaemonClient(options = {}) {
         status: async (...args) => (await require()).status(...args),
         // 注册监听不触发连接：身份定好之前不该连桥。
         on: (event, listener) => { listeners.push([event, listener]); return undefined; },
-        stop: () => { client?.stop(); },
-        shutdown: async () => { if (client) await client.shutdown(); },
+        stop: () => { stopped = true; client?.stop(); },
+        shutdown: async () => { stopped = true; if (client) await client.shutdown(); },
     };
 }
 

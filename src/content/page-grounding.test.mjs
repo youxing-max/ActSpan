@@ -591,6 +591,36 @@ test('an offline comment form opens, fills, submits once and verifies through ob
   assert.deepEqual(actions, ['open', 'fill', 'submit', 'verify']);
 });
 
+test('ref clicks report changes elsewhere in the document without exposing that content', () => {
+  const button = domNode('button', { text: 'Continue', attrs: { id: 'continue' } });
+  const originalObserver = globalThis.MutationObserver;
+  const observers = new Set();
+  globalThis.MutationObserver = class {
+    records = [];
+    observe() { observers.add(this); }
+    takeRecords() { return this.records.splice(0); }
+    disconnect() { observers.delete(this); }
+  };
+  button.click = () => {
+    for (const observer of observers) observer.records.push({ type: 'characterData' });
+  };
+  try {
+    withSnapshotDom([button], () => {
+      const snapshot = groundingRequest('snapshot', { query: 'Continue' });
+      const target = snapshot.data.elements[0];
+      const result = groundingRequest('action', {
+        action: 'click', element_id: target.element_id, snapshot_id: snapshot.data.snapshot_id,
+      });
+      assert.equal(result.success, true);
+      assert.equal(result.data.changed, true);
+      assert.deepEqual(result.data.effect.changed_fields, ['document']);
+      assert.equal(observers.size, 0);
+    });
+  } finally {
+    globalThis.MutationObserver = originalObserver;
+  }
+});
+
 test('English query tokens and unfiltered snapshots retain their existing behavior', () => {
   const help = domNode('button', { text: 'Help' });
   const save = domNode('button', { text: 'Save' });

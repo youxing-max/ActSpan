@@ -109,7 +109,7 @@ const buildLinkChip = (href: string, urlText: string): string => {
     const favicon = `https://www.google.com/s2/favicons?domain=${domain}&sz=32`;
     const short = shortenUrl(cleanUrl);
     return `<a href="${href}" target="_blank" rel="noopener" class="actspan-link-chip" data-url="${cleanUrl}" title="${escapeHtml(cleanUrl)}">`
-      + `<img src="${favicon}" class="actspan-link-favicon" onerror="this.style.display='none'">`
+      + `<img src="${favicon}" class="actspan-link-favicon">`
       + `<span class="actspan-link-text">${escapeHtml(short)}</span></a>`;
   } catch {
     return `<a href="${href}" target="_blank" rel="noopener">${urlText}</a>`;

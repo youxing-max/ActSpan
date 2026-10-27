@@ -122,7 +122,8 @@ test('real clicks restore focus emulation when pressing fails or the operation i
 
   const aborted = setPage(null);
   await assert.rejects(() => realClickAt(5, 10, 20, AbortSignal.abort()), { name: 'AbortError' });
-  assert.equal(aborted.focusEmulated, false);
+  assert.notEqual(aborted.focusEmulated, true);
+  assert.equal((aborted.commands ?? []).some(({ method }) => method.startsWith('Input.')), false);
 });
 
 test('type fails when no element has focus', async () => {

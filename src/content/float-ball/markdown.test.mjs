@@ -64,3 +64,16 @@ test('domain-only link text becomes a compact link chip', () => {
   assert.ok(html.includes('play.google.com/apps/dev'),
     'chip keeps a shortened, readable URL');
 });
+
+test('link chips render without inline event handlers under extension CSP', () => {
+  for (const text of [
+    'https://example.com/article',
+    '[https://example.com/article](https://example.com/article)',
+    '[example.com/article](https://example.com/article)',
+  ]) {
+    const html = markdownToHtml(text);
+    assert.match(html, /class="actspan-link-favicon"/);
+    assert.doesNotMatch(html, /\son[a-z]+\s*=/i);
+    assert.match(html, /href="https:\/\/example\.com\/article"/);
+  }
+});

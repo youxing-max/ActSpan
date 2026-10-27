@@ -62,15 +62,23 @@ export const sendToTabWithRetry = async <T = any>(
     const startedAt = Date.now();
     let attempt = 0;
     let injectedOnce = false;
-    let timeout: ReturnType<typeof setTimeout> | null = null;
+    let settled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    const finish = (error?: Error, response?: T) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      if (retryTimer) clearTimeout(retryTimer);
+      signal?.removeEventListener('abort', onAbort);
+      if (error) reject(error); else resolve(response as T);
+    };
 
     const onAbort = () => {
-      if (timeout) clearTimeout(timeout);
-      signal?.removeEventListener('abort', onAbort);
       const abortError = new Error('aborted');
       abortError.name = 'AbortError';
-      reject(abortError);
+      finish(abortError);
     };
+    const timeout = setTimeout(() => finish(new Error(timeoutMessage)), deadlineMs);
 
     const sendOnce = (): Promise<T> => {
       return new Promise((resolveSend, rejectSend) => {
@@ -79,37 +87,33 @@ export const sendToTabWithRetry = async <T = any>(
             rejectSend(new Error(chrome.runtime.lastError.message || '发送消息失败'));
             return;
           }
+          if (response === undefined) {
+            rejectSend(new Error('message port closed before a response was received'));
+            return;
+          }
           resolveSend(response as T);
-        }, frameId);
+        }, frameId, rejectSend);
       });
     };
 
     const trySend = async () => {
+      if (settled) return;
       attempt += 1;
       const remain = deadlineMs - (Date.now() - startedAt);
       if (remain <= 0) {
-        signal?.removeEventListener('abort', onAbort);
-        reject(new Error(timeoutMessage));
+        finish(new Error(timeoutMessage));
         return;
       }
 
-      timeout = setTimeout(() => {
-        signal?.removeEventListener('abort', onAbort);
-        reject(new Error(timeoutMessage));
-      }, remain);
-
       try {
         const response = await sendOnce();
-        if (timeout) clearTimeout(timeout);
-        signal?.removeEventListener('abort', onAbort);
-        resolve(response);
+        finish(undefined, response);
       } catch (err: any) {
-        if (timeout) clearTimeout(timeout);
+        if (settled) return;
         const message = err?.message || '发送消息失败';
         const retryable = isRetryableConnectionError(message) && Date.now() - startedAt < deadlineMs;
         if (!retryable) {
-          signal?.removeEventListener('abort', onAbort);
-          reject(new Error(message));
+          finish(new Error(message));
           return;
         }
 
@@ -117,9 +121,9 @@ export const sendToTabWithRetry = async <T = any>(
           injectedOnce = true;
           await injectContentScriptIfPossible(tabId);
         }
-
+        if (settled) return;
         const delayMs = Math.min(1400, 160 + attempt * 140);
-        setTimeout(() => {
+        retryTimer = setTimeout(() => {
           void trySend();
         }, delayMs);
       }

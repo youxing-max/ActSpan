@@ -95,9 +95,10 @@ class Channel {
     }
 
     /** 发送消息到指定tab；frameId 省略时按 Chrome 默认行为投递，指定时只投递到该 frame */
-    static sendToTab(tabId: number, type: string, data?: unknown, callback?: (response: unknown) => void, frameId?: number) {
+    static sendToTab(tabId: number, type: string, data?: unknown, callback?: (response: unknown) => void, frameId?: number, onError?: (error: unknown) => void) {
         if (!chrome.tabs) {
             console.error('[Channel] chrome.tabs API 不可用');
+            onError?.(new Error('chrome.tabs API 不可用'));
             return;
         }
         const msg = { type, data };
@@ -113,6 +114,7 @@ class Channel {
             }
         } catch (error) {
             console.error(`[Channel] 发送消息到 tab ${tabId} 失败:`, error);
+            onError?.(error);
         }
     }
 
@@ -318,4 +320,4 @@ class Channel {
     }
 }
 
-export default Channel; 
+export default Channel;
