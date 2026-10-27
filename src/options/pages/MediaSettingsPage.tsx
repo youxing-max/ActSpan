@@ -5,7 +5,8 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import { App, Alert, Button, Card, Form, Input, Select, Space, Typography } from 'antd';
-import { DEFAULT_MEDIA_SETTINGS, IMAGE_SIZE_OPTIONS } from '../../media/types';
+import { DEFAULT_MEDIA_SETTINGS } from '../../media/types';
+import { IMAGE_MODELS } from '../../media/models';
 import type { MediaSettings } from '../../media/types';
 import { loadMediaSettings, saveMediaSettings } from '../../media/settings';
 
@@ -77,24 +78,22 @@ export function MediaSettingsPage() {
             />
           </Form.Item>
           <Space size={16} wrap>
-            <Form.Item label="模型" style={{ marginBottom: 0 }}>
-              <Input
-                style={{ width: 220 }}
-                placeholder="gpt-image-1 / dall-e-3 / 自定义"
-                value={settings.image.model}
-                onChange={(event) => patchImage({ model: event.target.value })}
-                autoComplete="off"
-              />
-            </Form.Item>
-            <Form.Item label="默认尺寸" style={{ marginBottom: 0 }}>
+            <Form.Item label="默认模型" style={{ marginBottom: 0 }}>
               <Select
-                style={{ width: 220 }}
-                value={settings.image.size}
-                onChange={(value) => patchImage({ size: value })}
-                options={IMAGE_SIZE_OPTIONS}
+                style={{ width: 280 }}
+                value={settings.image.model}
+                onChange={(value) => patchImage({ model: value })}
+                options={IMAGE_MODELS.map((item) => ({
+                  value: item.id,
+                  label: `${item.vendor} · ${item.label}`,
+                }))}
               />
             </Form.Item>
           </Space>
+          <Paragraph type="secondary" style={{ marginTop: 12, marginBottom: 0 }}>
+            尺寸、比例、质量这些参数由模型能力决定，在侧边栏的图片面板里按当前模型动态显示，
+            这里不需要预先固定。
+          </Paragraph>
         </Form>
       </Card>
 

@@ -5,6 +5,8 @@
  */
 import { normalizeBaseUrl } from './types';
 import type { ImageProviderConfig, VideoProviderConfig } from './types';
+import { resolveImageParams } from './models';
+import type { ImageModelSpec, ImageSelection } from './models';
 
 type FetchLike = typeof fetch;
 
@@ -35,30 +37,77 @@ const joinUrl = (baseUrl: string, path: string): string => {
   return `${base}${path.startsWith('/') ? path : `/${path}`}`;
 };
 
-/** 构造 OpenAI 兼容的图片生成请求（纯函数，便于断言） */
+const jsonPost = (body: unknown, apiKey: string) => ({
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json', ...authHeaders(apiKey) },
+  body: JSON.stringify(body),
+});
+
+/**
+ * 按模型能力构造图片请求
+ * 三种 wire shape：OpenAI 兼容、火山方舟（size 支持 WxH / 参考图走 image）、
+ * Gemini（generateContent + inlineData 参考图 + aspectRatio）
+ */
 export const buildImageRequest = (
+  spec: ImageModelSpec,
   config: ImageProviderConfig,
-  prompt: string,
+  selection: ImageSelection,
 ): { url: string; init: { method: string; headers: Record<string, string>; body: string } } => {
-  const url = joinUrl(config.baseUrl, '/images/generations');
-  const body = JSON.stringify({
-    model: String(config.model || '').trim() || 'gpt-image-1',
-    prompt,
-    n: 1,
-    size: String(config.size || '').trim() || '1024x1024',
-  });
-  return {
-    url,
-    init: {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeaders(config.apiKey) },
-      body,
-    },
-  };
+  const prompt = String(selection.prompt || '').trim();
+  const params = resolveImageParams(spec, selection);
+  const base = normalizeBaseUrl(config.baseUrl);
+
+  if (spec.shape === 'gemini') {
+    const parts: Array<Record<string, unknown>> = [{ text: prompt }];
+    for (const ref of params.refs) {
+      const match = /^data:(image\/[a-z0-9.+-]+);base64,(.*)$/i.exec(ref);
+      if (match) parts.push({ inlineData: { mimeType: match[1], data: match[2] } });
+    }
+    const generationConfig: Record<string, unknown> = {};
+    if (params.aspect) generationConfig.imageConfig = { aspectRatio: params.aspect };
+    return {
+      url: `${base}${spec.path.replace('{model}', spec.id)}`,
+      init: jsonPost({ contents: [{ role: 'user', parts }], generationConfig }, config.apiKey),
+    };
+  }
+
+  if (spec.shape === 'ark') {
+    const body: Record<string, unknown> = {
+      model: spec.id,
+      prompt,
+      response_format: 'b64_json',
+      watermark: false,
+    };
+    if (params.pixelSize) body.size = params.pixelSize;
+    if (params.refs.length > 0) body.image = params.refs.length === 1 ? params.refs[0] : params.refs;
+    return { url: `${base}${spec.path}`, init: jsonPost(body, config.apiKey) };
+  }
+
+  // openai 兼容
+  const body: Record<string, unknown> = { model: spec.id, prompt, n: 1 };
+  if (params.size) body.size = params.size;
+  if (params.quality) body.quality = params.quality;
+  return { url: `${base}${spec.path}`, init: jsonPost(body, config.apiKey) };
 };
 
-/** 解析图片生成响应：支持 b64_json 与 url 两种返回 */
-export const parseImageResponse = (json: any): GeneratedImage => {
+/** 解析图片生成响应：兼容 OpenAI/火山（data[]）与 Gemini（candidates[]） */
+export const parseImageResponse = (json: any, shape: string = 'openai'): GeneratedImage => {
+  if (shape === 'gemini') {
+    const parts = json?.candidates?.[0]?.content?.parts;
+    if (Array.isArray(parts)) {
+      for (const part of parts) {
+        const inline = part?.inlineData || part?.inline_data;
+        if (inline?.data) {
+          const mime = inline.mimeType || inline.mime_type || 'image/png';
+          return { src: `data:${mime};base64,${inline.data}` };
+        }
+        const fileUri = part?.fileData?.fileUri || part?.file_data?.file_uri;
+        if (typeof fileUri === 'string' && fileUri) return { src: fileUri };
+      }
+    }
+    throw new Error(`图片接口返回异常：${JSON.stringify(json).slice(0, 200)}`);
+  }
+
   const item = Array.isArray(json?.data) ? json.data[0] : undefined;
   if (!item) throw new Error(`图片接口返回异常：${JSON.stringify(json).slice(0, 200)}`);
   if (typeof item.b64_json === 'string' && item.b64_json) {
@@ -78,17 +127,18 @@ export const parseImageResponse = (json: any): GeneratedImage => {
 
 /** 生成一张图片 */
 export const generateImage = async (
+  spec: ImageModelSpec,
   config: ImageProviderConfig,
-  prompt: string,
+  selection: ImageSelection,
   options: { signal?: AbortSignal; fetchImpl?: FetchLike } = {},
 ): Promise<GeneratedImage> => {
-  const content = String(prompt || '').trim();
+  const content = String(selection.prompt || '').trim();
   if (!content) throw new Error('请先输入画面描述');
   const fetchImpl = options.fetchImpl || fetch;
-  const request = buildImageRequest(config, content);
+  const request = buildImageRequest(spec, config, { ...selection, prompt: content });
   const response = await fetchImpl(request.url, { ...request.init, signal: options.signal });
   if (!response.ok) await readError(response, '图片生成');
-  return parseImageResponse(await response.json());
+  return parseImageResponse(await response.json(), spec.shape);
 };
 
 const VIDEO_SUCCESS = new Set(['succeeded', 'success', 'completed', 'done', 'finished']);
