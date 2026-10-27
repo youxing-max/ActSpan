@@ -517,20 +517,50 @@ test('typing into payment form without submitting remains available', async () =
   } finally { fixture.restore(); }
 });
 
-test('no-effect click escalates to real CDP events and reports the channel', async () => {
+test('no-effect click does not auto-replay real CDP events (prevents double-fire)', async () => {
   const fixture = browserFixture({ onRealInput: (kind) => kind === 'click' });
   try {
     const result = await executeBridgeRequest('page.click', { selector: '#target', tabId: fixture.context.tabId }, fixture.context);
     assert.equal(result.clicked, '#target');
-    assert.equal(result.escalated, true);
-    assert.deepEqual(result.escalation, { channel: 'cdp_real_events', reason: 'no_effect', success: true });
+    assert.equal(result.escalated, undefined);
     assert.equal(fixture.effects.clicks, 1);
-    assert.equal(fixture.effects.realMouse, 3);
-    assert.equal(result.changed, true);
-    assert.equal(result.effect.status, 'changed');
-    assert.deepEqual(result.effect.changed_fields, ['text']);
+    assert.equal(fixture.effects.realMouse, 0, 'must not dispatch real events after synthetic click');
+    assert.equal(result.changed, false);
+    assert.match(result.effect.diagnostic, /不自动重放|real:true/);
   } finally { fixture.restore(); }
 });
+
+for (const target of [{ selector: '#target' }, { find: { role: 'button', name: 'Continue' } }]) {
+  test(`click effects outside the target prevent replay (${target.selector ? 'selector' : 'find'})`, async () => {
+    const fixture = browserFixture();
+    const originalObserver = globalThis.MutationObserver;
+    const observers = new Set();
+    globalThis.MutationObserver = class {
+      records = [];
+      observe() { observers.add(this); }
+      takeRecords() { return this.records.splice(0); }
+      disconnect() { observers.delete(this); }
+    };
+    globalThis.document.querySelectorAll = () => [fixture.button];
+    fixture.button.click = () => {
+      fixture.effects.clicks++;
+      globalThis.document.body.innerText = 'Updated sibling content';
+      for (const observer of observers) observer.records.push({ type: 'characterData' });
+    };
+    try {
+      const result = await executeBridgeRequest('page.click', { ...target, tabId: fixture.context.tabId }, fixture.context);
+      assert.equal(fixture.effects.clicks, 1);
+      assert.equal(fixture.effects.realMouse, 0, 'a successful click must not be dispatched again');
+      assert.equal(result.changed, true);
+      assert.deepEqual(result.effect.changed_fields, ['document']);
+      assert.equal(observers.size, 0);
+      assert.doesNotMatch(JSON.stringify(result), /Updated sibling content/);
+    } finally {
+      globalThis.MutationObserver = originalObserver;
+      fixture.restore();
+    }
+  });
+}
 
 test('explicit real clicks scroll the target into view before resolving CDP coordinates', async () => {
   let scrolled = false;
@@ -546,11 +576,11 @@ test('explicit real clicks scroll the target into view before resolving CDP coor
   } finally { fixture.restore(); }
 });
 
-test('a click escalated to real CDP input does not block a later debugger operation on the same tab', async () => {
+test('an explicit real click does not block a later debugger operation on the same tab', async () => {
   const fixture = browserFixture({ onRealInput: (kind) => kind === 'click' });
   try {
-    // 合成事件不改变页面 → 升级真实 CDP 事件，这一步 attach 调试器。
-    const result = await executeBridgeRequest('page.click', { selector: '#target', tabId: fixture.context.tabId }, fixture.context);
+    // 显式 real:true 触发真实 CDP 事件，这一步 attach 调试器。
+    const result = await executeBridgeRequest('page.click', { selector: '#target', real: true, tabId: fixture.context.tabId }, fixture.context);
     assert.equal(result.escalation.success, true);
     // 紧接着的 page.eval 走另一条 withDebugger 路径：必须复用同一个调试器，
     // 再 attach 一次会被 Chrome 以 "Another debugger is already attached" 拒绝。

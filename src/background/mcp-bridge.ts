@@ -549,10 +549,11 @@ async function pageAction(action: 'inspect' | 'click' | 'type' | 'observe' | 're
             if (!rect || !Number.isFinite(rect.width) || !Number.isFinite(rect.height) || rect.width <= 0 || rect.height <= 0) return undefined;
             return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
         };
-        const effectOf = (name: 'click' | 'fill', el: Element, before: PageObservableState) => {
+        const effectOf = (name: 'click' | 'fill', el: Element, before: PageObservableState, documentChanged = false) => {
             const after = observable(el);
-            const changedFields = (['visible', 'text', 'value', 'ariaExpanded', 'disabled', 'className'] as const)
+            const changedFields: string[] = (['visible', 'text', 'value', 'ariaExpanded', 'disabled', 'className'] as const)
                 .filter((field) => before[field] !== after[field]);
+            if (documentChanged) changedFields.push('document');
             const invalid = typeof el.matches === 'function' && el.matches(':invalid');
             const formInvalid = !invalid && typeof el.closest === 'function' ? el.closest('form')?.querySelector(':invalid') : null;
             const validationError = invalid || formInvalid ? '页面表单校验未通过' : undefined;
@@ -610,8 +611,18 @@ async function pageAction(action: 'inspect' | 'click' | 'type' | 'observe' | 're
         void approvedSignature;
         if (action === 'click') {
             const before = observable(target);
-            target.click();
-            const effect = effectOf('click', target, before);
+            // A click can update a sibling without changing the button itself; do not replay it.
+            const root = document.documentElement || document.body;
+            const observer = typeof MutationObserver === 'function' && root ? new MutationObserver(() => undefined) : null;
+            observer?.observe(root, { subtree: true, childList: true, characterData: true, attributes: true });
+            let documentChanged = false;
+            try {
+                target.click();
+                documentChanged = (observer?.takeRecords().length ?? 0) > 0;
+            } finally {
+                observer?.disconnect();
+            }
+            const effect = effectOf('click', target, before, documentChanged);
             return { clicked: descriptor.selector || 'find', tag: target.tagName.toLowerCase(), kind, center: centerOf(target), find: stableFind, effect, changed: effect.changed };
         }
         const before = observable(target);
@@ -1182,12 +1193,18 @@ export async function dispatch(method: string, params: Record<string, unknown>, 
                 const kind = String(syntheticResult.kind || '');
                 const tag = String(syntheticResult.tag || '').toLowerCase();
                 const netAfter = netBefore === null ? null : CDPSessionManager.getNetworkSummary(tab.id!).total;
+                // 网络请求已发出：点击生效了，不要重试。
                 if (netBefore !== null && netAfter !== null && netAfter > netBefore) {
                     return { ...syntheticResult, effect: { ...((syntheticResult.effect as Record<string, unknown>) || {}),
-                        diagnostic: '合成事件未观察到目标变化，但期间出现新的网络请求：按「只发请求的点击」处理，不自动重放。如需真实事件请显式传 real:true。' } };
+                        diagnostic: '合成事件已派发一次点击，期间出现新的网络请求：点击已生效。不要重试；仅当确认页面忽略非可信事件（isTrusted）时才传 real:true（会再点一次）。' } };
                 }
                 // A2 例外 + A3 硬边界：提交动作、支付/删除类目标与原生 select 不自动升级（避免重复执行）。
                 if (submit || kind === 'payment' || kind === 'deletion' || tag === 'select') return syntheticResult;
+                // 点击：合成事件已执行 target.click()，onclick 已触发但可能只改了 sibling（观察不到）。
+                // 无条件重放真实事件会对有副作用的点击造成双重触发，故不再自动升级。
+                if (action === 'click') return { ...syntheticResult, effect: { ...((syntheticResult.effect as Record<string, unknown>) || {}),
+                    diagnostic: '合成事件已派发一次点击，未观察到目标自身变化（可能只改了兄弟节点）。不要重试；仅当确认页面忽略非可信事件（isTrusted）时才传 real:true（会再点一次）。' } };
+                // 输入：合成事件可能被受控组件拦截，仍需真实键盘事件兜底。
                 return receipt(syntheticResult, await replayReal(), 'no_effect');
             };
             if (method === 'page.type' && params.submit !== true) return run();

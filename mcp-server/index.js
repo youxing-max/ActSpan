@@ -280,7 +280,7 @@ async function main(config) {
     }));
 
     registerTool('actspan_page_click', {
-        title: 'Click page element', description: 'Click a DOM element in a tab owned by the current task. Locate it by exactly one of selector, ref+snapshotId (from a snapshot), or find {role, name, nth}. Synthetic DOM events are used first; when they produce no observable effect the click is automatically replayed as real CDP input events. Submit/payment/delete targets never auto-escalate; pass real:true to force real events (recorded in the audit trail).',
+        title: 'Click page element', description: 'Click a DOM element in a tab owned by the current task. Locate it by exactly one of selector, ref+snapshotId (from a snapshot), or find {role, name, nth}. Synthetic DOM events are used first. The click is not automatically replayed — if the page ignores untrusted events (isTrusted check), pass real:true to force real CDP input events (recorded in the audit trail). Submit/payment/delete targets never auto-escalate.',
         inputSchema: clickTarget.schema,
     }, run((args) => {
         const checked = parseTarget(clickTarget.validate, args);
