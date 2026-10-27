@@ -11,6 +11,7 @@ import {
   HistoryOutlined,
   ApiOutlined,
   TranslationOutlined,
+  PictureOutlined,
 } from '@ant-design/icons';
 
 export interface RouteItem {
@@ -50,6 +51,12 @@ export const routes: RouteItem[] = [
     label: '翻译服务',
     icon: <TranslationOutlined />,
     description: '接入 DeepL、Google、有道、百度等翻译服务，密钥仅保存在本机。',
+  },
+  {
+    key: 'media',
+    label: '图片与视频',
+    icon: <PictureOutlined />,
+    description: '接入自己的图片 / 视频生成接口，密钥仅保存在本机。',
   },
   {
     key: 'history',

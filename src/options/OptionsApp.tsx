@@ -9,6 +9,7 @@ import { BlocklistPage } from './pages/BlocklistPage';
 import { HistoryPage } from './pages/HistoryPage';
 import { WebhookPage } from './pages/WebhookPage';
 import { TranslateSettingsPage } from './pages/TranslateSettingsPage';
+import { MediaSettingsPage } from './pages/MediaSettingsPage';
 
 /** 路由 key → 页面组件映射 */
 const PAGE_MAP: Record<string, React.ComponentType> = {
@@ -17,6 +18,7 @@ const PAGE_MAP: Record<string, React.ComponentType> = {
   blocklist: BlocklistPage,
   webhook: WebhookPage,
   translate: TranslateSettingsPage,
+  media: MediaSettingsPage,
   history: HistoryPage,
 };
 

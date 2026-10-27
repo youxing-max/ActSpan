@@ -4,7 +4,6 @@
  */
 
 import React, { useRef, useEffect, useCallback, useState } from 'react';
-import { CommentOutlined, TranslationOutlined } from '@ant-design/icons';
 import { ActspanProvider } from '../content/float-ball/context/ActspanContext';
 import { useActspan } from '../content/float-ball/context/useActspan';
 import { useAIStream } from '../content/float-ball/hooks/useAIStream';
@@ -17,6 +16,10 @@ import { RecorderBar } from '../content/float-ball/components/RecorderBar';
 import { BgTasksPanel } from '../content/float-ball/components/BgTasksPanel';
 import { ImageViewer } from '../content/float-ball/components/ImageViewer';
 import { TranslatePanel } from './TranslatePanel';
+import { ImagePanel } from './ImagePanel';
+import { VideoPanel } from './VideoPanel';
+import { SideRail } from './SideRail';
+import type { SideRailKey } from './SideRail';
 import Channel from '../lib/channel';
 import { formatClock, formatDuration } from '../content/float-ball/text-utils';
 
@@ -75,8 +78,8 @@ const useSidePanelEvents = () => {
 /** Side Panel 内部组件 */
 const SidePanelInner: React.FC = () => {
     const { state, dispatch } = useActspan();
-    // 视图切换：对话（默认）/ 翻译
-    const [view, setView] = useState<'chat' | 'translate'>('chat');
+    // 右侧导航：聊天（默认）/ 图片 / 视频 / 翻译
+    const [view, setView] = useState<SideRailKey>('chat');
     const resultRef = useRef<HTMLDivElement>(null);
     const currentTaskRef = useRef(state.currentTask);
     currentTaskRef.current = state.currentTask;
@@ -208,7 +211,7 @@ const SidePanelInner: React.FC = () => {
     }, []);
 
     return (
-        <div className={`sidepanel-root ${view === 'translate' ? 'state-idle view-translate' : boxState}`}>
+        <div className={`sidepanel-root ${view === 'chat' ? boxState : 'state-idle'}`}>
             {/* 顶栏 */}
             <div className="sidepanel-header">
                 <div className="sidepanel-header-left">
@@ -216,29 +219,6 @@ const SidePanelInner: React.FC = () => {
                     <span className="sidepanel-header-title">Actspan</span>
                 </div>
                 <div className="sidepanel-header-actions">
-                    {/* 视图切换：对话 / 翻译（固定在顶栏右侧） */}
-                    <div className="sidepanel-header-tabs" role="tablist" aria-label="视图切换">
-                        <button
-                            type="button"
-                            role="tab"
-                            aria-selected={view === 'chat'}
-                            className={`sidepanel-header-tab${view === 'chat' ? ' active' : ''}`}
-                            title="对话"
-                            onClick={() => setView('chat')}
-                        >
-                            <CommentOutlined />对话
-                        </button>
-                        <button
-                            type="button"
-                            role="tab"
-                            aria-selected={view === 'translate'}
-                            className={`sidepanel-header-tab${view === 'translate' ? ' active' : ''}`}
-                            title="翻译"
-                            onClick={() => setView('translate')}
-                        >
-                            <TranslationOutlined />翻译
-                        </button>
-                    </div>
                     {view === 'chat' && (
                         <button
                             className="sidepanel-header-btn"
@@ -258,57 +238,78 @@ const SidePanelInner: React.FC = () => {
                 </div>
             </div>
 
-            {view === 'translate' ? (
-                <div className="sidepanel-content sidepanel-content-translate">
-                    <TranslatePanel />
+            <div className="sidepanel-body">
+                <div className="sidepanel-main">
+                    {view === 'chat' && (
+                        <>
+                            {/* 内容区 */}
+                            <div className="sidepanel-content">
+                                {!task ? (
+                                    <div className="sidepanel-empty">
+                                        <img className="sidepanel-empty-logo" src={logoUrl} alt="" />
+                                        <p className="sidepanel-empty-text">有什么想让我做的？</p>
+                                    </div>
+                                ) : (
+                                    <div ref={resultRef}>
+                                        <ResultView />
+                                    </div>
+                                )}
+                                {state.approvalRequest && (
+                                    <ApprovalCard
+                                        key={state.approvalRequest.requestId}
+                                        requestId={state.approvalRequest.requestId}
+                                        message={state.approvalRequest.message}
+                                    />
+                                )}
+                                {state.askUserRequest && (
+                                    <AskUserCard
+                                        key={state.askUserRequest.requestId}
+                                        requestId={state.askUserRequest.requestId}
+                                        question={state.askUserRequest.question}
+                                        options={state.askUserRequest.options}
+                                        allowFreeText={state.askUserRequest.allowFreeText}
+                                    />
+                                )}
+                                <RecorderBar onStop={handleStopRecording} onCancelAudit={handleCancelAuditing} />
+                                <BgTasksPanel />
+                            </div>
+
+                            {/* 输入区 */}
+                            <div className="sidepanel-input-area">
+                                <InputBar resultRef={resultRef} />
+                            </div>
+
+                            {/* 底栏 */}
+                            <div className="sidepanel-footer">
+                                <span className="sidepanel-footer-icon">✦</span>
+                                <span className="sidepanel-footer-text">{getFooterText()}</span>
+                                <span className="sidepanel-footer-time">{getFooterTime()}</span>
+                            </div>
+                        </>
+                    )}
+
+                    {view === 'translate' && (
+                        <div className="sidepanel-content sidepanel-content-flush">
+                            <TranslatePanel />
+                        </div>
+                    )}
+
+                    {view === 'image' && (
+                        <div className="sidepanel-content sidepanel-content-flush">
+                            <ImagePanel />
+                        </div>
+                    )}
+
+                    {view === 'video' && (
+                        <div className="sidepanel-content sidepanel-content-flush">
+                            <VideoPanel />
+                        </div>
+                    )}
                 </div>
-            ) : (
-                <>
-                    {/* 内容区 */}
-                    <div className="sidepanel-content">
-                        {!task ? (
-                            <div className="sidepanel-empty">
-                                <img className="sidepanel-empty-logo" src={logoUrl} alt="" />
-                                <p className="sidepanel-empty-text">有什么想让我做的？</p>
-                            </div>
-                        ) : (
-                            <div ref={resultRef}>
-                                <ResultView />
-                            </div>
-                        )}
-                        {state.approvalRequest && (
-                            <ApprovalCard
-                                key={state.approvalRequest.requestId}
-                                requestId={state.approvalRequest.requestId}
-                                message={state.approvalRequest.message}
-                            />
-                        )}
-                        {state.askUserRequest && (
-                            <AskUserCard
-                                key={state.askUserRequest.requestId}
-                                requestId={state.askUserRequest.requestId}
-                                question={state.askUserRequest.question}
-                                options={state.askUserRequest.options}
-                                allowFreeText={state.askUserRequest.allowFreeText}
-                            />
-                        )}
-                        <RecorderBar onStop={handleStopRecording} onCancelAudit={handleCancelAuditing} />
-                        <BgTasksPanel />
-                    </div>
 
-                    {/* 输入区 */}
-                    <div className="sidepanel-input-area">
-                        <InputBar resultRef={resultRef} />
-                    </div>
-
-                    {/* 底栏 */}
-                    <div className="sidepanel-footer">
-                        <span className="sidepanel-footer-icon">✦</span>
-                        <span className="sidepanel-footer-text">{getFooterText()}</span>
-                        <span className="sidepanel-footer-time">{getFooterTime()}</span>
-                    </div>
-                </>
-            )}
+                {/* 右侧功能导航 */}
+                <SideRail active={view} onChange={setView} />
+            </div>
 
             {/* 截图预览 */}
             <ImageViewer />

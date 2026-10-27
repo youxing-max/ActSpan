@@ -2698,44 +2698,82 @@ body {
   color: var(--ec-text-muted, #98a2b3);
 }
 
-/* ============ 顶栏视图切换：对话 / 翻译 ============ */
+/* ============ 主体布局：内容 + 右侧功能栏 ============ */
 
-.sidepanel-header-tabs {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  padding: 2px;
-  margin: 0 6px 0 0;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
+.sidepanel-body {
+    flex: 1;
+    display: flex;
+    min-height: 0;
 }
 
-.sidepanel-header-tab {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 10px;
-  font-size: 12px;
-  line-height: 1.4;
-  color: rgba(255, 255, 255, 0.72);
-  background: transparent;
-  border: none;
-  border-radius: 999px;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: background-color 0.15s ease, color 0.15s ease;
+.sidepanel-main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
 }
 
-.sidepanel-header-tab:hover {
-  color: #fff;
-  background: rgba(255, 255, 255, 0.12);
+/* 右侧竖排导航（聊天 / 图片 / 视频 / 翻译） */
+.sidepanel-rail {
+    flex: 0 0 64px;
+    width: 64px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding: 10px 0;
+    border-left: 1px solid var(--ec-border-soft, #e4e7ec);
+    background: var(--ec-surface, #fff);
+    overflow-y: auto;
 }
 
-.sidepanel-header-tab.active {
-  color: #14253a;
-  background: #fff;
-  font-weight: 600;
+.sidepanel-rail-item {
+    width: 54px;
+    padding: 8px 0 6px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    line-height: 1.2;
+    color: var(--ec-text-muted, #667085);
+    background: transparent;
+    border: none;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: background-color 0.15s ease, color 0.15s ease;
 }
+
+.sidepanel-rail-item:hover {
+    color: var(--ec-primary, #1677ff);
+    background: rgba(22, 119, 255, 0.08);
+}
+
+.sidepanel-rail-item.active {
+    color: var(--ec-primary, #1677ff);
+    background: rgba(22, 119, 255, 0.12);
+    font-weight: 600;
+}
+
+.sidepanel-rail-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    line-height: 1;
+}
+
+.sidepanel-rail-label {
+    white-space: nowrap;
+}
+
+/* 这些视图自带内边距，不再叠加 content 的内边距 */
+.sidepanel-content-flush {
+    padding: 0;
+    overflow-y: auto;
+}
+
 
 /* ============ 翻译面板 ============ */
 
@@ -2923,3 +2961,108 @@ body {
 
 
 
+
+/* ============ 图片 / 视频生成面板 ============ */
+
+.actspan-media {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px 20px;
+  box-sizing: border-box;
+}
+
+.actspan-media-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.actspan-media-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ec-text, #101828);
+}
+
+.actspan-media-prompt {
+  width: 100%;
+  min-height: 110px;
+  padding: 10px 12px;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--ec-text, #101828);
+  background: var(--ec-surface, #fff);
+  border: 1px solid var(--ec-border-soft, #e4e7ec);
+  border-radius: 10px;
+  box-sizing: border-box;
+  resize: vertical;
+}
+
+.actspan-media-prompt:focus {
+  outline: none;
+  border-color: var(--ec-primary, #1677ff);
+  box-shadow: 0 0 0 3px rgba(22, 119, 255, 0.12);
+}
+
+.actspan-media-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.actspan-media-label {
+  font-size: 12px;
+  color: var(--ec-text-muted, #667085);
+}
+
+.actspan-media-status {
+  font-size: 11px;
+  color: var(--ec-text-muted, #98a2b3);
+}
+
+.actspan-media-result {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 120px;
+  padding: 10px;
+  background: var(--ec-surface-soft, #f8fafc);
+  border: 1px dashed var(--ec-border-soft, #e4e7ec);
+  border-radius: 10px;
+}
+
+.actspan-media-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  min-height: 100px;
+  font-size: 12px;
+  color: var(--ec-text-muted, #98a2b3);
+}
+
+.actspan-media-image,
+.actspan-media-video {
+  width: 100%;
+  border-radius: 8px;
+  background: #000;
+  display: block;
+}
+
+.actspan-media-note {
+  font-size: 11px;
+  color: var(--ec-text-muted, #98a2b3);
+}
+
+.actspan-media-download {
+  align-self: flex-start;
+  font-size: 12px;
+  color: var(--ec-primary, #1677ff);
+  text-decoration: none;
+}
+
+.actspan-media-download:hover {
+  text-decoration: underline;
+}
