@@ -1,6 +1,16 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { routeFrameRef, frameSnapshotId, qualifyRef, parseQualifiedRef, MAIN_FRAME_ID } from './frame-routing.ts';
+import { build } from 'esbuild';
+
+const bundle = await build({
+  stdin: {
+    contents: `export { routeFrameRef, frameSnapshotId, qualifyRef, parseQualifiedRef, MAIN_FRAME_ID } from './src/background/frame-routing.ts';`,
+    resolveDir: process.cwd(),
+    loader: 'ts',
+  },
+  bundle: true, write: false, format: 'esm', platform: 'node',
+});
+const { routeFrameRef, frameSnapshotId, qualifyRef, parseQualifiedRef, MAIN_FRAME_ID } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].contents).toString('base64')}`);
 
 test('主框架 ref 不带后缀，snapshotId 沿用 tab 级', () => {
   const route = routeFrameRef('ec-abc-1', 'snap-1');
