@@ -7,6 +7,8 @@ import { normalizeBaseUrl } from './types';
 import type { ImageProviderConfig, VideoProviderConfig } from './types';
 import { resolveImageParams } from './models';
 import type { ImageModelSpec, ImageSelection } from './models';
+import { resolveVideoParams } from './videoModels';
+import type { VideoModelSpec, VideoSelection } from './videoModels';
 
 type FetchLike = typeof fetch;
 
@@ -29,12 +31,6 @@ const authHeaders = (apiKey: string): Record<string, string> => {
 const readError = async (response: Response, label: string): Promise<never> => {
   const text = await response.text().catch(() => '');
   throw new Error(`${label}请求失败（HTTP ${response.status}）${text ? `：${text.slice(0, 200)}` : ''}`);
-};
-
-const joinUrl = (baseUrl: string, path: string): string => {
-  const base = normalizeBaseUrl(baseUrl);
-  if (!base) throw new Error('请先在设置里填写 API 根地址');
-  return `${base}${path.startsWith('/') ? path : `/${path}`}`;
 };
 
 const jsonPost = (body: unknown, apiKey: string) => ({
@@ -165,6 +161,8 @@ export const extractVideoUrl = (json: any): string | undefined => {
   const first = Array.isArray(json?.data) ? json.data[0] : undefined;
   const fromData = first?.url ?? first?.video_url;
   if (typeof fromData === 'string' && fromData) return fromData;
+  const nested = json?.content?.video_url ?? json?.content?.url ?? json?.result?.video_url;
+  if (typeof nested === 'string' && nested) return nested;
   const output = Array.isArray(json?.output) ? json.output[0] : undefined;
   return typeof output === 'string' && output ? output : undefined;
 };
@@ -175,27 +173,58 @@ export interface VideoJobOutcome {
   url?: string;
 }
 
+/** 构造视频提交请求：ark 走 content 数组，openai 走 prompt + size/seconds */
+export const buildVideoSubmitRequest = (
+  spec: VideoModelSpec,
+  config: VideoProviderConfig,
+  selection: VideoSelection,
+): { url: string; init: { method: string; headers: Record<string, string>; body: string } } => {
+  const prompt = String(selection.prompt || '').trim();
+  const params = resolveVideoParams(spec, selection);
+  const base = normalizeBaseUrl(config.baseUrl);
+
+  if (spec.shape === 'ark') {
+    const content: Array<Record<string, unknown>> = [{ type: 'text', text: prompt }];
+    for (const ref of params.refs) {
+      content.push({ type: 'image_url', image_url: { url: ref } });
+    }
+    const body: Record<string, unknown> = { model: spec.id, content };
+    if (params.resolution) body.resolution = params.resolution;
+    if (params.aspect) body.ratio = params.aspect;
+    if (params.duration) body.duration = params.duration;
+    if (params.audio !== undefined) body.generate_audio = params.audio;
+    return { url: `${base}${spec.submitPath}`, init: jsonPost(body, config.apiKey) };
+  }
+
+  const body: Record<string, unknown> = { model: spec.id, prompt };
+  if (params.size) body.size = params.size;
+  if (params.duration) body.seconds = String(params.duration);
+  return { url: `${base}${spec.submitPath}`, init: jsonPost(body, config.apiKey) };
+};
+
+/** 构造视频状态查询请求 */
+export const buildVideoPollRequest = (
+  spec: VideoModelSpec,
+  config: VideoProviderConfig,
+  jobId: string,
+): { url: string; init: { method: string; headers: Record<string, string> } } => {
+  const base = normalizeBaseUrl(config.baseUrl);
+  const path = spec.queryPath.replace('{id}', encodeURIComponent(jobId));
+  return { url: `${base}${path}`, init: { method: 'GET', headers: { ...authHeaders(config.apiKey) } } };
+};
+
 /** 提交视频生成任务（可能直接返回成品 URL，也可能只给任务 ID） */
 export const submitVideoJob = async (
+  spec: VideoModelSpec,
   config: VideoProviderConfig,
-  prompt: string,
+  selection: VideoSelection,
   options: { signal?: AbortSignal; fetchImpl?: FetchLike } = {},
 ): Promise<VideoJobOutcome> => {
-  const content = String(prompt || '').trim();
+  const content = String(selection.prompt || '').trim();
   if (!content) throw new Error('请先输入视频描述');
   const fetchImpl = options.fetchImpl || fetch;
-  const submitPath = String(config.submitPath || '/videos/generations').trim();
-  const url = joinUrl(config.baseUrl, submitPath);
-  const body = JSON.stringify({
-    model: String(config.model || '').trim() || undefined,
-    prompt: content,
-  });
-  const response = await fetchImpl(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...authHeaders(config.apiKey) },
-    body,
-    signal: options.signal,
-  });
+  const request = buildVideoSubmitRequest(spec, config, { ...selection, prompt: content });
+  const response = await fetchImpl(request.url, { ...request.init, signal: options.signal });
   if (!response.ok) await readError(response, '视频生成');
   const json = await response.json();
   return {
@@ -207,25 +236,17 @@ export const submitVideoJob = async (
 
 /** 轮询一次任务状态 */
 export const pollVideoJob = async (
+  spec: VideoModelSpec,
   config: VideoProviderConfig,
   jobId: string,
   options: { signal?: AbortSignal; fetchImpl?: FetchLike } = {},
 ): Promise<VideoJobOutcome> => {
   const fetchImpl = options.fetchImpl || fetch;
-  const template = String(config.queryPath || '/videos/{id}').trim();
-  const path = template.includes('{id}')
-    ? template.replace(/\{id\}/g, encodeURIComponent(jobId))
-    : `${template.replace(/\/+$/, '')}/${encodeURIComponent(jobId)}`;
-  const url = joinUrl(config.baseUrl, path);
-  const response = await fetchImpl(url, {
-    method: 'GET',
-    headers: { ...authHeaders(config.apiKey) },
-    signal: options.signal,
-  });
+  const request = buildVideoPollRequest(spec, config, jobId);
+  const response = await fetchImpl(request.url, { ...request.init, signal: options.signal });
   if (!response.ok) await readError(response, '视频状态查询');
   const json = await response.json();
-  const status = extractVideoStatus(json);
-  return { id: jobId, status, url: extractVideoUrl(json) };
+  return { id: jobId, status: extractVideoStatus(json), url: extractVideoUrl(json) };
 };
 
 export interface WaitVideoOptions {
@@ -259,15 +280,16 @@ const defaultSleep = (ms: number, signal?: AbortSignal): Promise<void> => new Pr
 
 /** 提交并轮询直到拿到视频地址或失败 */
 export const generateVideo = async (
+  spec: VideoModelSpec,
   config: VideoProviderConfig,
-  prompt: string,
+  selection: VideoSelection,
   options: WaitVideoOptions = {},
 ): Promise<GeneratedVideo> => {
   const intervalMs = options.intervalMs ?? 5000;
   const timeoutMs = options.timeoutMs ?? 5 * 60_000;
   const sleep = options.sleepImpl || defaultSleep;
 
-  let outcome = await submitVideoJob(config, prompt, { signal: options.signal, fetchImpl: options.fetchImpl });
+  let outcome = await submitVideoJob(spec, config, selection, { signal: options.signal, fetchImpl: options.fetchImpl });
   options.onProgress?.(outcome);
   if (outcome.url) return { url: outcome.url };
 
@@ -277,7 +299,7 @@ export const generateVideo = async (
       throw new Error(`视频生成失败（status=${outcome.status}）`);
     }
     await sleep(intervalMs, options.signal);
-    outcome = await pollVideoJob(config, outcome.id, { signal: options.signal, fetchImpl: options.fetchImpl });
+    outcome = await pollVideoJob(spec, config, outcome.id, { signal: options.signal, fetchImpl: options.fetchImpl });
     options.onProgress?.(outcome);
     if (outcome.url) return { url: outcome.url };
     if (outcome.status && VIDEO_FAILED.has(outcome.status)) {
@@ -285,7 +307,7 @@ export const generateVideo = async (
     }
     if (outcome.status && VIDEO_SUCCESS.has(outcome.status)) {
       // 状态成功但没给地址：再查一次，仍没有就报错
-      const final = await pollVideoJob(config, outcome.id, { signal: options.signal, fetchImpl: options.fetchImpl });
+      const final = await pollVideoJob(spec, config, outcome.id, { signal: options.signal, fetchImpl: options.fetchImpl });
       if (final.url) return { url: final.url };
       throw new Error('视频任务已完成但没有返回可播放地址');
     }

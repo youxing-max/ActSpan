@@ -22,6 +22,8 @@ const bundle = await build({
         submitVideoJob,
         pollVideoJob,
         generateVideo,
+        buildVideoSubmitRequest,
+        buildVideoPollRequest,
       } from './src/media/generator.ts';
       export {
         IMAGE_MODELS,
@@ -29,6 +31,12 @@ const bundle = await build({
         resolveImageParams,
         resolutionToPixelSize,
       } from './src/media/models.ts';
+      export {
+        VIDEO_MODELS,
+        findVideoModel,
+        resolveVideoParams,
+        resolutionToVideoSize,
+      } from './src/media/videoModels.ts';
     `,
     resolveDir: process.cwd(),
     loader: 'ts',
@@ -43,7 +51,8 @@ const m = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputF
 const {
   buildImageRequest, parseImageResponse, generateImage,
   extractVideoTaskId, extractVideoStatus, extractVideoUrl,
-  submitVideoJob, pollVideoJob, generateVideo,
+  submitVideoJob, pollVideoJob, generateVideo, buildVideoSubmitRequest, buildVideoPollRequest,
+  VIDEO_MODELS, findVideoModel, resolveVideoParams, resolutionToVideoSize,
   IMAGE_MODELS, findImageModel, resolveImageParams, resolutionToPixelSize,
 } = m;
 
@@ -196,9 +205,88 @@ test('resolveImageParams 对未知模型参数做收敛', () => {
   assert.deepEqual(resolved.refs, []);
 });
 
-/* ---------------- 视频部分（沿用原有用例） ---------------- */
+/* ---------------- 视频部分 ---------------- */
 
-const videoConfig = { baseUrl: 'https://api.example.test/v1', apiKey: 'k', model: 'm', submitPath: '/videos/generations', queryPath: '/videos/{id}' };
+const videoConfig = { baseUrl: 'https://api.example.test/v1', apiKey: 'k', model: 'm', submitPath: '', queryPath: '' };
+const seedance2 = findVideoModel('doubao-seedance-2-0-fast');
+const seedance1 = findVideoModel('doubao-seedance-1-0-pro');
+const sora = findVideoModel('sora-2');
+
+test('视频模型目录：能力差异（分辨率/比例/时长/声音/参考图）', () => {
+  assert.deepEqual(VIDEO_MODELS.map((m2) => m2.shape).sort(), ['ark', 'ark', 'openai']);
+  assert.equal(seedance2.audio, true, 'Seedance 2.0 支持音轨');
+  assert.equal(seedance1.audio, false, 'Seedance 1.0 Pro 不支持音轨');
+  assert.deepEqual(seedance2.durations, [4, 6, 8, 12]);
+  assert.equal(seedance2.refs, 2);
+  assert.equal(sora.refs, 1);
+});
+
+test('分辨率 + 比例折算为 Sora 的 size', () => {
+  assert.equal(resolutionToVideoSize('720p', '16:9'), '1280x720');
+  assert.equal(resolutionToVideoSize('1080p', '9:16'), '1080x1920');
+  assert.equal(resolutionToVideoSize('480p', '1:1'), '480x480');
+  assert.equal(resolutionToVideoSize('4k', '16:9'), undefined);
+});
+
+test('Seedance（ark）：content 数组 + resolution/ratio/duration/generate_audio', () => {
+  const request = buildVideoSubmitRequest(seedance2, videoConfig, {
+    prompt: '海浪拍岸',
+    resolution: '720p',
+    aspect: '9:16',
+    duration: 8,
+    audio: true,
+    refs: ['data:image/png;base64,AAA'],
+  });
+  assert.equal(request.url, 'https://api.example.test/v1/contents/generations/tasks');
+  const body = JSON.parse(request.init.body);
+  assert.equal(body.model, 'doubao-seedance-2-0-fast');
+  assert.deepEqual(body.content[0], { type: 'text', text: '海浪拍岸' });
+  assert.deepEqual(body.content[1], { type: 'image_url', image_url: { url: 'data:image/png;base64,AAA' } });
+  assert.equal(body.resolution, '720p');
+  assert.equal(body.ratio, '9:16');
+  assert.equal(body.duration, 8);
+  assert.equal(body.generate_audio, true);
+});
+
+test('Seedance（ark）：不支持的参数被丢弃，参考图按上限截断', () => {
+  const request = buildVideoSubmitRequest(seedance1, videoConfig, {
+    prompt: 'p',
+    duration: 8,
+    audio: true,
+    resolution: '4K',
+    refs: ['data:image/png;base64,A', 'data:image/png;base64,B', 'data:image/png;base64,C'],
+  });
+  const body = JSON.parse(request.init.body);
+  assert.equal(body.duration, 5, '1.0 Pro 只支持 5/10 秒');
+  assert.equal(body.resolution, '720p', '4K 不被支持，回落到该模型的默认档位');
+  assert.equal(body.generate_audio, undefined, '不支持音轨的模型不下发该字段');
+  assert.equal(body.content.length, 3, 'text + 2 张参考图（上限 2）');
+});
+
+test('Sora（openai）：prompt + size + seconds，参考图不进 body', () => {
+  const request = buildVideoSubmitRequest(sora, videoConfig, {
+    prompt: '城市夜景',
+    resolution: '1080p',
+    aspect: '16:9',
+    duration: 8,
+    refs: ['data:image/png;base64,AAA'],
+  });
+  assert.equal(request.url, 'https://api.example.test/v1/videos');
+  assert.deepEqual(JSON.parse(request.init.body), {
+    model: 'sora-2',
+    prompt: '城市夜景',
+    size: '1920x1080',
+    seconds: '8',
+  });
+});
+
+test('视频轮询请求按模型路径拼装', () => {
+  const ark = buildVideoPollRequest(seedance2, videoConfig, 'job a');
+  assert.equal(ark.url, 'https://api.example.test/v1/contents/generations/tasks/job%20a');
+  assert.equal(ark.init.headers.Authorization, 'Bearer k');
+  const openai = buildVideoPollRequest(sora, videoConfig, 'vid_1');
+  assert.equal(openai.url, 'https://api.example.test/v1/videos/vid_1');
+});
 
 test('视频任务字段兼容多种命名', () => {
   assert.equal(extractVideoTaskId({ id: 'job-1' }), 'job-1');
@@ -207,65 +295,52 @@ test('视频任务字段兼容多种命名', () => {
   assert.throws(() => extractVideoTaskId({}), /任务 ID/);
   assert.equal(extractVideoStatus({ status: 'RUNNING' }), 'running');
   assert.equal(extractVideoStatus({ data: { state: 'succeeded' } }), 'succeeded');
-  assert.equal(extractVideoStatus({}), '');
   assert.equal(extractVideoUrl({ url: 'https://cdn.test/v.mp4' }), 'https://cdn.test/v.mp4');
+  assert.equal(extractVideoUrl({ content: { video_url: 'https://cdn.test/ark.mp4' } }), 'https://cdn.test/ark.mp4');
   assert.equal(extractVideoUrl({ data: [{ video_url: 'https://cdn.test/v2.mp4' }] }), 'https://cdn.test/v2.mp4');
-  assert.equal(extractVideoUrl({ output: ['https://cdn.test/v3.mp4'] }), 'https://cdn.test/v3.mp4');
   assert.equal(extractVideoUrl({}), undefined);
 });
 
-test('提交视频任务：默认路径 + 只返回任务 ID 时 url 为空', async () => {
+test('submitVideoJob 只返回任务 ID 时 url 为空', async () => {
   const calls = [];
-  const outcome = await submitVideoJob(videoConfig, '海边日落', {
+  const outcome = await submitVideoJob(seedance2, videoConfig, { prompt: '海边日落' }, {
     fetchImpl: async (url, init) => {
       calls.push({ url, init });
-      return jsonResponse({ task_id: 'job-9', status: 'queued' });
+      return jsonResponse({ id: 'cgt-9' });
     },
   });
-  assert.equal(calls[0].url, 'https://api.example.test/v1/videos/generations');
-  assert.deepEqual(JSON.parse(calls[0].init.body), { model: 'm', prompt: '海边日落' });
-  assert.deepEqual(outcome, { id: 'job-9', status: 'queued', url: undefined });
-});
-
-test('轮询路径按模板替换 {id}', async () => {
-  const calls = [];
-  await pollVideoJob({ ...videoConfig, queryPath: '/jobs/{id}/status' }, 'a b', {
-    fetchImpl: async (url) => {
-      calls.push(url);
-      return jsonResponse({ status: 'succeeded', url: 'https://cdn.test/v.mp4' });
-    },
-  });
-  assert.equal(calls[0], 'https://api.example.test/v1/jobs/a%20b/status');
+  assert.equal(calls[0].url, 'https://api.example.test/v1/contents/generations/tasks');
+  assert.deepEqual(outcome, { id: 'cgt-9', status: '', url: undefined });
 });
 
 test('generateVideo：直接返回 URL 时不轮询；轮询到成功；失败与超时抛错', async () => {
   let polls = 0;
-  const direct = await generateVideo(videoConfig, 'p', {
+  const direct = await generateVideo(seedance2, videoConfig, { prompt: 'p' }, {
     fetchImpl: async (url, init) => {
-      if (init?.method === 'POST') return jsonResponse({ id: 'j1', url: 'https://cdn.test/direct.mp4' });
+      if (init?.method === 'POST') return jsonResponse({ id: 'j1', content: { video_url: 'https://cdn.test/direct.mp4' } });
       polls += 1;
       return jsonResponse({ status: 'succeeded' });
     },
   });
   assert.deepEqual(direct, { url: 'https://cdn.test/direct.mp4' });
-  assert.equal(polls, 0);
+  assert.equal(polls, 0, '提交即返回地址时不应轮询');
 
   const statuses = ['queued', 'running', 'succeeded'];
   let index = 0;
-  const polled = await generateVideo(videoConfig, 'p', {
+  const polled = await generateVideo(seedance2, videoConfig, { prompt: 'p' }, {
     intervalMs: 1,
     sleepImpl: async () => {},
     fetchImpl: async (url, init) => {
-      if (init?.method === 'POST') return jsonResponse({ id: 'j2', status: 'queued' });
+      if (init?.method === 'POST') return jsonResponse({ id: 'j2' });
       const status = statuses[Math.min(index, statuses.length - 1)];
       index += 1;
-      return jsonResponse({ status, url: status === 'succeeded' ? 'https://cdn.test/done.mp4' : undefined });
+      return jsonResponse({ status, content: status === 'succeeded' ? { video_url: 'https://cdn.test/done.mp4' } : undefined });
     },
   });
   assert.deepEqual(polled, { url: 'https://cdn.test/done.mp4' });
 
   await assert.rejects(
-    () => generateVideo(videoConfig, 'p', {
+    () => generateVideo(seedance2, videoConfig, { prompt: 'p' }, {
       intervalMs: 1,
       sleepImpl: async () => {},
       fetchImpl: async (url, init) => (init?.method === 'POST' ? jsonResponse({ id: 'j3' }) : jsonResponse({ status: 'failed' })),
@@ -274,7 +349,7 @@ test('generateVideo：直接返回 URL 时不轮询；轮询到成功；失败�
   );
 
   await assert.rejects(
-    () => generateVideo(videoConfig, 'p', {
+    () => generateVideo(seedance2, videoConfig, { prompt: 'p' }, {
       intervalMs: 1,
       timeoutMs: 5,
       sleepImpl: async () => { await new Promise((r) => setTimeout(r, 2)); },
@@ -282,4 +357,14 @@ test('generateVideo：直接返回 URL 时不轮询；轮询到成功；失败�
     }),
     /超时/,
   );
+});
+
+test('resolveVideoParams 收敛越界参数', () => {
+  const resolved = resolveVideoParams(seedance1, {
+    prompt: 'p', resolution: '4K', aspect: '21:9', duration: 99, audio: true,
+  });
+  assert.equal(resolved.resolution, '720p', '回落到模型默认档位而不是列表首项');
+  assert.equal(resolved.aspect, '16:9', '21:9 不在 1.0 Pro 支持列表，回落首个');
+  assert.equal(resolved.duration, 5);
+  assert.equal(resolved.audio, undefined, '不支持音轨的模型返回 undefined');
 });

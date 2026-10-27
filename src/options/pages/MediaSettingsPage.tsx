@@ -7,6 +7,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { App, Alert, Button, Card, Form, Input, Select, Space, Typography } from 'antd';
 import { DEFAULT_MEDIA_SETTINGS } from '../../media/types';
 import { IMAGE_MODELS } from '../../media/models';
+import { VIDEO_MODELS } from '../../media/videoModels';
 import type { MediaSettings } from '../../media/types';
 import { loadMediaSettings, saveMediaSettings } from '../../media/settings';
 
@@ -99,7 +100,7 @@ export function MediaSettingsPage() {
 
       <Card size="small" title="视频生成" style={{ marginBottom: 16 }}>
         <Paragraph type="secondary" style={{ marginBottom: 12 }}>
-          按「提交任务 + 轮询」约定：
+          按各模型的提交 / 轮询约定：
           向 <Text code>{'{baseUrl}{submitPath}'}</Text> POST <Text code>{'{ model, prompt }'}</Text> 拿到任务 ID，
           再 GET <Text code>{'{baseUrl}{queryPath}'}</Text>（可用 <Text code>{'{id}'}</Text> 占位）查状态与地址。
           成功状态识别 <Text code>succeeded / success / completed</Text>。
@@ -122,32 +123,22 @@ export function MediaSettingsPage() {
             />
           </Form.Item>
           <Space size={16} wrap>
-            <Form.Item label="模型" style={{ marginBottom: 0 }}>
-              <Input
-                style={{ width: 220 }}
-                placeholder="例如 kling-v1 / veo-3"
+            <Form.Item label="默认模型" style={{ marginBottom: 0 }}>
+              <Select
+                style={{ width: 280 }}
                 value={settings.video.model}
-                onChange={(event) => patchVideo({ model: event.target.value })}
-                autoComplete="off"
-              />
-            </Form.Item>
-            <Form.Item label="提交路径" style={{ marginBottom: 0 }}>
-              <Input
-                style={{ width: 220 }}
-                value={settings.video.submitPath}
-                onChange={(event) => patchVideo({ submitPath: event.target.value })}
-                autoComplete="off"
-              />
-            </Form.Item>
-            <Form.Item label="查询路径" style={{ marginBottom: 0 }}>
-              <Input
-                style={{ width: 220 }}
-                value={settings.video.queryPath}
-                onChange={(event) => patchVideo({ queryPath: event.target.value })}
-                autoComplete="off"
+                onChange={(value) => patchVideo({ model: value })}
+                options={VIDEO_MODELS.map((item) => ({
+                  value: item.id,
+                  label: `${item.vendor} · ${item.label}`,
+                }))}
               />
             </Form.Item>
           </Space>
+          <Paragraph type="secondary" style={{ marginTop: 12, marginBottom: 0 }}>
+            分辨率、比例、时长、声音这些参数由模型能力决定，在侧边栏的视频面板里按当前模型动态显示；
+            接口路径也跟随模型，无需手填。
+          </Paragraph>
         </Form>
       </Card>
 
