@@ -247,13 +247,19 @@ function isBridgeProcess(pid) {
         if (command.trim()) return /bridge(?:-daemon)?\.js\b/.test(command);
     } catch { /* 非 POSIX 或无 ps，继续按平台兜底 */ }
     if (process.platform === 'win32') {
-        try {
-            // Get-CimInstance 冷启动常在 1.5–2s，超时太短会把「无法确认」当成「不是 bridge」，
-            // 结果 stop 永远拒绝发信号。
-            const command = execFileSync('powershell.exe', ['-NoProfile', '-Command',
-                `(Get-CimInstance Win32_Process -Filter "ProcessId=${Number(pid)}").CommandLine`], { encoding: 'utf8', timeout: 5000 });
-            return /bridge(?:-daemon)?\.js\b/.test(command);
-        } catch { return false; }
+        // Get-CimInstance 冷启动 1.5–2s，并行负载下可能超过 5s。
+        // 第一次超时时用更大预算重试一次；两次都失败才视为「无法确认」。
+        for (const timeout of [5000, 15000]) {
+            try {
+                const command = execFileSync('powershell.exe', ['-NoProfile', '-Command',
+                    `(Get-CimInstance Win32_Process -Filter "ProcessId=${Number(pid)}").CommandLine`], { encoding: 'utf8', timeout });
+                return /bridge(?:-daemon)?\.js\b/.test(command);
+            } catch (err) {
+                if (timeout === 15000) return false;
+                // 只有超时类错误才值得重试；进程不存在等错误直接判 false。
+                if (err.code !== 'ETIMEDOUT' && !err.killed) return false;
+            }
+        }
     }
     return false;
 }
