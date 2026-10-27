@@ -171,12 +171,19 @@ test('occupied Actspan owner reports verified PID and compatibility without take
     assert.equal(contender.listening, false);
 });
 
-test('policy rejects unknown capabilities and missing identity', () => {
+// free mode（docs/spec/actspan-free-mode-spec.md）：审批门已移除，requiresApproval 恒为 false；
+// 但能力白名单、身份字段校验和权限分级都保留，这里继续钉住它们。
+test('policy rejects unknown capabilities and never gates on approval under free mode', () => {
     const context = { clientId: 'A', requestId: 'R', taskId: 'T', sessionId: 'S', tabId: 1, trustAll: true,
         approval: { approved: true } };
     assert.throws(() => Policy.check('unknown', context), /Unsupported/);
 
     assert.throws(() => Policy.check('page.eval', { ...context, taskId: '' }), /taskId/);
+    assert.equal(Policy.check('page.eval', context).requiresApproval, false);
+    assert.equal(Policy.check('page.click', context).requiresApproval, false);
+    // 权限分级仍然存在，只用于审计/日志
+    assert.equal(Policy.check('page.eval', context).permission, 'dangerous');
+    assert.equal(Policy.check('page.click', context).permission, 'interact');
 });
 
 // 自由化模式（docs/spec/actspan-free-mode-spec.md）：permission 只用于审计分级，
@@ -186,6 +193,19 @@ test('free mode never requires approval, even for writes and page.eval', () => {
     for (const capability of ['page.eval', 'page.click', 'page.type', 'page.select', 'page.scroll', 'tab.navigate', 'tab.open']) {
         assert.equal(Policy.check(capability, context).requiresApproval, false, capability);
     }
+});
+
+// tabId 是调用方可选参数；free mode 下没有审批门，缺失 tabId 也不改变放行语义，
+// 但能力仍必须被白名单承认并带上正确的权限分级。
+test('free mode admits page writes and tab.navigate without approval, with or without a tabId', () => {
+    const context = { clientId: 'A', requestId: 'R', taskId: 'T', sessionId: 'S' };
+    for (const capability of ['page.click', 'page.type', 'page.select', 'page.scroll', 'tab.navigate']) {
+        const result = Policy.check(capability, context);
+        assert.equal(result.requiresApproval, false, capability);
+        assert.equal(result.permission, 'interact', capability);
+    }
+    // tab.open 只是新建标签页，没有既有标签页可改。
+    assert.equal(Policy.check('tab.open', context).requiresApproval, false);
 });
 
 test('policy admits every stable bridge capability with its minimum permission', () => {

@@ -40,13 +40,32 @@ test('registers actspan_act and batches safe actions before one final snapshot',
     assert.deepEqual(calls.map(({ method }) => method), ['page.click', 'act.draft', 'page.read']);
 });
 
-// 自由化模式（docs/spec/actspan-free-mode-spec.md）：敏感目标不再被拦，动作直达桥。
-test('sensitive targets reach the bridge in free mode', async () => {
+// free mode（docs/spec/actspan-free-mode-spec.md）移除了 SENSITIVE_BLOCKED 门：
+// 敏感目标不再在桥接前被拦截，动作照常下发，只保留权限分级用于审计。
+test('free mode dispatches previously sensitive targets without blocking', async () => {
     const calls = [];
     const { handler } = setup(async (method) => { calls.push(method); return { changed: true }; });
     const result = await handler({ tabId: 3, steps: [{ action: 'click', selector: 'button.pay-now' }] });
     assert.equal(result.success, true);
     assert.deepEqual(calls, ['page.click', 'act.draft', 'page.read']);
+    assert.doesNotMatch(String(result.error || ''), /SENSITIVE_BLOCKED/);
+});
+
+// 目标可能藏在 find/value 里：free mode 下这些形态同样不再被拦截，必须照常到达桥接。
+test('free mode dispatches targets addressed by find or value, and from select', async () => {
+    for (const step of [
+        { action: 'click', find: { role: 'button', name: '删除账户' } },
+        { action: 'click', find: { role: 'button', name: 'Delete account' } },
+        { action: 'type', selector: '#card', text: '4111', submit: true },
+        { action: 'select', selector: '#plan', value: '结算方式' },
+    ]) {
+        const calls = [];
+        const { handler } = setup(async (method) => { calls.push(method); return { changed: true }; });
+        const result = await handler({ tabId: 3, steps: [step] });
+        assert.equal(result.success, true, `${JSON.stringify(step)} must dispatch`);
+        assert.doesNotMatch(String(result.error || ''), /SENSITIVE_BLOCKED/, JSON.stringify(step));
+        assert.ok(calls.length > 0, `${JSON.stringify(step)} must reach the bridge`);
+    }
 });
 
 test('an ordinary target is still batched without an allowSensitive flag', async () => {
