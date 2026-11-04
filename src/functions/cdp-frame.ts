@@ -35,14 +35,15 @@ const flattenFrameTree = (
   const result: FlatFrame[] = [];
   const frame = frameTree?.frame;
   if (!frame) return result;
+  const parentId = parentFrameId || frame.parentId || '';
 
   result.push({
     frame_id: frame.id || '',
-    parent_frame_id: parentFrameId,
+    parent_frame_id: parentId,
     url: frame.url || '',
     name: frame.name || '',
     security_origin: frame.securityOrigin || '',
-    is_main: isMain,
+    is_main: isMain && !parentId,
   });
 
   const children = frameTree.childFrames;
@@ -53,6 +54,14 @@ const flattenFrameTree = (
   }
 
   return result;
+};
+
+const flattenFrameTrees = (frameTrees: Array<{ frameTree: unknown }> = []): FlatFrame[] => {
+  const frames = new Map<string, FlatFrame>();
+  for (const { frameTree } of frameTrees) {
+    for (const frame of flattenFrameTree(frameTree)) frames.set(frame.frame_id, frame);
+  }
+  return [...frames.values()];
 };
 
 /** 检测代码是否包含 return 语句，如果包含则包装为 IIFE */
@@ -183,11 +192,11 @@ export const cdpFrameFunction: FunctionDefinition = {
 
     switch (action) {
       case 'list': {
-        const result = await CDPSessionManager.sendCommand(tabId, 'Page.getFrameTree');
+        const result = await CDPSessionManager.getFrameTrees(tabId);
         if (!result.success) {
           return { success: false, error: `获取 frame 树失败: ${result.error}` };
         }
-        const frames = flattenFrameTree(result.result?.frameTree);
+        const frames = flattenFrameTrees(result.result?.frameTrees);
         return {
           success: true,
           data: {
@@ -213,25 +222,28 @@ export const cdpFrameFunction: FunctionDefinition = {
 
         if (frame_id) {
           // ——— 指定 frame 中执行（iframe 穿透） ———
-          let contextId = CDPSessionManager.getFrameContextId(tabId, frame_id);
+          let frameContext = CDPSessionManager.getFrameExecutionContext(tabId, frame_id);
 
-          if (contextId === null) {
+          if (frameContext === null) {
             // 验证 frame_id 是否有效
-            const treeResult = await CDPSessionManager.sendCommand(tabId, 'Page.getFrameTree');
+            const treeResult = await CDPSessionManager.getFrameTrees(tabId);
             if (!treeResult.success) {
               return { success: false, error: `无法验证 frame: ${treeResult.error}` };
             }
-            const frames = flattenFrameTree(treeResult.result?.frameTree);
+            const frames = flattenFrameTrees(treeResult.result?.frameTrees);
             const targetFrame = frames.find((f) => f.frame_id === frame_id);
             if (!targetFrame) {
               return { success: false, error: `未找到 frame_id: ${frame_id}` };
             }
 
-            // 等待短暂时间再重试（context 可能还没有创建完毕）
-            await new Promise((r) => setTimeout(r, 200));
-            contextId = CDPSessionManager.getFrameContextId(tabId, frame_id);
+            frameContext = CDPSessionManager.getFrameExecutionContext(tabId, frame_id);
+            if (frameContext === null) {
+              // 导航中的 frame 可能尚未创建 context。
+              await new Promise((r) => setTimeout(r, 200));
+              frameContext = CDPSessionManager.getFrameExecutionContext(tabId, frame_id);
+            }
 
-            if (contextId === null) {
+            if (frameContext === null) {
               return {
                 success: false,
                 error: `无法获取 frame ${frame_id} 的执行上下文。可能是跨域 iframe 尚未加载完成，请稍后重试。`,
@@ -239,15 +251,16 @@ export const cdpFrameFunction: FunctionDefinition = {
             }
           }
 
+          if (context?.signal?.aborted) return { success: false, error: '操作已取消' };
           const evalResult = await CDPSessionManager.sendCommand(tabId, 'Runtime.evaluate', {
             expression: finalExpression,
-            contextId,
+            contextId: frameContext.contextId,
             returnByValue: true,
             awaitPromise: true,
             timeout: 10_000,
             // 与 page.eval 同一套 V8 副作用拦截：任何写副作用都会让整次求值被拒。
             throwOnSideEffect: true,
-          });
+          }, frameContext.sessionId);
 
           if (!evalResult.success) {
             return { success: false, error: `JS 执行失败: ${evalResult.error}` };

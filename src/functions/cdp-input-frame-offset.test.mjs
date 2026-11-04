@@ -28,6 +28,10 @@ const withFrames = async (frames, run) => {
   for (const frame of frames.filter((item) => item.frameId !== 0)) {
     const owner = {
       contentWindow: windows.get(frame.frameId),
+      scrollIntoView: () => {
+        if (frame.scrolledY !== undefined) frame.y = frame.scrolledY;
+        frame.scrollCalls = (frame.scrollCalls || 0) + 1;
+      },
       getBoundingClientRect: () => ({ x: frame.x, y: frame.y, left: frame.x, top: frame.y, width: 300, height: 200 }),
       clientLeft: frame.borderX ?? 0, clientTop: frame.borderY ?? 0,
       offsetWidth: 300, offsetHeight: 200, style: { transform: frame.transform ?? 'none', zoom: '1' },
@@ -92,6 +96,17 @@ test('missing frames never dispatch input to the parent', async () => {
     const result = await realClickAt(1, 10, 20, undefined, 476);
     assert.equal(result.success, false); assert.match(result.error, /iframe/);
     assert.equal(globalThis.__frameCommands.some(({ method }) => method.startsWith('Input.')), false);
+  });
+});
+
+test('real clicks scroll the foreign iframe owner into view before computing its offset', async () => {
+  const child = { frameId: 8, parentFrameId: 0, x: 20, y: 2000, scrolledY: 120, borderY: 3 };
+  await withFrames([{ frameId: 0, parentFrameId: -1 }, child], async () => {
+    assert.deepEqual(await realClickAt(1, 10, 20, undefined, 8), { success: true });
+    assert.equal(child.scrollCalls, 1);
+    const mouse = globalThis.__frameCommands.filter(x => x.method === 'Input.dispatchMouseEvent');
+    assert.ok(mouse.length >= 3);
+    assert.ok(mouse.every(x => x.params.x === 30 && x.params.y === 143));
   });
 });
 

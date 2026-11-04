@@ -153,3 +153,100 @@ test('stops an idle network capture when the max listen duration elapses', async
   await flushAsyncWork();
   assert.equal(CDPSessionManager.isNetworkListening(46), false);
 });
+
+test('frame discovery includes out-of-process iframe sessions and routes evaluations to them', async () => {
+  const originalSend = debuggerApi.sendCommand;
+  const routed = [];
+  const tabId = 71;
+  const emit = (sessionId, method, params) => {
+    for (const handler of handlers.onEvent) handler({ tabId, ...(sessionId ? { sessionId } : {}) }, method, params);
+  };
+  debuggerApi.sendCommand = async (target, method, params) => {
+    routed.push({ target, method, params });
+    if (method === 'Target.setAutoAttach' && !target.sessionId) {
+      emit(undefined, 'Target.attachedToTarget', { sessionId: 'foreign-session', targetInfo: { type: 'iframe', targetId: 'foreign-frame' } });
+    }
+    if (method === 'Runtime.enable') {
+      emit(target.sessionId, 'Runtime.executionContextCreated', {
+        context: { id: 1, auxData: { frameId: target.sessionId ? 'foreign-frame' : 'main-frame', isDefault: true } },
+      });
+    }
+    if (method === 'Page.getFrameTree') return { frameTree: { frame: {
+      id: target.sessionId ? 'foreign-frame' : 'main-frame',
+      ...(target.sessionId ? { parentId: 'main-frame' } : {}),
+      url: target.sessionId ? 'https://foreign.test/' : 'https://main.test/',
+    } } };
+    return {};
+  };
+  try {
+    const trees = await CDPSessionManager.getFrameTrees(tabId);
+    assert.equal(trees.success, true);
+    assert.deepEqual(trees.result.frameTrees.map(x => x.frameTree.frame.id), ['main-frame', 'foreign-frame']);
+    const foreign = CDPSessionManager.getFrameExecutionContext(tabId, 'foreign-frame');
+    assert.deepEqual(foreign, { contextId: 1, sessionId: 'foreign-session' });
+    await CDPSessionManager.sendCommand(tabId, 'Runtime.evaluate', { expression: 'document.title', contextId: foreign.contextId, throwOnSideEffect: true }, foreign.sessionId);
+    assert.deepEqual(routed.at(-1).target, { tabId, sessionId: 'foreign-session' });
+    emit('foreign-session', 'Runtime.executionContextDestroyed', { executionContextId: 1 });
+    assert.equal(CDPSessionManager.getFrameExecutionContext(tabId, 'foreign-frame'), null);
+    assert.equal(CDPSessionManager.getFrameContextId(tabId, 'main-frame'), 1, 'context ids collide across renderer sessions');
+    emit(undefined, 'Target.detachedFromTarget', { sessionId: 'foreign-session' });
+    assert.equal(CDPSessionManager.isAttached(tabId), true);
+  } finally {
+    await CDPSessionManager.detach(tabId);
+    debuggerApi.sendCommand = originalSend;
+  }
+});
+
+test('nested iframe discovery isolates context clearing, listener events and child detaches', async () => {
+  const originalSend = debuggerApi.sendCommand;
+  const tabId = 72;
+  const emit = (sessionId, method, params) => {
+    for (const handler of handlers.onEvent) handler({ tabId, ...(sessionId ? { sessionId } : {}) }, method, params);
+  };
+  const createContext = (sessionId) => emit(sessionId, 'Runtime.executionContextCreated', {
+    context: { id: 1, auxData: { frameId: sessionId || 'main', isDefault: true } },
+  });
+  debuggerApi.sendCommand = async ({ sessionId }, method) => {
+    if (method === 'Target.setAutoAttach' && sessionId !== 'nested') {
+      const childId = sessionId ? 'nested' : 'child';
+      emit(sessionId, 'Target.attachedToTarget', { sessionId: childId, targetInfo: { type: 'iframe', targetId: childId } });
+    }
+    if (method === 'Runtime.enable') createContext(sessionId);
+    if (method === 'Page.getFrameTree') return { frameTree: { frame: { id: sessionId || 'main' } } };
+    if (method === 'Runtime.evaluate' && sessionId === 'child') throw new Error('Debugger is not attached');
+    return {};
+  };
+  try {
+    const trees = await CDPSessionManager.getFrameTrees(tabId);
+    assert.equal(trees.success, true);
+    assert.deepEqual(trees.result.frameTrees.map(x => x.frameTree.frame.id), ['main', 'child', 'nested']);
+    emit('child', 'Runtime.executionContextsCleared', {});
+    assert.equal(CDPSessionManager.getFrameContextId(tabId, 'child'), null);
+    assert.equal(CDPSessionManager.getFrameContextId(tabId, 'main'), 1);
+    assert.equal(CDPSessionManager.getFrameContextId(tabId, 'nested'), 1);
+    createContext('child');
+    emit(undefined, 'Runtime.executionContextsCleared', {});
+    assert.equal(CDPSessionManager.getFrameContextId(tabId, 'main'), null);
+    assert.equal(CDPSessionManager.getFrameContextId(tabId, 'child'), 1);
+    createContext(undefined);
+
+    await CDPSessionManager.startConsoleListening(tabId);
+    emit('child', 'Runtime.consoleAPICalled', { type: 'log', args: [{ type: 'string', value: 'child' }] });
+    emit(undefined, 'Runtime.consoleAPICalled', { type: 'log', args: [{ type: 'string', value: 'main' }] });
+    assert.deepEqual(CDPSessionManager.getConsoleEntries(tabId).map(x => x.text), ['main']);
+    emit('child', 'Page.javascriptDialogOpening', { message: 'child dialog' });
+    assert.equal(CDPSessionManager.getPendingDialog(tabId), null);
+
+    const result = await CDPSessionManager.sendCommand(tabId, 'Runtime.evaluate', {}, 'child');
+    assert.equal(result.success, false);
+    assert.equal(CDPSessionManager.isAttached(tabId), true);
+    assert.equal(CDPSessionManager.getFrameContextId(tabId, 'child'), null);
+    assert.equal(CDPSessionManager.getFrameContextId(tabId, 'nested'), null);
+    assert.equal(CDPSessionManager.getFrameContextId(tabId, 'main'), 1);
+    createContext('child');
+    assert.equal(CDPSessionManager.getFrameContextId(tabId, 'child'), null, 'late events cannot resurrect a detached child');
+  } finally {
+    await CDPSessionManager.detach(tabId);
+    debuggerApi.sendCommand = originalSend;
+  }
+});

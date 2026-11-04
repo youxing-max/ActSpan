@@ -183,6 +183,36 @@ test('后台替换输入完整保留中英文和 emoji，并恢复焦点模拟',
   }
 });
 
+test('real input probes the explicitly targeted foreign frame before and after typing', async () => {
+  const previousChrome = globalThis.chrome;
+  const page = setPage({ tag: 'input', editable: true, value: '旧内容' });
+  const probes = [];
+  globalThis.chrome = { scripting: { executeScript: async ({ target }) => {
+    probes.push(target);
+    return [{ frameId: 42, result: { ...page.focus, selectionStart: 0, selectionEnd: page.focus.value.length } }];
+  } } };
+  try {
+    assert.equal((await realTypeInto(5, 'A中B😀', undefined, 42)).success, true);
+    assert.deepEqual(probes, [{ tabId: 5, frameIds: [42] }, { tabId: 5, frameIds: [42] }]);
+    assert.equal(page.focus.value, 'A中B😀');
+    assert.equal(page.commands.some(x => x.method === 'Runtime.evaluate'), false);
+  } finally { globalThis.chrome = previousChrome; }
+});
+
+test('a missing foreign frame refuses input instead of typing into the parent focus', async () => {
+  const previousChrome = globalThis.chrome;
+  const page = setPage({ tag: 'input', editable: true, value: 'PARENT' });
+  globalThis.chrome = { scripting: { executeScript: async () => { throw new Error('Frame was removed'); } } };
+  try {
+    const result = await realTypeInto(5, 'foreign', undefined, 42);
+    assert.equal(result.success, false);
+    assert.match(result.error, /Frame was removed/);
+    assert.equal(page.dispatched, 0);
+    assert.equal(page.focus.value, 'PARENT');
+    assert.equal(page.focusEmulated, false);
+  } finally { globalThis.chrome = previousChrome; }
+});
+
 test('追加输入保留原值，选区替换和相同内容替换都能正确验证', async () => {
   const appended = setPage({ tag: 'input', editable: true, value: 'prefix ' });
   assert.equal((await cdpInputWithFakePage.execute({ action: 'type', text: 'A中B', tab_id: 5, interval_ms: 0 })).success, true);

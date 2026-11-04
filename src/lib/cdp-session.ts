@@ -148,7 +148,22 @@ const pendingDialogs = new Map<number, PendingDialog>();
 const dialogPolicies = new Map<number, DialogPolicy>();
 
 // --- Frame ---
-const frameContexts = new Map<number, Map<string, number>>();
+interface FrameExecutionContext {
+  contextId: number;
+  sessionId?: string;
+}
+interface ChildFrameSession {
+  parentSessionId?: string;
+  ready: Promise<CDPCommandResult>;
+}
+const frameContexts = new Map<number, Map<string, FrameExecutionContext>>();
+const childFrameSessions = new Map<number, Map<string, ChildFrameSession>>();
+const FRAME_AUTO_ATTACH = {
+  autoAttach: true,
+  waitForDebuggerOnStart: false,
+  flatten: true,
+  filter: [{ type: 'iframe', exclude: false }, { exclude: true }],
+};
 
 // --- 网络 ---
 const networkEvents = new Map<number, CDPNetworkEvent[]>();
@@ -282,6 +297,7 @@ const cleanupTabState = (tabId: number): void => {
   pendingDialogs.delete(tabId);
   dialogPolicies.delete(tabId);
   frameContexts.delete(tabId);
+  childFrameSessions.delete(tabId);
   networkPendingRequests.delete(tabId);
   consoleEntries.delete(tabId);
   exceptionEntries.delete(tabId);
@@ -322,6 +338,7 @@ const sendCommand = async (
   tabId: number,
   method: string,
   params?: Record<string, any>,
+  sessionId?: string,
 ): Promise<CDPCommandResult> => {
   const attachResult = await attach(tabId);
   if (!attachResult.success) {
@@ -330,9 +347,9 @@ const sendCommand = async (
   touchSession(tabId);
   inFlightCommands.set(tabId, (inFlightCommands.get(tabId) || 0) + 1);
   try {
-    const pausedRequest = method === 'Fetch.continueRequest' || method === 'Fetch.fulfillRequest' || method === 'Fetch.failRequest'
+    const pausedRequest = !sessionId && (method === 'Fetch.continueRequest' || method === 'Fetch.fulfillRequest' || method === 'Fetch.failRequest')
       ? fetchPausedRequests.get(tabId)?.get(params?.requestId) : undefined;
-    const result = await chrome.debugger.sendCommand({ tabId }, method, params || {});
+    const result = await chrome.debugger.sendCommand({ tabId, ...(sessionId ? { sessionId } : {}) }, method, params || {});
     if (pausedRequest && fetchPausedRequests.get(tabId)?.get(params?.requestId) === pausedRequest) {
       fetchPausedRequests.get(tabId)?.delete(params?.requestId);
     }
@@ -343,7 +360,8 @@ const sendCommand = async (
       return { success: false, code: 'L2_BUSY', error: `L2_BUSY：${msg}。已自动降级；如需真实事件请关闭 DevTools 后重试` };
     }
     if (msg.includes('Debugger is not attached') || msg.includes('No tab with given id')) {
-      cleanupTabState(tabId);
+      if (sessionId && !msg.includes('No tab with given id')) removeChildFrameSession(tabId, sessionId);
+      else cleanupTabState(tabId);
       return { success: false, code: 'NEEDS_L2', error: `NEEDS_L2：${msg}` };
     }
     return { success: false, error: msg };
@@ -406,13 +424,63 @@ const getDialogPolicy = (tabId: number): DialogPolicy => {
 // ============ Frame 相关方法 ============
 
 const getFrameContextId = (tabId: number, frameId: string): number | null => {
-  const map = frameContexts.get(tabId);
-  if (!map) return null;
-  return map.get(frameId) ?? null;
+  return getFrameExecutionContext(tabId, frameId)?.contextId ?? null;
+};
+
+const getFrameExecutionContext = (tabId: number, frameId: string): FrameExecutionContext | null => {
+  return frameContexts.get(tabId)?.get(frameId) ?? null;
 };
 
 const clearFrameContexts = (tabId: number): void => {
   frameContexts.delete(tabId);
+};
+
+const clearSessionFrameContexts = (tabId: number, sessionId?: string): void => {
+  const contexts = frameContexts.get(tabId);
+  for (const [frameId, context] of contexts || []) {
+    if (context.sessionId === sessionId) contexts?.delete(frameId);
+  }
+};
+
+const removeChildFrameSession = (tabId: number, sessionId: string): void => {
+  const children = childFrameSessions.get(tabId);
+  children?.delete(sessionId);
+  clearSessionFrameContexts(tabId, sessionId);
+  for (const [childId, child] of children || []) {
+    if (child.parentSessionId === sessionId) removeChildFrameSession(tabId, childId);
+  }
+};
+
+/** OOPIF 有独立调试会话，主 target 的 Page.getFrameTree 不包含这些 frame。 */
+const getFrameTrees = async (tabId: number): Promise<CDPCommandResult> => {
+  const attached = await attach(tabId);
+  if (!attached.success) return attached;
+  const entry = sessions.get(tabId)!;
+  if (!entry.domainsEnabled.has('Target')) {
+    const enabled = await sendCommand(tabId, 'Target.setAutoAttach', FRAME_AUTO_ATTACH);
+    if (!enabled.success) return enabled;
+    entry.domainsEnabled.add('Target');
+  }
+  const main = await sendCommand(tabId, 'Page.getFrameTree');
+  if (!main.success) return main;
+  const frameTrees = [{ frameTree: main.result?.frameTree, sessionId: undefined as string | undefined }];
+  const visited = new Set<string>();
+  // 子会话初始化期间还可能发现嵌套的 OOPIF，逐层收集到没有新会话为止。
+  let pending = [...(childFrameSessions.get(tabId) || [])];
+  while (pending.length > 0) {
+    for (const [sessionId, child] of pending) {
+      visited.add(sessionId);
+      const ready = await child.ready;
+      if (childFrameSessions.get(tabId)?.get(sessionId) !== child) continue;
+      if (!ready.success) return ready;
+      const tree = await sendCommand(tabId, 'Page.getFrameTree', {}, sessionId);
+      if (childFrameSessions.get(tabId)?.get(sessionId) !== child) continue;
+      if (!tree.success) return tree;
+      frameTrees.push({ frameTree: tree.result?.frameTree, sessionId });
+    }
+    pending = [...(childFrameSessions.get(tabId) || [])].filter(([id]) => !visited.has(id));
+  }
+  return { success: true, result: { frameTrees } };
 };
 
 // ============ 网络监听方法 ============
@@ -892,6 +960,73 @@ if (isSupported() && chrome.debugger.onEvent) {
   chrome.debugger.onEvent.addListener((source, method, params: any) => {
     const tabId = source.tabId;
     if (tabId === undefined || !sessions.has(tabId)) return;
+    const sessionId = source.sessionId;
+    if (sessionId && !childFrameSessions.get(tabId)?.has(sessionId)) return;
+
+    if (method === 'Target.attachedToTarget' && params?.targetInfo?.type === 'iframe' && params.sessionId) {
+      let children = childFrameSessions.get(tabId);
+      if (!children) {
+        children = new Map();
+        childFrameSessions.set(tabId, children);
+      }
+      if (children.has(params.sessionId)) return;
+      const child: ChildFrameSession = {
+        parentSessionId: sessionId,
+        ready: Promise.resolve().then(async () => {
+          for (const domain of ['Page.enable', 'Runtime.enable', 'Target.setAutoAttach']) {
+            if (childFrameSessions.get(tabId)?.get(params.sessionId) !== child) {
+              return { success: false, error: 'iframe 调试会话已断开' };
+            }
+            const result = await sendCommand(tabId, domain, domain === 'Target.setAutoAttach' ? FRAME_AUTO_ATTACH : {}, params.sessionId);
+            if (!result.success) return result;
+          }
+          return { success: true };
+        }),
+      };
+      children.set(params.sessionId, child);
+      return;
+    }
+    if (method === 'Target.detachedFromTarget' && params?.sessionId) {
+      removeChildFrameSession(tabId, params.sessionId);
+      return;
+    }
+
+    // ---- Runtime context ----
+    if (method === 'Runtime.executionContextCreated') {
+      const ctx = params?.context;
+      const frameId = ctx?.auxData?.frameId;
+      if (frameId && typeof ctx?.id === 'number' && ctx.auxData?.isDefault) {
+        let map = frameContexts.get(tabId);
+        if (!map) {
+          map = new Map();
+          frameContexts.set(tabId, map);
+        }
+        map.set(frameId, { contextId: ctx.id, ...(sessionId ? { sessionId } : {}) });
+      }
+    }
+
+    if (method === 'Runtime.executionContextDestroyed') {
+      const destroyedId = params?.executionContextId;
+      if (typeof destroyedId === 'number') {
+        const map = frameContexts.get(tabId);
+        if (map) {
+          for (const [fid, context] of map.entries()) {
+            if (context.contextId === destroyedId && context.sessionId === sessionId) map.delete(fid);
+          }
+        }
+      }
+    }
+
+    if (method === 'Runtime.executionContextsCleared') {
+      clearSessionFrameContexts(tabId, sessionId);
+    }
+    if (method === 'Page.frameDetached') {
+      const contexts = frameContexts.get(tabId);
+      if (contexts?.get(params?.frameId)?.sessionId === sessionId) contexts?.delete(params?.frameId);
+    }
+
+    // 子会话只用于 frame 路由，其请求 ID 等不能混入主会话的监听缓冲。
+    if (sessionId) return;
 
     // ---- 对话框 ----
     if (method === 'Page.javascriptDialogOpening') {
@@ -914,36 +1049,6 @@ if (isSupported() && chrome.debugger.onEvent) {
           pendingDialogs.delete(tabId);
         }).catch(() => { /* 忽略 */ });
       }
-    }
-
-    // ---- Runtime context ----
-    if (method === 'Runtime.executionContextCreated') {
-      const ctx = params?.context;
-      const frameId = ctx?.auxData?.frameId;
-      if (frameId && ctx?.id && ctx.auxData?.isDefault) {
-        let map = frameContexts.get(tabId);
-        if (!map) {
-          map = new Map();
-          frameContexts.set(tabId, map);
-        }
-        map.set(frameId, ctx.id);
-      }
-    }
-
-    if (method === 'Runtime.executionContextDestroyed') {
-      const destroyedId = params?.executionContextId;
-      if (typeof destroyedId === 'number') {
-        const map = frameContexts.get(tabId);
-        if (map) {
-          for (const [fid, cid] of map.entries()) {
-            if (cid === destroyedId) { map.delete(fid); break; }
-          }
-        }
-      }
-    }
-
-    if (method === 'Runtime.executionContextsCleared') {
-      frameContexts.delete(tabId);
     }
 
     // ---- 网络事件 ----
@@ -1148,6 +1253,8 @@ export const CDPSessionManager = {
   getDialogPolicy,
   // Frame
   getFrameContextId,
+  getFrameExecutionContext,
+  getFrameTrees,
   clearFrameContexts,
   // 网络
   startNetworkListening,

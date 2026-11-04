@@ -296,44 +296,55 @@ type FocusedInput = {
   selectionStart: number | null; selectionEnd: number | null;
 };
 
+const readFocusedInput = () => {
+  let el = document.activeElement;
+  while (el?.shadowRoot?.activeElement) el = el.shadowRoot.activeElement;
+  if (!el || el === document.body || el === document.documentElement) {
+    return { editable: false, tag: el?.tagName.toLowerCase() || '', value: '' };
+  }
+  const field = el as HTMLInputElement;
+  const tag = el.tagName.toLowerCase();
+  const isField = tag === 'input' || tag === 'textarea';
+  const editable = (isField && !field.disabled && !field.readOnly) || field.isContentEditable === true;
+  const value = isField ? String(field.value ?? '') : (field.isContentEditable ? String(el.textContent || '') : '');
+  let start = isField ? field.selectionStart : null;
+  let end = isField ? field.selectionEnd : null;
+  if (field.isContentEditable) {
+    const selection = window.getSelection();
+    if (selection?.rangeCount) {
+      const range = selection.getRangeAt(0);
+      if (el.contains(range.startContainer) && el.contains(range.endContainer)) {
+        const prefix = range.cloneRange();
+        prefix.selectNodeContents(el);
+        prefix.setEnd(range.startContainer, range.startOffset);
+        start = prefix.toString().length;
+        end = start + range.toString().length;
+      }
+    }
+  }
+  return { editable, tag, value, sensitive: field.type === 'password', selectionStart: start, selectionEnd: end };
+};
+
 const probeFocusedElement = async (
   tabId: number,
+  frameId?: number,
 ): Promise<FocusedInput | { success: false; error: string }> => {
-  const result = await CDPSessionManager.sendCommand(tabId, 'Runtime.evaluate', {
-    expression: `(function() {
-      var el = document.activeElement;
-      // 焦点可能落在 shadow root 内部（自定义元素），逐层下钻
-      while (el && el.shadowRoot && el.shadowRoot.activeElement) el = el.shadowRoot.activeElement;
-      if (!el || el === document.body || el === document.documentElement) {
-        return { editable: false, tag: el ? el.tagName.toLowerCase() : '', value: '' };
-      }
-      var tag = el.tagName.toLowerCase();
-      var isField = tag === 'input' || tag === 'textarea';
-      var editable = (isField && !el.disabled && !el.readOnly) || el.isContentEditable === true;
-      var value = isField ? String(el.value == null ? '' : el.value) : (el.isContentEditable ? String(el.textContent || '') : '');
-      var start = isField ? el.selectionStart : null, end = isField ? el.selectionEnd : null;
-      if (el.isContentEditable) {
-        var selection = window.getSelection();
-        if (selection && selection.rangeCount) {
-          var range = selection.getRangeAt(0);
-          if (el.contains(range.startContainer) && el.contains(range.endContainer)) {
-            var prefix = range.cloneRange();
-            prefix.selectNodeContents(el);
-            prefix.setEnd(range.startContainer, range.startOffset);
-            start = prefix.toString().length;
-            end = start + range.toString().length;
-          }
-        }
-      }
-      return { editable: editable, tag: tag, value: value, sensitive: el.type === 'password',
-        selectionStart: start, selectionEnd: end };
-    })()`,
-    returnByValue: true,
-    awaitPromise: false,
-  });
-
-  if (!result.success) return { success: false, error: result.error || '无法读取当前焦点元素' };
-  const value = result.result?.result?.value;
+  let value;
+  if (typeof frameId === 'number' && frameId !== 0) {
+    // 顶层 activeElement 只能看到跨域 iframe，必须在 Chrome 指定的子框架内检查输入。
+    try {
+      const results = await chrome.scripting.executeScript({ target: { tabId, frameIds: [frameId] }, world: 'ISOLATED', func: readFocusedInput });
+      value = results.find(item => item.frameId === frameId)?.result;
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  } else {
+    const result = await CDPSessionManager.sendCommand(tabId, 'Runtime.evaluate', {
+      expression: `(${readFocusedInput.toString()})()`, returnByValue: true, awaitPromise: false,
+    });
+    if (!result.success) return { success: false, error: result.error || '无法读取当前焦点元素' };
+    value = result.result?.result?.value;
+  }
   if (!value || typeof value !== 'object') return { success: false, error: '无法读取当前焦点元素' };
   return { success: true, editable: !!value.editable, tag: String(value.tag || ''), value: String(value.value ?? ''),
     sensitive: value.sensitive === true,
@@ -348,6 +359,7 @@ const performType = async (
   intervalMs: number,
   signal?: AbortSignal,
   replace = false,
+  frameId?: number,
 ): Promise<FunctionResult> => {
   if (!text) return { success: false, error: '输入文本为空，未发送任何按键' };
   if (signal?.aborted) return { success: false, error: '已取消' };
@@ -356,7 +368,7 @@ const performType = async (
   const focused = await CDPSessionManager.sendCommand(tabId, 'Emulation.setFocusEmulationEnabled', { enabled: true });
   if (!focused.success) return { success: false, error: focused.error };
   try {
-    const before = await probeFocusedElement(tabId);
+    const before = await probeFocusedElement(tabId, frameId);
     if (!before.success) return { success: false, error: before.error };
     if (!before.editable) {
       return {
@@ -415,7 +427,7 @@ const performType = async (
     }
 
     if (signal?.aborted) return { success: false, error: '已取消' };
-    const after = await probeFocusedElement(tabId);
+    const after = await probeFocusedElement(tabId, frameId);
     if (!after.success) return { success: false, error: after.error };
     const data = { tag: after.tag, length: after.value.length,
       ...(!before.sensitive && !after.sensitive ? { value: after.value } : {}) };
@@ -457,6 +469,7 @@ export const resolveFrameOffset = async (
   tabId: number,
   frameId?: number,
   signal?: AbortSignal,
+  scrollIntoView = false,
 ): Promise<{ x: number; y: number }> => {
   if (typeof frameId !== 'number' || frameId === 0) return { x: 0, y: 0 };
   const frames = await chrome.webNavigation.getAllFrames({ tabId });
@@ -475,7 +488,7 @@ export const resolveFrameOffset = async (
     const nonce = `__actspan_frame_offset_${crypto.randomUUID()}`;
     const target = { tabId, frameIds: [parentId] };
     try {
-      const installed = await chrome.scripting.executeScript({ target, world: 'ISOLATED', args: [nonce], func: (key: string) => {
+      const installed = await chrome.scripting.executeScript({ target, world: 'ISOLATED', args: [nonce, scrollIntoView], func: (key: string, scrollOwner: boolean) => {
         const parentWindow = window;
         const parentDocument = document;
         const getStyle = getComputedStyle;
@@ -496,6 +509,8 @@ export const resolveFrameOffset = async (
             if ((style.transform !== 'none' && (!matrix || matrix[0] !== 1 || matrix[1] !== 0 || matrix[2] !== 0 || matrix[3] !== 1))
                 || (style.zoom && style.zoom !== 'normal' && Number(style.zoom) !== 1)) { finish(null); return; }
           }
+          // 跨源子页的 scrollIntoView 不会滚动父页，先显式露出每级 iframe。
+          if (scrollOwner) owner.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' as ScrollBehavior });
           const rect = owner.getBoundingClientRect();
           if (rect.width <= 0 || rect.height <= 0 || Math.abs(rect.width - owner.offsetWidth) > 1 || Math.abs(rect.height - owner.offsetHeight) > 1) { finish(null); return; }
           const style = getStyle(owner);
@@ -543,7 +558,7 @@ export const realClickAt = async (
   // 目标在 iframe 内时，x/y 是帧内视口坐标，先换算到顶层视口
   let offset: { x: number; y: number };
   try {
-    offset = await resolveFrameOffset(tabId, frameId, signal);
+    offset = await resolveFrameOffset(tabId, frameId, signal, true);
   } catch (error) {
     // Chrome 与 CDP 的 frameId 不是同一种标识；解析失败时禁止把帧内坐标当作父页面坐标。
     return { success: false, error: error instanceof Error ? error.message : String(error) };
@@ -558,8 +573,9 @@ export const realTypeInto = async (
   tabId: number,
   text: string,
   signal?: AbortSignal,
+  frameId?: number,
 ): Promise<{ success: boolean; error?: string }> => {
-  const typed = await performType(tabId, text, 0, signal, true);
+  const typed = await performType(tabId, text, 0, signal, true, frameId);
   return typed.success ? { success: true } : { success: false, error: typed.error };
 };
 

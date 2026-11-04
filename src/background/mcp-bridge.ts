@@ -1154,7 +1154,7 @@ export async function dispatch(method: string, params: Record<string, unknown>, 
                         else await execInTab(tab.id!, pageAction as never, ['focus', target, '', submit], 'ISOLATED', context.signal);
                     } catch { focused = false; }
                     if (!focused) return { success: false, error: '无法聚焦目标元素', changed: false, changedFields: [], before, after: null };
-                    real = await realTypeInto(tab.id!, text, context.signal);
+                    real = await realTypeInto(tab.id!, text, context.signal, routed.frameId);
                     if (real.success && submit) real = await realPressKey(tab.id!, 'Enter');
                 }
                 const after = await observe();
