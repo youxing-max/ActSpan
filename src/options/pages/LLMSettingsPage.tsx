@@ -141,9 +141,9 @@ export function LLMSettingsPage() {
         }
         metrics={[
           {
-            label: '连接状态',
-            value: configured ? '已连接' : '待配置',
-            hint: configured ? 'API 地址和密钥已写入本地存储' : '完成三项配置后即可启用 AI 助手',
+            label: '配置状态',
+            value: configured ? '已配置' : '待配置',
+            hint: configured ? 'API 地址与密钥已填写；请保存后使用' : '完成三项配置后即可启用 AI 助手',
             accent: configured ? 'green' : 'orange',
           },
           {

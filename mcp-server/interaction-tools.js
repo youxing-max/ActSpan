@@ -14,7 +14,7 @@ export function registerInteractionTools({ registerTool, callBridge, run, tabIdP
             { selector, value: z.string().min(1).max(2000) }],
         ['upload', 'Upload file', 'Create a File from base64 and set a native file input via DataTransfer, or dispatch drag/drop to dropSelector. No system file dialog.',
             { selector: selector.optional(), dropSelector: selector.optional(), ...file }],
-        ['key', 'Press key sequence', 'Press keys in order with optional repeat (up to 50); Tab moves focus and Enter activates ordinary controls. Never activates payment targets.',
+        ['key', 'Press key sequence', 'Press keys in order with optional repeat (up to 50); Tab moves focus and Enter activates the focused control, including submit or payment controls.',
             { keys: z.array(z.string().min(1).max(60)).min(1).max(50), repeat: z.number().int().min(1).max(50).default(1), selector: selector.optional(), ref: selector.optional(), snapshotId: selector.optional() }],
         ['wait', 'Wait for condition', 'Wait for selector, page text, or a stable idle DOM (no mutation for 500ms). Does not mutate the page.',
             { for: z.enum(['selector', 'text', 'idle']), selector: selector.optional(), text: z.string().min(1).max(2000).optional(), timeoutMs: z.number().int().min(100).max(30000).default(10000) }],

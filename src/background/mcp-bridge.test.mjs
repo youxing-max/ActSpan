@@ -5,7 +5,7 @@ import { build } from 'esbuild';
 
 const bundle = await build({
   stdin: { contents: `
-    export { filterTabsForContext, getWorkflowPlanForExecution, registerWorkflowPlanHandlers, executeBridgeRequest, dispatch, handleOffscreenRequest, wrapUntrustedPageContent, buildActionTarget } from './src/background/mcp-bridge.ts';
+    export { filterTabsForContext, getWorkflowPlanForExecution, registerWorkflowPlanHandlers, executeBridgeRequest, dispatch, handleOffscreenRequest, wrapUntrustedPageContent, buildActionTarget, initMcpBridge } from './src/background/mcp-bridge.ts';
     export { requestConfirmationFunction } from './src/functions/request-confirmation.ts';
     export { taskManager } from './src/background/task-manager.ts';
     export { getTaskExecutor } from './src/background/policy-executor.ts';
@@ -21,7 +21,7 @@ const bundle = await build({
   } }],
 });
 const { filterTabsForContext, getWorkflowPlanForExecution, registerWorkflowPlanHandlers, executeBridgeRequest, dispatch, handleOffscreenRequest,
-  wrapUntrustedPageContent, buildActionTarget, requestConfirmationFunction, taskManager, tabLeaseManager, getTaskExecutor, CDPSessionManager, DATA_CAPABILITY_POLICIES } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].contents).toString('base64')}`);
+  wrapUntrustedPageContent, buildActionTarget, initMcpBridge, requestConfirmationFunction, taskManager, tabLeaseManager, getTaskExecutor, CDPSessionManager, DATA_CAPABILITY_POLICIES } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].contents).toString('base64')}`);
 
 test('accepts recorder-shaped plan-only workflows without structured steps', () => {
   const plan = {
@@ -1099,4 +1099,47 @@ test('workflow plan page.view is gated by the same challenge check as page.read'
     globalThis.chrome.tabs.sendMessage = originalSend;
     fixture.restore();
   }
+});
+
+test('后台重启后从仍在线的 offscreen 恢复 MCP 状态，断连与不可用也即时反映', async () => {
+  const previous = globalThis.chrome;
+  const listeners = [], removedListeners = [], forwarded = [];
+  let connected = true, unavailable = false;
+  globalThis.chrome = {
+    runtime: {
+      id: 'bridge-state-test',
+      onMessage: { addListener(fn) { listeners.push(fn); } },
+      async sendMessage(message) {
+        forwarded.push(message);
+        if (message.type === 'actspan_mcp_transport_status') {
+          if (unavailable) throw Error('offscreen unavailable');
+          return { connected };
+        }
+        return {};
+      },
+    },
+    storage: { onChanged: { addListener() {} } },
+    offscreen: { async hasDocument() { return true; }, async createDocument() { throw Error('must reuse offscreen'); } },
+    tabs: { onRemoved: { addListener(fn) { removedListeners.push(fn); } } },
+  };
+  const ask = async (type) => {
+    const replies = [];
+    for (const listener of listeners) listener({ type }, { url: 'chrome-extension://bridge-state-test/options.html' }, value => replies.push(value));
+    await new Promise(setImmediate);
+    return replies;
+  };
+  try {
+    initMcpBridge();
+    await new Promise(setImmediate);
+    assert.deepEqual(await ask('actspan_bridge_status'), [{ connected: true }]);
+    assert.deepEqual(await ask('actspan_mcp_transport_status'), [], '仅 offscreen 回答自身连接状态，后台不能抢答');
+    for (const listener of removedListeners) listener(-1);
+    assert.ok(forwarded.some(m => m.type === 'actspan_mcp_event'), '重启后的后台缓存也须恢复');
+    connected = false;
+    assert.deepEqual(await ask('actspan_bridge_status'), [{ connected: false }]);
+    connected = true;
+    assert.deepEqual(await ask('actspan_bridge_status'), [{ connected: true }]);
+    unavailable = true;
+    assert.deepEqual(await ask('actspan_bridge_status'), [{ connected: false }]);
+  } finally { globalThis.chrome = previous; }
 });

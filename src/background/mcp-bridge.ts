@@ -1275,6 +1275,17 @@ async function ensureMcpOffscreenDocument(): Promise<void> {
     });
 }
 
+const refreshBridgeConnection = async (): Promise<{ connected: boolean }> => {
+    try {
+        // Service Worker 重启不一定断开 offscreen 的 WebSocket，状态须向连接持有者读取。
+        const status = await chrome.runtime.sendMessage({ type: 'actspan_mcp_transport_status' });
+        authenticatedBridge = status?.connected === true;
+    } catch {
+        authenticatedBridge = false;
+    }
+    return { connected: authenticatedBridge };
+};
+
 const BRIDGE_SETTINGS_KEY = 'actspan_mcp_bridge_settings';
 const BRIDGE_LEGACY_SETTINGS_KEY = 'mole_mcp_bridge';
 const BRIDGE_SETTINGS_MIGRATED_KEY = 'actspan_mcp_bridge_settings_migrated_v1';
@@ -1349,10 +1360,6 @@ const registerOffscreenTransport = (): void => {
             sendResponse({ accepted: true });
             return false;
         }
-        if (frame.type === 'actspan_mcp_transport_status') {
-            sendResponse({ connected: authenticatedBridge });
-            return false;
-        }
         return false;
     });
     // 设置变化必须由这里转达：offscreen 文档订阅不到 chrome.storage.onChanged。
@@ -1360,7 +1367,7 @@ const registerOffscreenTransport = (): void => {
         if (areaName !== 'local' || !changes[BRIDGE_SETTINGS_KEY]) return;
         void chrome.runtime.sendMessage({ type: SETTINGS_CHANGED_MESSAGE }).catch(() => undefined);
     });
-    void ensureMcpOffscreenDocument().catch((error) => {
+    void ensureMcpOffscreenDocument().then(refreshBridgeConnection).catch((error) => {
         protocolWarning = `MCP offscreen unavailable: ${error instanceof Error ? error.message : String(error)}`;
         authenticatedBridge = false;
     });
@@ -1428,7 +1435,8 @@ export function initMcpBridge() {
     });
     chrome.runtime.onMessage.addListener((message: { type?: string }, _sender, sendResponse) => {
         if (message?.type !== 'actspan_bridge_status') return;
-        sendResponse({ connected: authenticatedBridge });
+        void refreshBridgeConnection().then(sendResponse);
+        return true;
     });
     registerCapabilityHandler('workflow.run', async (input, context) => {
         await ensureSkillRegistryReady();

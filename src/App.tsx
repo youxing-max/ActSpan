@@ -123,18 +123,18 @@ function App() {
             <div className="popup-summary-eyebrow">Quick Overview</div>
             <div className="popup-summary-title">核心状态</div>
             <div className="popup-summary-text">
-              {llmStatus === null ? '正在同步配置…' : llmReady ? '模型与工作流已就绪' : '请先完成模型配置'}
+              {llmStatus === null ? '正在同步配置…' : llmReady ? '模型配置已保存' : '请先完成模型配置'}
             </div>
           </div>
           <div className={`popup-hero-status${llmReady ? ' is-ready' : ' is-warning'}`}>
-            {llmStatus === null ? '读取中' : llmReady ? '已就绪' : '待配置'}
+            {llmStatus === null ? '读取中' : llmReady ? '已配置' : '待配置'}
           </div>
         </div>
 
         <div className="popup-metrics">
           <div className="popup-metric popup-metric-blue">
-            <div className="popup-metric-label">模型连接</div>
-            <div className="popup-metric-value">{llmStatus === null ? '...' : llmReady ? '正常' : '未配置'}</div>
+            <div className="popup-metric-label">模型配置</div>
+            <div className="popup-metric-value">{llmStatus === null ? '...' : llmReady ? '已配置' : '未配置'}</div>
             <div className="popup-metric-hint">{endpointLabel}</div>
           </div>
           <div className="popup-metric popup-metric-green">
