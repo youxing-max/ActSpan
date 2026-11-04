@@ -5,13 +5,18 @@
  */
 
 import { useEffect, useState } from 'react';
-import { Button, Form, Input, Modal, Space, Typography, App } from 'antd';
+import { Button, Form, Input, Modal, Select, Space, Typography, App } from 'antd';
 import { CheckCircleOutlined } from '@ant-design/icons';
 import { getAISettings, saveAISettings, validateEndpoint } from '../../ai/llm-client';
 import { AI_CONFIG } from '../../config';
 import { OptionsPageLayout, OptionsSectionCard } from '../components/PageLayout';
 
 const { Title, Text, Paragraph } = Typography;
+
+const apiModeOptions = [
+  { value: 'chat_completions', label: 'Chat Completions' },
+  { value: 'responses', label: 'Responses' },
+];
 
 /** 检查设置是否已配置（合法 endpoint + apiKey） */
 const isConfigured = (s: { endpoint?: string; apiKey?: string }): boolean =>
@@ -143,7 +148,7 @@ export function LLMSettingsPage() {
           {
             label: '配置状态',
             value: configured ? '已配置' : '待配置',
-            hint: configured ? 'API 地址与密钥已填写；请保存后使用' : '完成三项配置后即可启用 AI 助手',
+            hint: configured ? 'API 地址与密钥已填写；请保存后使用' : '完成连接配置后即可启用 AI 助手',
             accent: configured ? 'green' : 'orange',
           },
           {
@@ -164,7 +169,15 @@ export function LLMSettingsPage() {
           title="连接配置"
           description="Actspan 通过你填写的完整 URL 与大语言模型通信。"
         >
-          <Form form={form} layout="vertical" className="options-form-panel">
+          <Form form={form} layout="vertical" className="options-form-panel" initialValues={{ apiMode: 'responses' }}>
+            <Form.Item
+              label="API 协议"
+              name="apiMode"
+              rules={[{ required: true, message: '请选择 API 协议' }]}
+              extra="按服务商文档选择：Chat Completions 使用 /chat/completions，Responses 使用 /responses。"
+            >
+              <Select options={apiModeOptions} />
+            </Form.Item>
             <Form.Item
               label="API 地址"
               name="endpoint"
@@ -219,13 +232,21 @@ export function LLMSettingsPage() {
           />
           <Title level={4} style={{ marginBottom: 4, fontWeight: 600 }}>欢迎使用 Actspan</Title>
           <Paragraph type="secondary" style={{ fontSize: 14, marginBottom: 0, lineHeight: 1.6 }}>
-            只需三步，即可让 AI 助手在你的浏览器中工作。
+            完成连接配置，即可让 AI 助手在你的浏览器中工作。
             <br />
             配置完成后，在任意网页点击右侧悬浮球即可唤起 Actspan。
           </Paragraph>
         </div>
 
-        <Form form={setupForm} layout="vertical" requiredMark={false}>
+        <Form form={setupForm} layout="vertical" requiredMark={false} initialValues={{ apiMode: 'responses' }}>
+          <Form.Item
+            label={<span style={{ fontWeight: 500 }}>API 协议</span>}
+            name="apiMode"
+            rules={[{ required: true, message: '请选择 API 协议' }]}
+            extra="按服务商文档选择：Chat Completions 使用 /chat/completions，Responses 使用 /responses。"
+          >
+            <Select options={apiModeOptions} />
+          </Form.Item>
           <Form.Item
             label={<span style={{ fontWeight: 500 }}>API 地址</span>}
             name="endpoint"
