@@ -87,7 +87,9 @@ class Channel {
             if (callback) {
                 chrome.runtime.sendMessage(msg, callback);
             } else {
-                chrome.runtime.sendMessage(msg);
+                void Promise.resolve(chrome.runtime.sendMessage(msg)).catch(error => {
+                    console.error('[Channel] 发送消息失败:', error);
+                });
             }
         } catch (error) {
             console.error('[Channel] 发送消息失败:', error);
@@ -107,10 +109,12 @@ class Channel {
             if (callback) {
                 if (options) chrome.tabs.sendMessage(tabId, msg, options, callback);
                 else chrome.tabs.sendMessage(tabId, msg, callback);
-            } else if (options) {
-                chrome.tabs.sendMessage(tabId, msg, options);
             } else {
-                chrome.tabs.sendMessage(tabId, msg);
+                const pending = options ? chrome.tabs.sendMessage(tabId, msg, options) : chrome.tabs.sendMessage(tabId, msg);
+                void Promise.resolve(pending).catch(error => {
+                    if (onError) onError(error);
+                    else console.warn(`[Channel] 发送消息到 tab ${tabId} 失败:`, error);
+                });
             }
         } catch (error) {
             console.error(`[Channel] 发送消息到 tab ${tabId} 失败:`, error);
@@ -147,7 +151,7 @@ class Channel {
                 // background 重启后内存中的 tabSet 会丢失。background 向所有标签页
                 // 发送探测消息，content script 收到后回传自己的注册信息。
                 try {
-                    chrome.runtime.sendMessage({ __channel_tab_register: true });
+                    void Promise.resolve(chrome.runtime.sendMessage({ __channel_tab_register: true })).catch(() => undefined);
                 } catch { /* 扩展正在卸载时忽略 */ }
                 // 通知页面重新拉取会话状态，补上后台休眠期间错过的完成事件
                 Channel.dispatchLocal('__channel_tab_reconnected');
@@ -183,7 +187,7 @@ class Channel {
         });
         // content侧注册tabId到background
         if (typeof tabId === 'number') {
-            chrome.runtime.sendMessage({ __channel_tab_register: true });
+            void Promise.resolve(chrome.runtime.sendMessage({ __channel_tab_register: true })).catch(() => undefined);
         }
         // background 侧：Service Worker 重启后 tabSet 为空，主动让存活的 content script 重新注册
         if (typeof tabId === 'undefined' && chrome.tabs?.query) {
@@ -223,7 +227,10 @@ class Channel {
         if (chrome.tabs) {
             for (const tabId of Channel.tabSet) {
                 try {
-                    chrome.tabs.sendMessage(tabId, msg);
+                    // 标签页关闭或扩展重载后接收端会消失，异步失败也要清理注册。
+                    void Promise.resolve(chrome.tabs.sendMessage(tabId, msg)).catch(() => {
+                        Channel.tabSet.delete(tabId);
+                    });
                 } catch (error) {
                     console.error(`[Channel] 广播消息到 tab ${tabId} 失败:`, error);
                     // 如果tab不存在了，从集合中移除

@@ -101,3 +101,51 @@ await test('extension page retries when the first connect throws', async () => {
   await delay(1200);
   assert.equal(connectedPorts.length, before + 1);
 });
+
+await test('广播遇到已关闭或失去接收端的标签页时回收注册，其他标签页仍收到消息', async () => {
+  const send = chrome.tabs.sendMessage;
+  const delivered = [];
+  chrome.tabs.sendMessage = (tabId) => {
+    if (tabId === 7) return Promise.reject(new Error('Could not establish connection. Receiving end does not exist.'));
+    delivered.push(tabId);
+    return Promise.resolve();
+  };
+  try {
+    Channel.broadcast('test-broadcast', {});
+    await new Promise(setImmediate);
+    assert.deepEqual(Channel.getRegisteredTabs(), [8]);
+    assert.deepEqual(delivered, [8]);
+    Channel.broadcast('test-broadcast', {});
+    await new Promise(setImmediate);
+    assert.deepEqual(delivered, [8, 8]);
+  } finally { chrome.tabs.sendMessage = send; }
+});
+
+await test('无回调的定向消息异步失败会传给 onError，并保留 frameId', async () => {
+  const send = chrome.tabs.sendMessage;
+  const failure = new Error('Receiving end does not exist.');
+  const errors = [], targets = [];
+  chrome.tabs.sendMessage = (tabId, _message, options) => {
+    targets.push({ tabId, options });
+    return Promise.reject(failure);
+  };
+  try {
+    Channel.sendToTab(8, 'test-message', {}, undefined, 47, error => errors.push(error));
+    await new Promise(setImmediate);
+    assert.deepEqual(errors, [failure]);
+    assert.deepEqual(targets, [{ tabId: 8, options: { frameId: 47 } }]);
+  } finally { chrome.tabs.sendMessage = send; }
+});
+
+await test('运行时单向消息与内容脚本重注册不会泄漏 Promise rejection', async () => {
+  const send = chrome.runtime.sendMessage, log = console.error;
+  const logs = [];
+  chrome.runtime.sendMessage = () => Promise.reject(new Error('Extension context invalidated.'));
+  console.error = (...args) => logs.push(args);
+  try {
+    Channel.send('test-message', {});
+    onMessage({ __channel_tab_register: true }, {}, () => {});
+    await new Promise(setImmediate);
+    assert.equal(logs.length, 1, '业务消息失败仍有诊断，卸载时重注册失败允许忽略');
+  } finally { chrome.runtime.sendMessage = send; console.error = log; }
+});
