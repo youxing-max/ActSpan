@@ -118,6 +118,66 @@ test('dispatches select, scroll, wait and assert through real bridge methods', a
     assert.deepEqual(calls.map(({ method }) => method), ['page.select', 'page.scroll', 'page.wait', 'page.read', 'act.draft', 'page.read']);
 });
 
+test('assert 拒绝错放在 step 层的定位字段，且不触发任何桥接调用', async () => {
+    for (const target of [{ selector: '#absent' }, { ref: 'e1', snapshotId: 's1' }, { find: { role: 'button', name: 'Save' } }]) {
+        const calls = [];
+        const { handler } = setup(async (method) => { calls.push(method); return { matched: true }; });
+        const result = await handler({ steps: [{ action: 'assert', ...target, cond: { textContains: 'ready' } }] });
+        assert.equal(result.success, false);
+        assert.match(result.error, /INVALID_CONDITION.*cond/);
+        assert.deepEqual(calls, []);
+    }
+});
+
+test('MCP assert 的 not 只取反一次，失败时停止后续动作和草稿保存', async () => {
+    for (const matched of [false, true]) {
+        for (const not of [false, true]) {
+            const calls = [];
+            const { handler } = setup(async (method, params) => {
+                calls.push({ method, params });
+                return method === 'page.read' ? { matched } : { changed: true };
+            });
+            const result = await handler({ steps: [
+                { action: 'assert', cond: { selector: '#result', textContains: 'ready', not } },
+                { action: 'click', selector: '#next' },
+            ] });
+            const expected = not ? !matched : matched;
+            assert.equal(result.success, expected, JSON.stringify({ matched, not }));
+            assert.equal(calls[0].params.selector, '#result');
+            assert.equal(calls.some(({ method }) => method === 'page.click'), expected);
+            assert.equal(calls.some(({ method }) => method === 'act.draft'), expected);
+        }
+    }
+});
+
+test('repeat 拼错次数字段时整段脚本在执行前被拒绝', async () => {
+    for (const repeat of [
+        { repeat: { times: 2, steps: [{ action: 'click', selector: '#counter' }] } },
+        { action: 'repeat', max: 2, times: 2, steps: [{ action: 'click', selector: '#counter' }] },
+    ]) {
+        const calls = [];
+        const { handler } = setup(async (method) => { calls.push(method); return { changed: true }; });
+        const result = await handler({ steps: [{ action: 'click', selector: '#before' }, repeat] });
+        assert.equal(result.success, false);
+        assert.match(result.error, /INVALID_SCRIPT.*times/);
+        assert.deepEqual(calls, []);
+    }
+});
+
+test('repeat 保留两种合法形态和省略 max 时的十次默认值', async () => {
+    for (const [step, expected] of [
+        [{ repeat: { max: 2, steps: [{ action: 'click', selector: '#counter' }] } }, 2],
+        [{ action: 'repeat', max: 2, steps: [{ action: 'click', selector: '#counter' }] }, 2],
+        [{ repeat: { steps: [{ action: 'click', selector: '#counter' }] } }, 10],
+    ]) {
+        const calls = [];
+        const { handler } = setup(async (method) => { calls.push(method); return { changed: true }; });
+        const result = await handler({ steps: [step] });
+        assert.equal(result.success, true);
+        assert.equal(calls.filter(method => method === 'page.click').length, expected);
+    }
+});
+
 test('read observation carries contains back as a boolean probe, never as page text', async () => {
     const calls = [];
     const { handler } = setup(async (method, params) => {

@@ -676,7 +676,7 @@ function assertSafeNavigableTarget(value: unknown): string {
  * 页面无法用公开属性把 ref 重定向到别的元素。
  */
 async function runRefAction<T = Record<string, unknown>>(
-    context: TaskContext, tabId: number, action: 'inspect' | 'read' | 'click' | 'type' | 'observe' | 'focus' | 'scroll_into_view', target: ActionTarget,
+    context: TaskContext, tabId: number, action: 'inspect' | 'read' | 'click' | 'fill' | 'observe' | 'focus' | 'scroll_into_view', target: ActionTarget,
     payload: Record<string, unknown> = {}, frameId?: number): Promise<T> {
     const result = await sendToTabWithRetry<{ success: boolean; error?: string; data?: T }>(
         tabId, '__page_grounding_action',
@@ -1115,8 +1115,8 @@ export async function dispatch(method: string, params: Record<string, unknown>, 
             const realRequested = params.real === true;
             const text = String(params.text ?? '');
             const synthetic = () => target.ref
-                ? runRefAction<Record<string, unknown>>(context, tab.id!, action, target,
-                    { ...(action === 'type' ? { text, submit } : {}),
+                ? runRefAction<Record<string, unknown>>(context, tab.id!, action === 'type' ? 'fill' : action, target,
+                    { ...(action === 'type' ? { value: text, submit } : {}),
                       ...(approvedSignature ? { approved_signature: approvedSignature } : {}) }, routed.frameId)
                 // 数组里出现 undefined 会让 executeScript 直接报 "Value is unserializable"，
                 // 于是每一次普通点击都失败。缺省时干脆不占位，页面侧拿到的是同样的 undefined。
@@ -1182,6 +1182,8 @@ export async function dispatch(method: string, params: Record<string, unknown>, 
                     const outcome = await replayReal();
                     if (outcome.success) return receipt({ ...(action === 'click' ? { clicked: target.selector || 'find' } : { typed: true }),
                         tag: outcome.before?.tag, kind: outcome.before?.kind, ...(outcome.before?.find ? { find: outcome.before.find } : {}) }, outcome, 'explicit_real');
+                    // 提交不可重放：输入可能不完整，Enter 失败也可能已经触发页面提交。
+                    if (submit) throw new Error(`真实输入或提交未验证成功，已停止回退提交：${outcome.error || '未知原因'}`);
                     // A1：真实事件不可用（NEEDS_L2 / L2_BUSY / 无坐标）时，合成事件降级为兜底。
                     const fallback = await synthetic();
                     return { ...fallback, escalated: false,

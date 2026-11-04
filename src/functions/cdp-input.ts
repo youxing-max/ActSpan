@@ -291,9 +291,14 @@ const performDrag = async (
  * 键盘事件只发给 document.activeElement，焦点不在输入框时 CDP 会静默成功但页面毫无变化，
  * 所以打字前后都要用它核实。
  */
+type FocusedInput = {
+  success: true; editable: boolean; tag: string; value: string; sensitive: boolean;
+  selectionStart: number | null; selectionEnd: number | null;
+};
+
 const probeFocusedElement = async (
   tabId: number,
-): Promise<{ success: true; editable: boolean; tag: string; value: string } | { success: false; error: string }> => {
+): Promise<FocusedInput | { success: false; error: string }> => {
   const result = await CDPSessionManager.sendCommand(tabId, 'Runtime.evaluate', {
     expression: `(function() {
       var el = document.activeElement;
@@ -306,7 +311,22 @@ const probeFocusedElement = async (
       var isField = tag === 'input' || tag === 'textarea';
       var editable = (isField && !el.disabled && !el.readOnly) || el.isContentEditable === true;
       var value = isField ? String(el.value == null ? '' : el.value) : (el.isContentEditable ? String(el.textContent || '') : '');
-      return { editable: editable, tag: tag, value: value };
+      var start = isField ? el.selectionStart : null, end = isField ? el.selectionEnd : null;
+      if (el.isContentEditable) {
+        var selection = window.getSelection();
+        if (selection && selection.rangeCount) {
+          var range = selection.getRangeAt(0);
+          if (el.contains(range.startContainer) && el.contains(range.endContainer)) {
+            var prefix = range.cloneRange();
+            prefix.selectNodeContents(el);
+            prefix.setEnd(range.startContainer, range.startOffset);
+            start = prefix.toString().length;
+            end = start + range.toString().length;
+          }
+        }
+      }
+      return { editable: editable, tag: tag, value: value, sensitive: el.type === 'password',
+        selectionStart: start, selectionEnd: end };
     })()`,
     returnByValue: true,
     awaitPromise: false,
@@ -315,7 +335,10 @@ const probeFocusedElement = async (
   if (!result.success) return { success: false, error: result.error || '无法读取当前焦点元素' };
   const value = result.result?.result?.value;
   if (!value || typeof value !== 'object') return { success: false, error: '无法读取当前焦点元素' };
-  return { success: true, editable: !!value.editable, tag: String(value.tag || ''), value: String(value.value ?? '') };
+  return { success: true, editable: !!value.editable, tag: String(value.tag || ''), value: String(value.value ?? ''),
+    sensitive: value.sensitive === true,
+    selectionStart: Number.isInteger(value.selectionStart) ? value.selectionStart : null,
+    selectionEnd: Number.isInteger(value.selectionEnd) ? value.selectionEnd : null };
 };
 
 /** 键盘输入文本（ASCII 走逐字符键盘事件，非 ASCII 走 insertText 避免重复） */
@@ -324,75 +347,96 @@ const performType = async (
   text: string,
   intervalMs: number,
   signal?: AbortSignal,
+  replace = false,
 ): Promise<FunctionResult> => {
   if (!text) return { success: false, error: '输入文本为空，未发送任何按键' };
+  if (signal?.aborted) return { success: false, error: '已取消' };
 
-  // 打字前校验焦点：focus 不在可编辑元素上时 CDP 按键不会落到任何输入框。
-  // shortcut: 探测读不到焦点（非浏览器注入环境/受限页面）时退回主分支的盲打行为，不做硬失败。
-  const before = await probeFocusedElement(tabId);
-  const canVerify = before.success;
-  if (before.success && !before.editable) {
-    return {
-      success: false,
-      error: '当前没有可输入的焦点元素，请先 click/focus 目标输入框',
-      data: { focused_tag: before.tag, focused_value: before.value },
-    };
-  }
+  // 整段输入（含全选）都需要后台焦点；退出时恢复，不激活用户标签页。
+  const focused = await CDPSessionManager.sendCommand(tabId, 'Emulation.setFocusEmulationEnabled', { enabled: true });
+  if (!focused.success) return { success: false, error: focused.error };
+  try {
+    const before = await probeFocusedElement(tabId);
+    if (!before.success) return { success: false, error: before.error };
+    if (!before.editable) {
+      return {
+        success: false,
+        error: '当前没有可输入的焦点元素，请先 click/focus 目标输入框',
+        data: { focused_tag: before.tag },
+      };
+    }
 
-  const normalizedInterval = Math.max(0, Math.min(200, Math.floor(intervalMs)));
+    const { selectionStart: start, selectionEnd: end } = before;
+    if (!replace && (start === null || end === null)) {
+      return { success: false, error: '无法核实当前输入选区，请改用 fill 替换字段内容' };
+    }
+    const expected = replace ? text : before.value.slice(0, start!) + text + before.value.slice(end!);
+    if (replace) {
+      const selected = await performKeyPress(tabId, 'a', 2);
+      if (!selected.success) return { success: false, error: selected.error };
+    }
 
-  for (const char of text) {
+    const normalizedInterval = Math.max(0, Math.min(200, Math.floor(intervalMs)));
+
+    for (const char of text) {
+      if (signal?.aborted) return { success: false, error: '已取消' };
+
+      const code = char.charCodeAt(0);
+
+      if (code >= 0x20 && code <= 0x7E) {
+        // ASCII 可打印字符：rawKeyDown（不带 text，否则 keyDown 自己就插一次）→ char（唯一插入点）→ keyUp。
+        // keydown/keypress/keyup 序列保持不变，autocomplete 等场景仍能拿到键盘事件。
+        const r1 = await CDPSessionManager.sendCommand(tabId, 'Input.dispatchKeyEvent', {
+          type: 'rawKeyDown', key: char,
+        });
+        if (!r1.success) return { success: false, error: r1.error };
+
+        const inserted = await CDPSessionManager.sendCommand(tabId, 'Input.dispatchKeyEvent', {
+          type: 'char', text: char, key: char,
+        });
+
+        // char 失败也释放按键，避免影响后续输入。
+        const released = await CDPSessionManager.sendCommand(tabId, 'Input.dispatchKeyEvent', {
+          type: 'keyUp', key: char,
+        });
+        if (!inserted.success) return { success: false, error: inserted.error };
+        if (!released.success) return { success: false, error: released.error };
+      } else {
+        // 非 ASCII 字符（中文、日文、emoji 等）：使用 Input.insertText
+        // keyDown + char 双事件会导致 CJK 字符被插入两次（"你好" → "你你好好"）
+        // insertText 模拟 IME 提交，只产生一次输入
+        const r = await CDPSessionManager.sendCommand(tabId, 'Input.insertText', { text: char });
+        if (!r.success) return { success: false, error: r.error };
+      }
+
+      if (normalizedInterval > 0) {
+        await sleep(normalizedInterval, signal);
+      }
+    }
+
     if (signal?.aborted) return { success: false, error: '已取消' };
-
-    const code = char.charCodeAt(0);
-
-    if (code >= 0x20 && code <= 0x7E) {
-      // ASCII 可打印字符：rawKeyDown（不带 text，否则 keyDown 自己就插一次）→ char（唯一插入点）→ keyUp。
-      // keydown/keypress/keyup 序列保持不变，autocomplete 等场景仍能拿到键盘事件。
-      const r1 = await CDPSessionManager.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-        type: 'rawKeyDown', key: char,
-      });
-      if (!r1.success) return { success: false, error: r1.error };
-
-      await CDPSessionManager.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-        type: 'char', text: char, key: char,
-      });
-
-      await CDPSessionManager.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-        type: 'keyUp', key: char,
-      });
-    } else {
-      // 非 ASCII 字符（中文、日文、emoji 等）：使用 Input.insertText
-      // keyDown + char 双事件会导致 CJK 字符被插入两次（"你好" → "你你好好"）
-      // insertText 模拟 IME 提交，只产生一次输入
-      const r = await CDPSessionManager.sendCommand(tabId, 'Input.insertText', { text: char });
-      if (!r.success) return { success: false, error: r.error };
+    const after = await probeFocusedElement(tabId);
+    if (!after.success) return { success: false, error: after.error };
+    const data = { tag: after.tag, length: after.value.length,
+      ...(!before.sensitive && !after.sensitive ? { value: after.value } : {}) };
+    if (!after.editable || after.tag !== before.tag || after.value !== expected) {
+      return {
+        success: false,
+        error: after.value === before.value ? '按键已发送但输入框内容未变化' : '输入不完整或与请求不一致，请重新观察目标字段',
+        data,
+      };
     }
 
-    if (normalizedInterval > 0) {
-      await sleep(normalizedInterval, signal);
-    }
-  }
-
-  // 打字后核实：受控组件/只读/被抢焦点的情况下按键会全部丢失，此时不能报成功
-  await sleep(30);
-  const after = await probeFocusedElement(tabId);
-  if (canVerify && after.success && before.success && (after.value === '' || after.value === before.value)) {
     return {
-      success: false,
-      error: `按键已发送但输入框内容未变化（焦点元素 ${after.tag || 'unknown'}，当前值 ${JSON.stringify(after.value)}）`,
-      data: { tag: after.tag, value: after.value, length: after.value.length },
+      success: true,
+      data: {
+        ...data,
+        message: `CDP 输入 ${text.length} 个字符`,
+      },
     };
+  } finally {
+    await CDPSessionManager.sendCommand(tabId, 'Emulation.setFocusEmulationEnabled', { enabled: false });
   }
-
-  return {
-    success: true,
-    data: {
-      length: after.success ? after.value.length : text.length,
-      ...(after.success ? { tag: after.tag, value: after.value } : {}),
-      message: `CDP 输入 ${text.length} 个字符`,
-    },
-  };
 };
 
 // ============ A1/A2：MCP 桥的真实事件升级通道 ============
@@ -515,9 +559,7 @@ export const realTypeInto = async (
   text: string,
   signal?: AbortSignal,
 ): Promise<{ success: boolean; error?: string }> => {
-  const selected = await performKeyPress(tabId, 'a', 2);
-  if (!selected.success) return { success: false, error: selected.error };
-  const typed = await performType(tabId, text, 0, signal);
+  const typed = await performType(tabId, text, 0, signal, true);
   return typed.success ? { success: true } : { success: false, error: typed.error };
 };
 
@@ -526,8 +568,14 @@ export const realPressKey = async (
   tabId: number,
   key: string,
 ): Promise<{ success: boolean; error?: string }> => {
-  const pressed = await performKeyPress(tabId, key, 0);
-  return pressed.success ? { success: true } : { success: false, error: pressed.error };
+  const focused = await CDPSessionManager.sendCommand(tabId, 'Emulation.setFocusEmulationEnabled', { enabled: true });
+  if (!focused.success) return { success: false, error: focused.error };
+  try {
+    const pressed = await performKeyPress(tabId, key, 0);
+    return pressed.success ? { success: true } : { success: false, error: pressed.error };
+  } finally {
+    await CDPSessionManager.sendCommand(tabId, 'Emulation.setFocusEmulationEnabled', { enabled: false });
+  }
 };
 
 /** 按键（功能键 / 组合键） */

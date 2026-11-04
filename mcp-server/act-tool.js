@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { executeActScript, parseActScript } from './act-script.js';
+import { executeActScript, matchesCondition, parseActScript } from './act-script.js';
 const ACTION_KEYS = new Set(['action', 'condText']);
 const MUTATIONS = new Set(['click', 'type', 'select', 'scroll']);
 const SENSITIVE = /(?:submit|pay(?:ment)?|delete|remove|purchase|checkout|支付|付款|购买|删除|移除|提交|结算|下单)/i;
@@ -122,7 +122,7 @@ export default function registerActTool({ registerTool, callBridge, run, runStru
                 return recordEffect(step, result);
             },
             assert: async (step) => {
-                const matched = await handlers.condition(step.cond);
+                const matched = matchesCondition(step.cond, await handlers.condition(step.cond));
                 if (!matched) return false;
                 state.executed.push(snapshotOf(step));
                 return true;

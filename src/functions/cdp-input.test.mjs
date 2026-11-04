@@ -58,14 +58,26 @@ export const CDPSessionManager = {
     if (method === 'Runtime.evaluate') {
       const f = p.focus;
       const value = f
-        ? { editable: f.editable, tag: f.tag, value: f.value }
+        ? { editable: f.editable, tag: f.tag, value: f.value, sensitive: f.sensitive === true,
+            selectionStart: f.selectionStart ?? f.value.length, selectionEnd: f.selectionEnd ?? f.value.length }
         : { editable: false, tag: '', value: '' };
       return { success: true, result: { result: { value } } };
     }
     if (method === 'Input.insertText' || method === 'Input.dispatchKeyEvent') {
       p.dispatched += 1;
+      if (p.failKeyType && params.type === p.failKeyType) return { success: false, error: 'Key event rejected: ' + params.type };
+      if (params.key === 'a' && params.modifiers === 2 && params.type === 'rawKeyDown' && p.focus && (!p.background || p.focusEmulated)) {
+        p.focus.selectionStart = 0;
+        p.focus.selectionEnd = p.focus.value.length;
+      }
       const inserts = method === 'Input.insertText' || params.type === 'char';
-      if (inserts && p.focus && p.focus.editable && !p.dropKeys) p.focus.value += params.text || '';
+      const dropsAscii = params.type === 'char' && (p.dropAscii || (p.background && !p.focusEmulated));
+      if (inserts && p.focus && p.focus.editable && !p.dropKeys && !dropsAscii) {
+        const f = p.focus, start = f.selectionStart ?? f.value.length, end = f.selectionEnd ?? f.value.length;
+        f.value = f.value.slice(0, start) + (params.text || '') + f.value.slice(end);
+        f.selectionStart = f.selectionEnd = start + (params.text || '').length;
+      }
+      p.onCommand?.(method, params);
       return { success: true, result: {} };
     }
     return { success: true, result: {} };
@@ -76,7 +88,7 @@ export const CDPSessionManager = {
 const bundleWithFakeSession = async () => {
   const out = await build({
     stdin: {
-      contents: `export { cdpInputFunction, realClickAt } from './src/functions/cdp-input.ts';`,
+      contents: `export { cdpInputFunction, realClickAt, realTypeInto } from './src/functions/cdp-input.ts';`,
       resolveDir: process.cwd(),
       loader: 'ts',
     },
@@ -96,7 +108,7 @@ const bundleWithFakeSession = async () => {
   return mod;
 };
 
-const { cdpInputFunction: cdpInputWithFakePage, realClickAt } = await bundleWithFakeSession();
+const { cdpInputFunction: cdpInputWithFakePage, realClickAt, realTypeInto } = await bundleWithFakeSession();
 const setPage = (focus, dropKeys = false) => {
   globalThis.__actspanFakePage = { focus, dispatched: 0, dropKeys };
   return globalThis.__actspanFakePage;
@@ -158,6 +170,64 @@ test('type fails when keys were dispatched but the value never changed', async (
   assert.equal(result.success, false);
   assert.match(result.error || '', /未变化/);
   assert.equal(result.data?.value, '');
+});
+
+test('后台替换输入完整保留中英文和 emoji，并恢复焦点模拟', async () => {
+  for (const text of ['abc123', '中文 audit 123', 'A中B', '😀ok']) {
+    const page = setPage({ tag: 'input', editable: true, value: '旧内容' });
+    page.background = true;
+    const result = await realTypeInto(5, text);
+    assert.equal(result.success, true);
+    assert.equal(page.focus.value, text);
+    assert.equal(page.focusEmulated, false);
+  }
+});
+
+test('追加输入保留原值，选区替换和相同内容替换都能正确验证', async () => {
+  const appended = setPage({ tag: 'input', editable: true, value: 'prefix ' });
+  assert.equal((await cdpInputWithFakePage.execute({ action: 'type', text: 'A中B', tab_id: 5, interval_ms: 0 })).success, true);
+  assert.equal(appended.focus.value, 'prefix A中B');
+  for (const tag of ['input', 'textarea', 'div']) {
+    const selected = setPage({ tag, editable: true, value: 'one OLD two', selectionStart: 4, selectionEnd: 7 });
+    assert.equal((await cdpInputWithFakePage.execute({ action: 'type', text: '新', tab_id: 5, interval_ms: 0 })).success, true);
+    assert.equal(selected.focus.value, 'one 新 two');
+  }
+  setPage({ tag: 'input', editable: true, value: 'same' });
+  assert.equal((await realTypeInto(5, 'same')).success, true);
+});
+
+test('输入部分丢失、按键拒绝和取消都不能返回成功，焦点模拟始终恢复', async () => {
+  const partial = setPage({ tag: 'input', editable: true, value: '' });
+  partial.dropAscii = true;
+  const result = await realTypeInto(5, 'A中B😀');
+  assert.equal(partial.focus.value, '中😀');
+  assert.equal(result.success, false);
+  assert.match(result.error, /不完整|不一致/);
+  assert.equal(partial.focusEmulated, false);
+  for (const failKeyType of ['rawKeyDown', 'char', 'keyUp']) {
+    const rejected = setPage({ tag: 'input', editable: true, value: '' });
+    rejected.failKeyType = failKeyType;
+    const failed = await realTypeInto(5, 'A中B');
+    assert.equal(failed.success, false);
+    assert.match(failed.error, /Key event rejected/);
+    assert.equal(rejected.focusEmulated, false);
+  }
+  const cancelled = setPage({ tag: 'input', editable: true, value: '' });
+  const controller = new AbortController();
+  cancelled.onCommand = (_method, params) => { if (params.type === 'char') controller.abort(); };
+  assert.equal((await realTypeInto(5, 'abc', controller.signal)).success, false);
+  assert.equal(cancelled.focusEmulated, false);
+});
+
+test('密码输入成功和失败回执都不返回密码明文', async () => {
+  for (const dropAscii of [false, true]) {
+    const page = setPage({ tag: 'input', editable: true, sensitive: true, value: '' });
+    page.dropAscii = dropAscii;
+    const result = await cdpInputWithFakePage.execute({ action: 'type', text: 'password中123', tab_id: 5, interval_ms: 0 });
+    assert.equal(result.success, !dropAscii);
+    assert.equal(result.data?.value, undefined);
+    assert.doesNotMatch(JSON.stringify(result), /password中123|"value":"中"/);
+  }
 });
 
 test('reports NEEDS_L2 when the debugger API is unavailable', async () => {

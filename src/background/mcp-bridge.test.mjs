@@ -259,7 +259,7 @@ function browserFixture({ label = 'Continue', nearby = label, approved = true, f
   const id = ++fixtureSeq;
   const knownTabs = [{ id, url, title: 'Shop', status: 'complete' }];
   const createdListeners = new Set();
-  const effects = { clicks: 0, submits: 0, evaluations: 0, prompts: [], removed: [], realMouse: 0, realKeys: 0, realText: 0, scriptArgs: [] };
+  const effects = { clicks: 0, submits: 0, evaluations: 0, prompts: [], removed: [], realMouse: 0, realKeys: 0, realText: 0, enterFocusStates: [], scriptArgs: [] };
   let storedValue = '';
   const button = {
     tagName: 'BUTTON', innerText: label, textContent: label, value: '',
@@ -314,6 +314,8 @@ function browserFixture({ label = 'Continue', nearby = label, approved = true, f
       }
       if (method === 'Input.dispatchKeyEvent') {
         effects.realKeys++;
+        if (options.key === 'Enter' && options.type === 'keyDown') effects.enterFocusStates.push(effects.focusEmulated);
+        if (options.type === 'rawKeyDown' && options.key === 'a' && options.modifiers === 2 && onRealInput?.('key')) storedValue = '';
         if (options.type === 'char' && onRealInput?.('key', options.text)) storedValue += options.text;
         return {};
       }
@@ -324,6 +326,10 @@ function browserFixture({ label = 'Continue', nearby = label, approved = true, f
       }
       if (method !== 'Runtime.evaluate') throw Error(`Unexpected CDP: ${method}`);
       effects.evaluations++;
+      if (options.expression.includes('document.activeElement')) {
+        return { result: { value: { editable: field, tag: field ? 'input' : 'button', value: storedValue,
+          selectionStart: storedValue.length, selectionEnd: storedValue.length } } };
+      }
       // V8 的 throwOnSideEffect 对 DOM 取值同样保守：getter 可能带副作用，所以 .value 也会被拒。
       if (options.throwOnSideEffect && /\.click\(|dispatchEvent\(|fetch\(|requestSubmit\(|\.value/.test(options.expression)) {
         return { exceptionDetails: { text: 'Evaluation prevented side effects' } };
@@ -517,6 +523,35 @@ test('typing into payment form without submitting remains available', async () =
   } finally { fixture.restore(); }
 });
 
+test('ref 输入使用 fill/value 契约并保留主框架与子框架句柄', async () => {
+  for (const frameId of [0, 47]) {
+    const fixture = browserFixture({ field: true });
+    const messages = [];
+    let value = '';
+    globalThis.chrome.runtime = {};
+    globalThis.chrome.tabs.sendMessage = (_tabId, message, options, callback) => {
+      if (typeof options === 'function') { callback = options; options = undefined; }
+      if (message.type !== '__page_grounding_action') { callback?.({}); return; }
+      messages.push({ ...message.data, frameId: options?.frameId });
+      if (message.data.action !== 'fill') {
+        callback({ success: false, error: `不支持的 action: ${message.data.action}` });
+        return;
+      }
+      value = String(message.data.value ?? '');
+      callback({ success: true, data: { changed: true, effect: { changed: true }, tag: 'input' } });
+    };
+    try {
+      const result = await executeBridgeRequest('page.type', {
+        tabId: fixture.context.tabId, ref: frameId ? 'field@f47' : 'field', snapshotId: 'snap-one', text: 'A中B😀',
+      }, fixture.context);
+      assert.equal(value, 'A中B😀');
+      assert.equal(result.changed, true);
+      assert.deepEqual(messages, [{ action: 'fill', element_id: 'field', snapshot_id: frameId ? 'snap-one@f47' : 'snap-one',
+        value: 'A中B😀', submit: false, frameId }]);
+    } finally { fixture.restore(); }
+  }
+});
+
 test('no-effect click does not auto-replay real CDP events (prevents double-fire)', async () => {
   const fixture = browserFixture({ onRealInput: (kind) => kind === 'click' });
   try {
@@ -626,6 +661,51 @@ test('no-effect type escalates to real CDP keyboard events', async () => {
     assert.equal(fixture.input.value, 'hello');
     assert.equal(result.changed, true);
     assert.deepEqual(result.effect.changed_fields, ['value']);
+  } finally { fixture.restore(); }
+});
+
+test('真实输入不完整时禁止回退提交，保留失败供调用方处理', async () => {
+  const fixture = browserFixture({ field: true, ignoreValueWrites: true, onRealInput: (kind) => kind === 'text' });
+  try {
+    await assert.rejects(() => executeBridgeRequest('page.type', {
+      selector: '#target', text: 'A中B', real: true, submit: true, tabId: fixture.context.tabId,
+    }, fixture.context), /输入不完整|未验证成功/);
+    assert.equal(fixture.input.value, '中');
+    assert.equal(fixture.effects.submits, 0);
+    assert.deepEqual(fixture.effects.enterFocusStates, []);
+    assert.equal(fixture.effects.focusEmulated, false);
+  } finally { fixture.restore(); }
+});
+
+test('真实输入完成后提交仍保持后台焦点，最后恢复焦点模拟', async () => {
+  const fixture = browserFixture({ field: true, onRealInput: (kind) => kind === 'key' });
+  try {
+    const result = await executeBridgeRequest('page.type', {
+      selector: '#target', text: 'complete', real: true, submit: true, tabId: fixture.context.tabId,
+    }, fixture.context);
+    assert.equal(result.escalation.success, true);
+    assert.equal(fixture.input.value, 'complete');
+    assert.deepEqual(fixture.effects.enterFocusStates, [true]);
+    assert.equal(fixture.effects.submits, 0);
+    assert.equal(fixture.effects.focusEmulated, false);
+  } finally { fixture.restore(); }
+});
+
+test('提交按键已发出但回执失败时禁止合成重试，避免重复提交', async () => {
+  const fixture = browserFixture({ field: true, onRealInput: (kind) => kind === 'key' });
+  const send = globalThis.chrome.debugger.sendCommand;
+  globalThis.chrome.debugger.sendCommand = async (...args) => {
+    const result = await send(...args);
+    if (args[1] === 'Input.dispatchKeyEvent' && args[2].key === 'Enter' && args[2].type === 'keyUp') throw Error('Enter release failed');
+    return result;
+  };
+  try {
+    await assert.rejects(() => executeBridgeRequest('page.type', {
+      selector: '#target', text: 'complete', real: true, submit: true, tabId: fixture.context.tabId,
+    }, fixture.context), /Enter release failed/);
+    assert.deepEqual(fixture.effects.enterFocusStates, [true]);
+    assert.equal(fixture.effects.submits, 0);
+    assert.equal(fixture.effects.focusEmulated, false);
   } finally { fixture.restore(); }
 });
 

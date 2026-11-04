@@ -82,6 +82,9 @@ export function parseActScript(text, options = {}) {
                 }
                 if ([node.ref, node.selector, node.find].filter(Boolean).length > 1) throw problem('INVALID_SCRIPT', 'Use one target: ref, selector, or find', at);
                 if (action === 'assert') {
+                    if (['ref', 'selector', 'find', 'snapshotId'].some(key => Object.hasOwn(node, key))) {
+                        throw problem('INVALID_CONDITION', 'assert target fields must be inside cond', at);
+                    }
                     if (!validCondition(node.cond)) throw problem('INVALID_CONDITION', 'assert requires a condition', at);
                     node.condText = describeCondition(node.cond);
                 }
@@ -111,6 +114,8 @@ export function parseActScript(text, options = {}) {
                 count += Math.max(yes.count, no.count);
                 duration += Math.max(yes.duration, no.duration);
             } else if (action === 'repeat') {
+                const unknown = Object.keys(body).find(key => !['action', 'condText', 'max', 'until', 'steps'].includes(key));
+                if (unknown) throw problem('INVALID_SCRIPT', `Unknown repeat field: ${unknown}; use max for the iteration limit`, at);
                 const max = body.max ?? 10;
                 if (!Number.isSafeInteger(max) || max < 1 || max > limits.maxRepeat) {
                     throw problem('REPEAT_BUDGET', `Repeat max must be between 1 and ${limits.maxRepeat}`, at);

@@ -290,7 +290,9 @@ export async function stopBridgeDaemon({ port, timeoutMs = STOP_TIMEOUT_MS } = {
         if (error.code === 'ESRCH') return { stopped: false, reason: 'not_running', pid };
         throw error;
     }
-    while (Date.now() < deadline) {
+    // Windows 身份核验可能耗尽原预算；发信号后仍须等待并确认进程实际退出。
+    const signalDeadline = Date.now() + timeoutMs;
+    while (Date.now() < signalDeadline) {
         if (!processAlive(pid)) return { stopped: true, pid, graceful: false };
         await sleep(50);
     }
