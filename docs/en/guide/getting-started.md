@@ -39,7 +39,7 @@ Any service that supports the OpenAI API format and **Function Calling** (tool u
 
 ## Step 3: Try It Out
 
-Visit any webpage and press `Cmd+M` (Mac) or `Ctrl+M` (Windows).
+Visit any webpage, hover over the floating ball on the right side of the page, and click it.
 
 Try typing:
 - "What is this page about?"

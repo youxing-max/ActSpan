@@ -36,7 +36,9 @@
     "actspan-doctor": "./doctor.js",
     "actspan-bridge": "./bridge-cli.js",
     "actspan-dingtalk": "./dingtalk-stream.js",
-    "actspan-feishu": "./feishu-bot.js"
+    "actspan-feishu": "./feishu-bot.js",
+    "actspan-cloud": "./cloud.js",
+    "actspan-cloud-token": "./cloud-token.js"
   },
   "engines": {
     "node": ">=20.0.0"

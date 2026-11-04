@@ -20,7 +20,7 @@ export default [
   js.configs.recommended,
   {
     // 构建/运维脚本与测试一样跑在 Node 上，需要 process 等 Node 全局
-    files: ['mcp-server/**/*.{js,mjs}', 'src/**/*.test.mjs', 'test/**/*.mjs', 'scripts/**/*.mjs'],
+    files: ['mcp-server/**/*.{js,mjs}', 'scripts/**/*.mjs', 'src/**/*.test.mjs', 'test/**/*.mjs'],
     languageOptions: {
       globals: { ...globals.node, ...globals.browser, chrome: 'readonly' },
     },

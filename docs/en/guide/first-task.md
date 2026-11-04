@@ -4,9 +4,7 @@ You've installed Actspan and connected an AI model. Let's try it out.
 
 ## Open the Assistant
 
-Press `Cmd+M` (Mac) or `Ctrl+M` (Windows) on any webpage. A search box appears at the top of the page.
-
-You can also find the floating ball on the right edge of the page — hover over it and click to open.
+Find the floating ball on the right edge of any webpage, hover over it, and click to open. A search box appears at the top of the page.
 
 ## Ask a Question
 

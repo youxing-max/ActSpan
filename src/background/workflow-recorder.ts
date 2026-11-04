@@ -182,14 +182,10 @@ const isRecorderOwner = (sender?: chrome.runtime.MessageSender): boolean => (
     isRecorderOwnerTab(recorderState, sender?.tab?.id)
 );
 
-/** 开始录制 */
-Channel.on('__recorder_start', (data, sender, sendResponse) => {
-    const tabId = sender?.tab?.id || (data?.tabId as number);
-    const url = String(data?.url || '');
-
+/** 开始录制（导出供 recorder 工具与 Channel 处理器共用） */
+export const recorderStart = (tabId: number | undefined, url: string) => {
     if (!tabId) {
-        sendResponse?.({ success: false, error: '缺少 tabId' });
-        return true;
+        return { success: false, error: '缺少 tabId' };
     }
 
     recorderState = {
@@ -202,11 +198,37 @@ Channel.on('__recorder_start', (data, sender, sendResponse) => {
 
     void saveRecorderState();
     registerRecorderNavListener();
+    // 通知目标页 content 激活事件采集（MCP/后台发起录制时悬浮球不会自动开始采集）
+    Channel.sendToTab(tabId, '__recorder_begin', { stepCount: 0, startedAt: recorderState.startedAt });
 
     console.log(`[Actspan] 工作流录制已开始, tab: ${tabId}, url: ${url}`);
-    sendResponse?.({ success: true });
+    return { success: true };
+};
+
+/** 开始录制 */
+Channel.on('__recorder_start', (data, sender, sendResponse) => {
+    const tabId = sender?.tab?.id || (data?.tabId as number);
+    const url = String(data?.url || '');
+    sendResponse?.(recorderStart(tabId, url));
     return true;
 });
+
+/** 停止录制并返回步骤（导出供 recorder 工具与 Channel 处理器共用） */
+export const recorderStop = () => {
+    if (!recorderState) {
+        return { success: false, error: '当前没有进行中的录制' };
+    }
+
+    const tabId = recorderState.tabId;
+    recorderState.active = false;
+    void saveRecorderState();
+    unregisterRecorderNavListener();
+    // 通知目标页 content 停止事件采集
+    Channel.sendToTab(tabId, '__recorder_end', {});
+
+    console.log(`[Actspan] 工作流录制已停止, 共 ${recorderState.steps.length} 步`);
+    return { success: true, steps: recorderState.steps };
+};
 
 /** 停止录制 */
 Channel.on('__recorder_stop', (_data, sender, sendResponse) => {
@@ -218,13 +240,7 @@ Channel.on('__recorder_stop', (_data, sender, sendResponse) => {
         sendResponse?.({ success: false, error: '当前 Tab 没有录制权限' });
         return true;
     }
-
-    recorderState.active = false;
-    void saveRecorderState();
-    unregisterRecorderNavListener();
-
-    console.log(`[Actspan] 工作流录制已停止, 共 ${recorderState.steps.length} 步`);
-    sendResponse?.({ success: true, steps: recorderState.steps });
+    sendResponse?.(recorderStop());
     return true;
 });
 
@@ -259,31 +275,45 @@ Channel.on('__recorder_step', (data, sender) => {
     screenshotQueue = screenshotQueue.then(() => captureStepScreenshot(step, tabId));
 });
 
-/** 查询当前录制状态 */
-Channel.on('__recorder_state', async (_data, sender, sendResponse) => {
-    // Service Worker 可能刚被唤醒，先从 session storage 恢复再响应 content。
+/** 查询当前录制状态（导出供 recorder 工具与 Channel 处理器共用） */
+export const recorderGetState = async () => {
+    // Service Worker 可能刚被唤醒，先从 session storage 恢复再响应。
     if (!recorderState) {
         recorderState = await loadRecorderState();
         if (recorderState?.active) registerRecorderNavListener();
     }
+    return recorderState;
+};
+
+/** 查询当前录制状态 */
+Channel.on('__recorder_state', async (_data, sender, sendResponse) => {
+    const state = await recorderGetState();
     const tabId = sender?.tab?.id;
-    sendResponse?.(isRecorderStateForTab(recorderState, tabId) ? recorderState : null);
+    sendResponse?.(isRecorderStateForTab(state, tabId) ? state : null);
     return true;
 });
 
 /** 取消审计：清理录制状态，释放 AI 处理 */
 let auditCancelled = false;
+
+/** 取消录制并清理状态（导出供 recorder 工具与 Channel 处理器共用） */
+export const recorderCancel = () => {
+    const tabId = recorderState?.tabId;
+    auditCancelled = true;
+    recorderState = null;
+    void saveRecorderState();
+    unregisterRecorderNavListener();
+    if (tabId) Channel.sendToTab(tabId, '__recorder_end', {});
+    console.log('[Actspan] 工作流录制审计已取消');
+    return { success: true };
+};
+
 Channel.on('__recorder_cancel_audit', (_data, sender, sendResponse) => {
     if (recorderState && !isRecorderOwner(sender)) {
         sendResponse?.({ success: false, error: '当前 Tab 没有录制权限' });
         return true;
     }
-    auditCancelled = true;
-    recorderState = null;
-    void saveRecorderState();
-    unregisterRecorderNavListener();
-    console.log('[Actspan] 工作流录制审计已取消');
-    sendResponse?.({ success: true });
+    sendResponse?.(recorderCancel());
     return true;
 });
 

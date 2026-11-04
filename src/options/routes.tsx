@@ -7,16 +7,15 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   SettingOutlined,
   ThunderboltOutlined,
-  StopOutlined,
   HistoryOutlined,
   ApiOutlined,
+  CloudOutlined,
 } from '@ant-design/icons';
 
 export interface RouteItem {
   key: string;
   label: string;
   icon: React.ReactNode;
-  description: string;
 }
 
 export const routes: RouteItem[] = [
@@ -24,31 +23,26 @@ export const routes: RouteItem[] = [
     key: 'settings',
     label: '模型与连接',
     icon: <SettingOutlined />,
-    description: '配置 API 连接、模型名称与浏览器侧默认行为。',
   },
   {
     key: 'workflows',
     label: '技能与工作流',
     icon: <ThunderboltOutlined />,
-    description: '查看并管理实时同步的技能与工作流目录。',
-  },
-  {
-    key: 'blocklist',
-    label: '域名管理',
-    icon: <StopOutlined />,
-    description: '维护被禁用的站点列表，控制悬浮球是否出现。',
   },
   {
     key: 'webhook',
     label: 'Webhook',
     icon: <ApiOutlined />,
-    description: '管理远端通知推送地址，支持飞书、钉钉、Slack 等平台。',
+  },
+  {
+    key: 'cloud',
+    label: '云端连接器',
+    icon: <CloudOutlined />,
   },
   {
     key: 'history',
     label: '运行记录',
     icon: <HistoryOutlined />,
-    description: '查看会话执行结果、工具调用链与调度日志。',
   },
 ];
 

@@ -30,9 +30,11 @@
 ## 目录
 
 - [项目简介](#项目简介)
+- [项目特色：与业界方案的本质区别](#项目特色与业界方案的本质区别)
 - [适合什么场景](#适合什么场景)
 - [核心能力](#核心能力)
 - [整体架构](#整体架构)
+- [云端 MCP 服务（多人共享）](#云端-mcp-服务多人共享)
 - [MCP 工具全清单（34 个）](#mcp-工具全清单34-个)
 - [Free Mode 安全模型](#free-mode-安全模型)
 - [技能体系](#技能体系)
@@ -60,6 +62,14 @@ Actspan 是一个运行在 Chrome 中的 AI 浏览器助手（Manifest V3 扩展
 | 模型 | 任何 OpenAI 兼容 Endpoint（含本地模型） | 绑定厂商模型 | 通常无模型 |
 | 扩展性 | MCP 34 工具 + 动态 HTTP 工具 + 技能/工作流 | 封闭 | 录制脚本 |
 
+## 项目特色：与业界方案的本质区别
+
+**① Agent Loop 架构，而非"遥控浏览器"。** 业界主流做法是 IDE/Agent 通过 CDP、Playwright、Puppeteer 去**外接**一个浏览器（往往是无头或独立实例）：没有你的登录态、要迁移 Cookie、或干脆用云浏览器。Actspan 反过来——**扩展本身就是执行层**，Agentic Loop（Phase Orchestrator 多阶段编排 + 工具调用循环）跑在你的**日常 Chrome** 里：代码管权限/边界/任务隔离（保下限），模型管理解/选工具/决策（定上限）。AI 用的是你已登录的真实会话，数据不出你的浏览器。
+
+**② 三个入口，同一条工具总线。** 悬浮球/Side Panel（人直接用）、本地 MCP 桥（IDE 直连本机浏览器）、**云端 MCP（多人共享一个云端、按 token 各自调自己的浏览器）**。三者调用的是同一套 35 个工具与同一套 Agent Loop，不是三套实现。
+
+**③ 能力可沉淀、可复用。** 操作可录制（`recorder`）→ 存成工作流（`save_workflow`）→ 一句话复用（`skill`）；整段过程可录屏（`screen_record`，人手/无人值守双模）；开放任务可交给异步 Agent（`agent_task`）后台跑完再取结果。
+
 ## 适合什么场景
 
 - **信息调查**：跨站搜索、阅读页面、提取表格和关键字段，整理成结构化结果。
@@ -83,7 +93,7 @@ Actspan 直接运行在 Chrome 扩展环境中，复用当前浏览器已有的�
 
 ### 3. 双入口：悬浮球 + Side Panel
 
-- **悬浮球**：任意页面右侧悬浮球，鼠标悬停后点击唤起，不打断当前浏览。
+- **悬浮球**：任意页面将鼠标悬停在右侧悬浮球上，点击即可唤起，不打断当前浏览。
 - **Side Panel**：Chrome 侧边栏常驻，适合长任务观察与多会话管理。
 - **Options 页**：配置模型 Endpoint / API Key / Model、Webhook、机器人等。
 
@@ -150,6 +160,38 @@ Background mcp-bridge：协议校验 → Tab 租约授权 → 工具执行 → �
 - **请求级取消**：客户端可随时发 `actspan_mcp_cancel` 帧中止在途请求。
 - **桥接守护进程**：`bridge-daemon` + `bridge-lock` 保证同一机器只有一条桥；`actspan-doctor` 一键诊断连接问题。
 - **审计日志**：`bridge.js` 对敏感操作落审计记录（事后追溯）。
+
+## 云端 MCP 服务（多人共享）
+
+除本地 IDE 直连（上面那条 stdio 链路）外，Actspan 还提供一套**部署在一台机器上、多人共享**的云端 MCP 服务：每个用户持有一个 token，云端按 token 把「IDE 会话」和「该用户自己的浏览器」配对，实现"每个人的 IDE 调自己的 Chrome"，同时复用登录态与全部工具能力。
+
+```text
+ Alice 的 IDE ──https://host/mcp──┐  Authorization: Bearer <alice-token>
+ Bob 的 IDE   ──https://host/mcp──┤  Authorization: Bearer <bob-token>
+                                  ▼
+                   ┌─────────────────────────────┐
+                   │  cloud.js（单进程单端口）      │
+                   │  /mcp   IDE（MCP HTTP）       │
+                   │  /ws    浏览器扩展（WebSocket）│
+                   └──────┬──────────────┬───────┘
+            wss ?token=alice          wss ?token=bob
+                           ▼           ▼
+                  Alice 的 Chrome  Bob 的 Chrome（actspan 扩展）
+```
+
+- **IDE 侧**：认证方式选「请求头认证」，`Authorization: Bearer <token>`，服务地址 `https://host/mcp`
+- **浏览器扩展侧**：Options →「云端连接器」填 `wss://host/ws` 与 token（浏览器 WebSocket 不允许自定义请求头，token 走 URL）
+- **部署与发牌**：
+
+```bash
+cd mcp-server && npm install
+cp tokens.example.json tokens.json
+node cloud.js --port 8787            # 启动云端（nginx 反代挂 TLS 后对外）
+node cloud-token.js add <user>       # 发 token（打印交接单；热加载，无需重启）
+node cloud-token.js revoke <user>    # 吊销（离职/泄露时用）
+```
+
+云端工具由浏览器实时上报，除 34 个 `actspan_*` 包装工具对应的原生工具外，还额外暴露扩展工具总线上的三大特色能力：`agent_task`（异步 Agent 任务，submit/status/result/cancel/workflow_run）、`recorder`（操作录制→`save_workflow` 存→`skill` 复用的闭环）、`screen_record`（标签页视频录屏，**双模**：用户已点扩展授予 activeTab 时走 tabCapture 无提示条；无人值守/云端 agent 自动回退 `chrome.debugger` 截帧，录制期目标页切前台并显示调试提示条），以及 `skill`、云端本地工具 `cloud_status`。完整部署、鉴权、令牌管理与运行行为约定见 [docs/CLOUD-SERVICE.md](docs/CLOUD-SERVICE.md)。
 
 ## MCP 工具全清单（34 个）
 
@@ -301,26 +343,46 @@ MCP 配置、鉴权、参数细节和端到端测试见 [MCP Bridge 文档](MCP-
 
 ## 快速开始
 
-### 方式一：直接安装发布版本
+### 第 0 步：获取扩展（真实来源，二选一）
 
-1. 打开[下载页面](docs/download.md)，下载最新的扩展压缩包。
-2. 解压文件，在 Chrome 地址栏打开 `chrome://extensions/`。
-3. 开启**开发者模式**，点击**加载已解压的扩展程序**，选择 `actspan-extension/` 文件夹。
-4. 右键点击 Actspan 扩展图标，打开**选项**，填写模型 Endpoint、API Key 和 Model。
-5. 打开任意网页，鼠标悬停右侧悬浮球并点击唤起助手。
-
-### 方式二：从源码构建
+**方式 A：源码构建（含云端 MCP 的最新版本，推荐）**
 
 ```bash
-git clone https://github.com/youxing-max/ActSpan.git
-cd ActSpan
+# 内网 GitLab（含云端 MCP 的分支 feat/cloud-mcp）
+git clone git@git.in.chaitin.net:yijun.li/actspan.git && cd actspan && git checkout feat/cloud-mcp
+# 或上游 GitHub
+# git clone https://github.com/youxing-max/ActSpan.git && cd ActSpan
 npm install
 npm run build
 ```
 
-构建完成后，在 Chrome 中加载 `build_version/actspan-extension/`。完整安装和配置说明见[快速开始指南](docs/guide/getting-started.md)。
+构建产物在 `build_version/actspan-extension/`。打开 `chrome://extensions/` → 开启**开发者模式** → **加载已解压的扩展程序** → 选该文件夹。
 
-### 接入 MCP 客户端（Claude Code / Codex 等）
+**方式 B：公开 release zip（上游发布版）**
+
+见[下载页面](docs/download.md)（拉取上游 `youxing-max/ActSpan` 的 GitHub Releases 压缩包）。**注意**：该 zip 为上游已发布版本；云端 MCP / 双模录屏等最新功能是否包含，以该 release 的 tag 是否已合并本仓库改动为准——**要用云端 MCP 请走方式 A 源码构建**。
+
+加载后：右键扩展图标 → **选项** → 填模型 Endpoint / API Key / Model（Agent Loop 用）；任意网页悬停右侧悬浮球即可唤起。
+
+### 使用方式一：云端 MCP（推荐，多人共享一个云端）
+
+管理员部署云端并给每人发一个 token；用户拿 token 配两处即可，**各自调各自的浏览器**：
+
+```bash
+# 管理员（服务器上）
+cd mcp-server && npm install
+node cloud.js --port 8787              # 启动云端（/mcp + /ws + /health），建议反代挂 TLS
+node cloud-token.js add <user>         # 发 token；批量：batch --count N --prefix p --csv 分发表.csv
+```
+
+| 谁 | 在哪 | 填什么 |
+|---|---|---|
+| 用户 | IDE「添加连接」 | 服务地址 `https://<host>/mcp`；认证=请求头认证；`Authorization: Bearer <自己的token>` |
+| 用户 | 扩展 Options→云端连接器 | 服务器 `wss://<host>/ws`；个人 Token `<自己的token>`；启用 |
+
+一个 token = 一个浏览器身份，互不串号。完整部署/鉴权/令牌管理见 [docs/CLOUD-SERVICE.md](docs/CLOUD-SERVICE.md)。
+
+### 使用方式二：本地 MCP 桥（IDE 直连本机浏览器，单人）
 
 ```bash
 cd mcp-server
@@ -329,7 +391,11 @@ node install.js        # 交互式写入客户端 MCP 配置
 node doctor.js         # 诊断桥接连接
 ```
 
-MCP Server 会自动启动本地桥接守护进程（`127.0.0.1:30121`）并连接扩展。客户端配置示例、鉴权与排错见 [MCP-BRIDGE.md](MCP-BRIDGE.md)。
+MCP Server 自动启动本地桥接守护进程（`127.0.0.1:30121`）并连接扩展。配置示例与排错见 [MCP-BRIDGE.md](MCP-BRIDGE.md)。
+
+### 使用方式三：悬浮球 / Side Panel（人直接用，不经 MCP）
+
+任意网页悬停右侧悬浮球唤起对话；或 Chrome 侧边栏打开 Side Panel 管理多会话。直接对 AI 说目标即可，Agent Loop 后台执行。
 
 ### 启动群机器人（可选）
 

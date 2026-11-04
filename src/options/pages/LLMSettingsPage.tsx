@@ -5,18 +5,13 @@
  */
 
 import { useEffect, useState } from 'react';
-import { Button, Form, Input, Modal, Space, Typography, App, Select } from 'antd';
+import { Button, Form, Input, Modal, Space, Typography, App } from 'antd';
 import { CheckCircleOutlined } from '@ant-design/icons';
 import { getAISettings, saveAISettings, validateEndpoint } from '../../ai/llm-client';
 import { AI_CONFIG } from '../../config';
 import { OptionsPageLayout, OptionsSectionCard } from '../components/PageLayout';
 
 const { Title, Text, Paragraph } = Typography;
-
-const API_MODE_OPTIONS = [
-  { value: 'responses', label: 'OpenAI Responses' },
-  { value: 'chat_completions', label: 'Chat Completions' },
-];
 
 /** 检查设置是否已配置（合法 endpoint + apiKey） */
 const isConfigured = (s: { endpoint?: string; apiKey?: string }): boolean =>
@@ -46,17 +41,17 @@ export function LLMSettingsPage() {
   useEffect(() => {
     const load = async () => {
       const settings = await getAISettings();
-      // 首次配置时不预填内置网关地址，避免用户误以为这就是自己的服务地址。
+      // 首次配置预填默认网关地址，用户可直接保存或改成自己的服务
       const hasSavedConnection = isConfigured(settings);
       form.setFieldsValue({
-        endpoint: hasSavedConnection ? settings.endpoint : '',
+        endpoint: hasSavedConnection ? settings.endpoint : AI_CONFIG.DEFAULT_ENDPOINT,
         apiKey: settings.apiKey || '',
         model: settings.model || AI_CONFIG.DEFAULT_MODEL,
         apiMode: settings.apiMode || 'responses',
       });
       if (!hasSavedConnection) {
         setupForm.setFieldsValue({
-          endpoint: '',
+          endpoint: AI_CONFIG.DEFAULT_ENDPOINT,
           apiKey: '',
           model: settings.model || AI_CONFIG.DEFAULT_MODEL,
           apiMode: settings.apiMode || 'responses',
@@ -117,10 +112,10 @@ export function LLMSettingsPage() {
     }
   };
 
-  /* 重置只清空输入，不把内置网关地址填回去 */
+  /* 重置后预填默认网关地址 */
   const handleReset = () => {
     form.resetFields();
-    form.setFieldsValue({ endpoint: '' });
+    form.setFieldsValue({ endpoint: AI_CONFIG.DEFAULT_ENDPOINT });
   };
 
   if (!loaded) return null;
@@ -135,7 +130,7 @@ export function LLMSettingsPage() {
       <OptionsPageLayout
         eyebrow="Core Setup"
         title="模型与连接配置"
-        description="配置与 OMP anyrouter 一致的 OpenAI Responses API 连接，也可以填写其他兼容服务。"
+        description="配置 AI 模型服务的连接信息，填写完整的接口地址即可。"
         extra={
           <Space>
             <Button onClick={handleReset}>重置表单</Button>
@@ -154,7 +149,7 @@ export function LLMSettingsPage() {
           {
             label: '当前模型',
             value: model || AI_CONFIG.DEFAULT_MODEL,
-            hint: '与 OMP anyrouter 当前配置一致，可按需修改',
+            hint: '默认模型，可按需修改',
             accent: 'blue',
           },
           {
@@ -167,16 +162,16 @@ export function LLMSettingsPage() {
       >
         <OptionsSectionCard
           title="连接配置"
-          description="Actspan 使用 OpenAI Responses API 格式与大语言模型通信。"
+          description="Actspan 通过你填写的完整 URL 与大语言模型通信。"
         >
           <Form form={form} layout="vertical" className="options-form-panel">
             <Form.Item
-              label="Endpoint URL"
+              label="API 地址"
               name="endpoint"
-              rules={[{ required: true, message: '请填写 API Endpoint' }, endpointRule]}
+              rules={[{ required: true, message: '请填写 API 地址' }, endpointRule]}
               extra={endpointWarning
                 ? <Text type="warning">{endpointWarning}</Text>
-                : '填写完整 Responses API 地址；默认只允许 https'}
+                : '填写完整的接口 URL'}
             >
               <Input placeholder={AI_CONFIG.ENDPOINT_PLACEHOLDER} />
             </Form.Item>
@@ -191,16 +186,9 @@ export function LLMSettingsPage() {
             <Form.Item
               label="Model"
               name="model"
-              extra="默认使用 OMP anyrouter 中配置的 gpt-6.1-sol，也可填写该 provider 下的其他模型"
+              extra="默认使用 gpt-6.1-sol，也可填写该服务下的其他模型"
             >
               <Input placeholder={AI_CONFIG.DEFAULT_MODEL} />
-            </Form.Item>
-            <Form.Item
-              label="API 模式"
-              name="apiMode"
-              extra="Responses 或 Chat Completions；本地模型（Ollama/LM Studio）选 Chat Completions"
-            >
-              <Select options={API_MODE_OPTIONS} />
             </Form.Item>
             <Form.Item style={{ marginBottom: 0 }}>
               <Button type="primary" loading={saving} onClick={() => void handleSave()}>
@@ -233,7 +221,7 @@ export function LLMSettingsPage() {
           <Paragraph type="secondary" style={{ fontSize: 14, marginBottom: 0, lineHeight: 1.6 }}>
             只需三步，即可让 AI 助手在你的浏览器中工作。
             <br />
-            配置完成后，在任意网页按 <Text keyboard>⌘ M</Text> 唤起 Actspan。
+            配置完成后，在任意网页点击右侧悬浮球即可唤起 Actspan。
           </Paragraph>
         </div>
 
@@ -241,8 +229,8 @@ export function LLMSettingsPage() {
           <Form.Item
             label={<span style={{ fontWeight: 500 }}>API 地址</span>}
             name="endpoint"
-            rules={[{ required: true, message: '请填写 API Endpoint' }, endpointRule]}
-            extra="填写完整 API 地址；默认只允许 https（本机调试可用 localhost）"
+            rules={[{ required: true, message: '请填写 API 地址' }, endpointRule]}
+            extra="填写完整的接口 URL（本机调试可用 localhost）"
           >
             <Input placeholder={AI_CONFIG.ENDPOINT_PLACEHOLDER} />
           </Form.Item>
@@ -256,13 +244,6 @@ export function LLMSettingsPage() {
           </Form.Item>
           <Form.Item label={<span style={{ fontWeight: 500 }}>模型</span>} name="model">
             <Input placeholder={AI_CONFIG.DEFAULT_MODEL} />
-          </Form.Item>
-          <Form.Item
-            label={<span style={{ fontWeight: 500 }}>API 模式</span>}
-            name="apiMode"
-            extra="本地模型（Ollama/LM Studio）请选择 Chat Completions"
-          >
-            <Select options={API_MODE_OPTIONS} />
           </Form.Item>
 
           <Button

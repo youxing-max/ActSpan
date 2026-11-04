@@ -87,6 +87,16 @@ export const requestConfirmationFunction: FunctionDefinition = {
         void sendToTabWithRetry(tabId, type, data, { deadlineMs: 5_000 }).catch(() => {});
       };
       if (deliveryTabId !== undefined) {
+        // 定向投递场景同样强制聚焦：激活该标签页并把窗口拉到前台，确保用户看得见弹窗
+        void (async () => {
+          try {
+            const tab = await chrome.tabs.get(deliveryTabId);
+            await chrome.tabs.update(deliveryTabId, { active: true });
+            if (typeof tab.windowId === 'number') {
+              await chrome.windows.update(tab.windowId, { focused: true, drawAttention: true });
+            }
+          } catch { /* 聚焦失败不阻断投递 */ }
+        })();
         dispatch(deliveryTabId);
         return;
       }
@@ -109,6 +119,16 @@ export const requestConfirmationFunction: FunctionDefinition = {
           return;
         }
         deliveryTabId = pick.id;
+        // 用户可能在别的应用里：强制把 Chrome 窗口拉到前台并激活目标标签页，
+        // 确保确认弹窗一定出现在用户眼前的页面上（60 秒超时窗口内用户看得见才点得了）。
+        void (async () => {
+          try {
+            await chrome.tabs.update(pick.id!, { active: true });
+            if (typeof pick.windowId === 'number') {
+              await chrome.windows.update(pick.windowId, { focused: true, drawAttention: true });
+            }
+          } catch { /* 聚焦失败不阻断投递 */ }
+        })();
         dispatch(pick.id);
       });
     };

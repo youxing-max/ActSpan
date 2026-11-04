@@ -19,7 +19,7 @@ hero:
 features:
   - icon: "\U0001F4AC"
     title: 开口就行
-    details: 按 Cmd+M 用自然语言说出需求。「帮我找飞东京最便宜的机票」或「帮我填完这个表单」，Actspan 自己搞定。
+    details: 点击页面右侧悬浮球，用自然语言说出需求。「帮我找飞东京最便宜的机票」或「帮我填完这个表单」，Actspan 自己搞定。
   - icon: "\U0001F512"
     title: 直接用你的登录状态
     details: Actspan 直接运行在你的 Chrome 浏览器里，复用已有的登录态。淘宝下单、GitHub 管理、银行查账——无需重新登录。

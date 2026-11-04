@@ -8,6 +8,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { validateConfig } from './catalog.js';
+import { isDirectExecution } from './entry.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PACKAGE = JSON.parse(fs.readFileSync(path.join(HERE, 'package.json'), 'utf8'));
@@ -61,7 +62,7 @@ export function serverDefinition({ client = 'actspan', extensionId, fromNpm = fa
     };
     const checked = validateConfig(env);
     if (!checked.valid) throw new Error(`生成的 MCP 配置未通过服务端校验，install 不会写出无效配置：\n${checked.errors.map((error) => `- ${error}`).join('\n')}`);
-    return fromNpm ? { command: process.platform === 'win32' ? 'npx.cmd' : 'npx', args: ['-y', 'actspan-mcp', 'mcp', '--client', client], env } : { command: process.execPath, args: [path.join(packageRoot, 'index.js'), 'mcp', '--client', client], env };
+    return fromNpm ? { command: process.platform === 'win32' ? 'npx.cmd' : 'npx', args: ['-y', `actspan-mcp@${VERSION}`, 'mcp', '--client', client], env } : { command: process.execPath, args: [path.join(packageRoot, 'index.js'), 'mcp', '--client', client], env };
 }
 function jsonTarget(parsed) {
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { supported: false, configured: false, reason: '顶层不是 JSON 对象' };
@@ -256,7 +257,7 @@ function parseArgs(argv) {
     }
     return options;
 }
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isDirectExecution(import.meta.url)) {
     const options = parseArgs(process.argv.slice(2));
     if (options.error) {
         process.stderr.write(`actspan install: ${options.error}\n`);

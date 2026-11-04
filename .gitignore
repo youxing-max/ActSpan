@@ -20,6 +20,12 @@ lerna-debug.log*
 .env
 .env.*
 
+# Actspan Cloud MCP runtime secrets & state (never commit real tokens)
+mcp-server/tokens.json
+mcp-server/*.tmp-*
+mcp-server/cloud.log
+mcp-server/cloud.pid
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

@@ -20,7 +20,7 @@ import { DEFAULT_LLM_IDLE_TIMEOUT_MS, DEFAULT_LLM_TOTAL_TIMEOUT_MS, createDeadli
 export const STORAGE_KEY_AI_SETTINGS = 'actspan_ai_settings';
 export const LEGACY_STORAGE_KEY_AI_SETTINGS = 'mole_ai_settings';
 
-/** 默认配置，与 OMP anyrouter 的 openai-responses provider 对齐 */
+/** 默认配置 */
 const DEFAULT_SETTINGS: AISettings = {
   apiKey: '',
   endpoint: AI_CONFIG.DEFAULT_ENDPOINT,

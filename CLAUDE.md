@@ -35,7 +35,7 @@ Keep this managed block so 'openspec update' can refresh the instructions.
 
 用户提出问题后，ActSpan 会在后台调用工具、搜索网页、解析数据、跨站点采集信息，并将结果呈现给用户。整个过程中，它不会打扰你正在做的事情。
 
-本项目是 **ActSpan** Chrome 扩展程序（MV3），使用 React + TypeScript + Vite 构建。核心功能是在任意网页上注入一个 AI 悬浮助手，用户通过悬浮球或快捷键唤起对话框，与 AI 交互。ActSpan 运行在用户的真实浏览器环境中，天然复用用户的登录态和 Cookie，无需额外的身份验证或 Cookie 迁移。AI 通过 Phase Orchestrator + Agentic Loop 自主调用内置工具和动态扩展工具，在后台多轮执行，完成后以流式方式返回结果。
+本项目是 **ActSpan** Chrome 扩展程序（MV3），使用 React + TypeScript + Vite 构建。核心功能是在任意网页上注入一个 AI 悬浮助手，用户通过悬浮球唤起对话框，与 AI 交互。ActSpan 运行在用户的真实浏览器环境中，天然复用用户的登录态和 Cookie，无需额外的身份验证或 Cookie 迁移。AI 通过 Phase Orchestrator + Agentic Loop 自主调用内置工具和动态扩展工具，在后台多轮执行，完成后以流式方式返回结果。
 
 ## 构建系统
 
@@ -310,7 +310,6 @@ Keep this managed block so 'openspec update' can refresh the instructions.
 - Shadow DOM 隔离样式，不影响宿主页面
 - React 组件树挂载在 Shadow DOM 内
 - 支持域名黑名单（`DISABLED_DOMAINS_KEY`，在 Options 页面管理）
-- 快捷键：⌘M (Mac) / Ctrl+M (Windows)
 - 搜索框接入 AI 对话，支持流式响应和函数调用状态展示
 - 组件文件：`src/content/float-ball/`（包含 ActspanRoot、components、context、hooks、styles、constants 等）
 

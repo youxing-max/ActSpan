@@ -85,10 +85,14 @@ async function handleTimerTrigger(timerId: string, source: 'alarm' | 'runtime_ti
                 void broadcastBgTasksChanged();
             } else {
                 const intervalMs = task.intervalMs || Math.max(1, Math.round((task.intervalMinutes || 1) * 60 * 1000));
+                const nextRunAt = Date.now() + intervalMs;
                 await TimerStore.update(timerId, {
                     currentCount: task.currentCount,
-                    nextRunAt: Date.now() + intervalMs,
+                    nextRunAt,
                 });
+                // runtime interval 的 setInterval 可能因 SW 挂起而死亡：
+                // 每次触发后重排一个 alarm 兜底，alarm 触发时 dispatch 会重建 runtime 循环
+                await chrome.alarms.create(`${TIMER_ALARM_PREFIX}${timerId}`, { when: nextRunAt });
             }
         } else if (task.type === 'schedule') {
             task.currentCount++;
@@ -152,7 +156,11 @@ async function handleTimerTrigger(timerId: string, source: 'alarm' | 'runtime_ti
                 taskKind: 'aux',
             });
 
-            if (!tabExists) {
+            // 无论有没有标签页，任务失败都通知用户（此前只有成功才通知，静默失败无法察觉）
+            const finalState = session.status;
+            if (finalState === 'error') {
+                showNotification('定时任务执行失败', `${task.action}\n${session.lastError || '未知错误'}`);
+            } else if (!tabExists) {
                 showNotification('定时任务已完成', task.action);
             }
         });

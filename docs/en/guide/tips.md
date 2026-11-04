@@ -26,7 +26,7 @@ This means **login session reuse**. Any website you're signed into — e-commerc
 
 Actspan places a small floating ball on every webpage — your entry point to the AI assistant.
 
-- **Keyboard shortcut** — `Cmd+M` (Mac) / `Ctrl+M` (Windows) to quickly open the search box
+- **Click to open** — Hover over the floating ball and click to open the search box
 - **Drag to move** — Drag the floating ball anywhere on screen; your preferred position is remembered
 - **Stays out of the way** — It hugs the screen edge and hides itself; hover to reveal
 - **Real-time updates** — As Actspan works, you see status updates streaming in real time

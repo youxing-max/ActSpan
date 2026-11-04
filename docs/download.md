@@ -75,7 +75,7 @@ Actspan 兼容任何 OpenAI API 格式的服务：OpenAI、Azure OpenAI、Claude
 
 ### 第 8 步：开始使用！
 
-访问任意网页，按 **`Cmd+M`**（Mac）或 **`Ctrl+M`**（Windows/Linux）唤起 AI 助手。也可以将鼠标悬停在页面右侧的悬浮球上。
+访问任意网页，将鼠标悬停在页面右侧的悬浮球上，点击即可唤起 AI 助手。
 
 ---
 

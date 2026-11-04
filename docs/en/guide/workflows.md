@@ -114,7 +114,7 @@ The easiest way to create a custom workflow is to **record it** directly in the 
 
 ### Steps
 
-1. Open the floating ball search box (`Cmd+M` / `Ctrl+M`)
+1. Click the floating ball to open the search box
 2. Click the **"Record Workflow"** button in the footer area
 3. Perform the operation on the page (click, type, navigate, etc.)
 4. Click **"Stop"** when done

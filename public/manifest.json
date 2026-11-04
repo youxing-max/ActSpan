@@ -20,7 +20,8 @@
     "debugger",
     "webNavigation",
     "sidePanel",
-    "offscreen"
+    "offscreen",
+    "tabCapture"
   ],
   "side_panel": {
     "default_path": "sidepanel.html"

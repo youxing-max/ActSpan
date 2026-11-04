@@ -38,6 +38,9 @@ import { askUserFunction } from './ask-user';
 import { saveWorkflowFunction } from './save-workflow';
 import { loadToolsFunction } from './load-tools';
 import { webhookFunction } from './webhook';
+import { agentTaskFunction } from './agent-task';
+import { recorderFunction } from './recorder';
+import { screenRecordFunction } from './screen-record';
 import { statusFunction } from './status';
 import { siteExperienceFunction } from './site-experience-tool';
 import { adoptFunction } from './adopt';
@@ -153,6 +156,9 @@ const BUILTIN_FUNCTIONS: FunctionDefinition[] = [
   statusFunction,
   siteExperienceFunction,
   adoptFunction,
+  agentTaskFunction,
+  recorderFunction,
+  screenRecordFunction,
 ];
 
 const builtinToolNames = new Set(BUILTIN_FUNCTIONS.map((tool) => tool.name));

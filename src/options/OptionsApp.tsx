@@ -5,16 +5,16 @@ import { actspanTheme } from './theme';
 import { routes, useHashRoute } from './routes';
 import { LLMSettingsPage } from './pages/LLMSettingsPage';
 import { WorkflowsPage } from './pages/WorkflowsPage';
-import { BlocklistPage } from './pages/BlocklistPage';
 import { HistoryPage } from './pages/HistoryPage';
 import { WebhookPage } from './pages/WebhookPage';
+import { CloudConnectorPage } from './pages/CloudConnectorPage';
 
 /** 路由 key → 页面组件映射 */
 const PAGE_MAP: Record<string, React.ComponentType> = {
   settings: LLMSettingsPage,
   workflows: WorkflowsPage,
-  blocklist: BlocklistPage,
   webhook: WebhookPage,
+  cloud: CloudConnectorPage,
   history: HistoryPage,
 };
 
@@ -53,7 +53,6 @@ function OptionsLayout() {
             <div className="options-workspace-overline">ACTSPAN / WORKSPACE</div>
             <div className="options-workspace-index">{String(routes.indexOf(activeRoute) + 1).padStart(2, '0')} <span>/ {String(routes.length).padStart(2, '0')}</span></div>
             <h1>{activeRoute.label}</h1>
-            <p>{activeRoute.description}</p>
             <div className="options-workspace-context-footer">实时浏览器能力 · 本地控制台</div>
           </aside>
           <main className="options-body" id="workspace-content">

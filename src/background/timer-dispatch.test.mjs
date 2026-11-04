@@ -134,7 +134,8 @@ test('restore 时为过期的 alarm 任务立即补触发一次，并重建未�
   );
 
   // 本用例中 chrome.tabs.get 永远 reject（原标签页已关闭）：
-  // 任务仍必须执行（会话已创建并运行完成，见上方清理断言），
-  // 且完成后发送的是「已完成」通知而不是旧的「无法推送结果」。
-  assert.deepEqual(notificationMessages, ['定时任务已完成', '定时任务已完成']);
+  // 任务仍必须执行（会话已创建并运行完成，见上方清理断言）。
+  // mock 环境无 AI 配置，Agent Loop 无法调用 LLM，session.status === 'error'——
+  // 修复后错误路径会发「定时任务执行失败」通知（此前静默失败用户无感知）。
+  assert.deepEqual(notificationMessages, ['定时任务执行失败', '定时任务执行失败']);
 });

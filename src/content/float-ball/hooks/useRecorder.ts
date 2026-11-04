@@ -317,6 +317,30 @@ export const useRecorder = () => {
     };
   }, [dispatch, stopCapture]);
 
+  // MCP/后台发起的录制：收到 __recorder_begin 时激活本页事件采集。
+  // UI 已在本页激活（isRecording=true）时忽略，避免重复 addEventListener 导致步骤翻倍。
+  useEffect(() => {
+    const onBegin = (data: any) => {
+      if (stateRef.current.isRecording) return;
+      stepCountRef.current = typeof data?.stepCount === 'number' ? data.stepCount : 0;
+      dispatch({ type: 'SET_RECORDING', payload: { isRecording: true, stepCount: stepCountRef.current } });
+      startCapture();
+      updateRecorderStepCount(stepCountRef.current);
+    };
+    const onEnd = () => {
+      if (!stateRef.current.isRecording) return;
+      stopCapture();
+      hideRecorderOverlay();
+      dispatch({ type: 'SET_RECORDING', payload: { isRecording: false, stepCount: 0 } });
+    };
+    Channel.on('__recorder_begin', onBegin);
+    Channel.on('__recorder_end', onEnd);
+    return () => {
+      Channel.off('__recorder_begin', onBegin);
+      Channel.off('__recorder_end', onEnd);
+    };
+  }, [dispatch, startCapture, stopCapture]);
+
 
   // 监听审计完成事件
   useEffect(() => {

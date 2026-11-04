@@ -24,10 +24,11 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import * as Lark from '@larksuiteoapi/node-sdk';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { isDirectExecution } from './entry.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_TIMEOUT_MS = 15 * 60 * 1000;
@@ -523,7 +524,7 @@ const start = async () => {
   process.once('SIGTERM', () => { void shutdown(); });
 };
 
-const isMain = process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href;
+const isMain = isDirectExecution(import.meta.url);
 if (isMain) {
   start().catch((error) => {
     console.error(`[actspan-feishu] 启动失败：${error instanceof Error ? error.message : String(error)}`);

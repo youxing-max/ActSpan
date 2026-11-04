@@ -102,6 +102,15 @@ const LOGO_REVIEW = `data:image/svg+xml;charset=utf-8,${encodeURIComponent('<svg
 // 加载工具（拼图块，天蓝色）
 const LOGO_LOAD_TOOLS = `data:image/svg+xml;charset=utf-8,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#0ea5e9" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 11H19V7c0-1.1-.9-2-2-2h-4V3.5C13 2.12 11.88 1 10.5 1S8 2.12 8 3.5V5H4c-1.1 0-2 .9-2 2v3.8h1.5c1.38 0 2.5 1.12 2.5 2.5S4.88 15.8 3.5 15.8H2V19c0 1.1.9 2 2 2h3.8v-1.5c0-1.38 1.12-2.5 2.5-2.5s2.5 1.12 2.5 2.5V21H17c1.1 0 2-.9 2-2v-4h1.5c1.38 0 2.5-1.12 2.5-2.5S21.88 11 20.5 11z"/></svg>')}`;
 
+// 异步 Agent 任务（机器人头+闪电，紫罗兰色）
+const LOGO_AGENT_TASK = `data:image/svg+xml;charset=utf-8,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#8b5cf6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="12" rx="2"/><line x1="12" y1="4" x2="12" y2="8"/><circle cx="12" cy="3" r="1" fill="#8b5cf6"/><circle cx="9" cy="13" r="1" fill="#8b5cf6" stroke="none"/><circle cx="15" cy="13" r="1" fill="#8b5cf6" stroke="none"/><path d="M9 17h6"/></svg>')}`;
+
+// 工作流录制（红点+圆环，录制指示灯）
+const LOGO_RECORDER = `data:image/svg+xml;charset=utf-8,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4" fill="#dc2626" stroke="none"/></svg>')}`;
+
+// 视频录屏（摄像机，玫瑰红）
+const LOGO_SCREEN_RECORD = `data:image/svg+xml;charset=utf-8,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#e11d48" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>')}`;
+
 // 函数图标映射（函数名 → logo）
 export const FUNCTION_ICONS: Record<string, string> = {
   page: LOGO_PAGE_VIEWER,
@@ -144,6 +153,9 @@ export const FUNCTION_ICONS: Record<string, string> = {
   ask_user: LOGO_ASK_USER,
   save_workflow: LOGO_SAVE_WORKFLOW,
   load_tools: LOGO_LOAD_TOOLS,
+  agent_task: LOGO_AGENT_TASK,
+  recorder: LOGO_RECORDER,
+  screen_record: LOGO_SCREEN_RECORD,
   todo: LOGO_TODO,
   explore: LOGO_EXPLORE,
   compact: LOGO_COMPACT,
@@ -193,6 +205,9 @@ export const FUNCTION_LABELS: Record<string, string> = {
   ask_user: '向用户提问',
   save_workflow: '保存工作流',
   load_tools: '加载工具',
+  agent_task: '异步任务',
+  recorder: '录制工作流',
+  screen_record: '视频录屏',
   todo: '任务规划',
   explore: '探索',
   compact: '压缩',

@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process';
 import WebSocket from 'ws';
 import { fileURLToPath } from 'node:url';
 import { extensionIdFromKey, versionReport } from './install.js';
+import { isDirectExecution } from './entry.js';
 
 const defaultMetadata = (port) => path.join(os.homedir(), '.actspan', `bridge-${port}.json`);
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -117,7 +118,7 @@ function parseArgs(argv) {
     }
     return options;
 }
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isDirectExecution(import.meta.url)) {
     const options = parseArgs(process.argv.slice(2));
     if (options.error) {
         process.stderr.write(`actspan doctor: ${options.error}\n`);

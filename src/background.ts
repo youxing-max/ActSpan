@@ -30,6 +30,7 @@ import './background/workflow-recorder';
 import './background/resident-ai';
 import './background/timer-dispatch';
 import { initMcpBridge } from './background/mcp-bridge';
+import { initCloudBridge } from './background/cloud-bridge';
 import { getTaskExecutor, getTaskManager } from './background/policy-executor';
 import { createSession, runSessionNow } from './background/session-manager';
 
@@ -51,6 +52,7 @@ getTaskManager().setRunner(async (task, input, context) => {
     return { sessionId: session.id, status: session.status, result: session.context.at(-1) };
 });
 initMcpBridge();
+initCloudBridge();
 
 console.log(`[Actspan] Background Service Worker 已启动, V${VERSION}`);
 void ensureToolRegistryReady().catch((err) => {

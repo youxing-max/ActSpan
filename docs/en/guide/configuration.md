@@ -61,12 +61,6 @@ Each dynamic tool requires the following configuration:
 
 Dynamic tools also support batch import via Manifest URL.
 
-## Keyboard Shortcuts
+## Opening the Assistant
 
-| Shortcut | Function |
-|----------|----------|
-| `Cmd+M` / `Ctrl+M` | Toggle AI search box |
-
-::: tip
-Keyboard shortcuts work on all webpages. If there's a conflict with a page's own shortcuts, use the floating ball to open instead.
-:::
+On any webpage, hover over the floating ball on the right side and click it to open or close the AI search box.

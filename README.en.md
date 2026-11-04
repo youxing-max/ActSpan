@@ -81,7 +81,7 @@ Actspan works with OpenAI-compatible model services, including cloud APIs and lo
 2. Extract it and open `chrome://extensions/` in Chrome.
 3. Enable **Developer mode**, click **Load unpacked**, and select the `actspan-extension/` folder.
 4. Right-click the Actspan extension icon, open **Options**, and enter your model Endpoint, API Key, and Model.
-5. Open any webpage, hover over the floating ball on the right edge and click to summon the assistant.
+5. Open any webpage, hover over the floating ball on the right side of the page, and click it to summon the assistant.
 
 ### Build from Source
 
@@ -142,13 +142,39 @@ See [MCP Bridge](MCP-BRIDGE.md) for configuration, authentication, tool paramete
 
 ## Development
 
+Requires Node.js 20 or newer (CI uses `node:20-bookworm`).
+
 ```bash
+npm ci               # Install dependencies from the lockfile
 npm run dev          # Watch builds
 npm run build        # Build Popup, Content, Sidepanel, and Background
-npm test             # Run Node tests
+npm run typecheck    # TypeScript type checking
 npm run lint         # Run lint checks
+npm test             # Run extension-side Node tests
+npm run docs:build   # Build the documentation site
 npm run docs:dev     # Preview the documentation site locally
 ```
+
+MCP Server tests and documentation checks:
+
+```bash
+cd mcp-server
+npm ci
+npm test             # Run MCP Server tests
+npm run check:docs   # Verify tool docs match the tool catalog
+```
+
+### Continuous Integration
+
+The `main` pipeline is defined in `.gitlab-ci.yml` and has three stages; run them locally in the same order:
+
+| Stage | Contents |
+|---|---|
+| verify | `npm ci` → `typecheck` → `build` → `docs:build` → `lint` → extension tests → MCP Server tests → `check:docs` |
+| security | `npm audit --audit-level=critical` for the root project and `mcp-server` |
+| license | Verify that `LICENSE` is AGPL-3.0 |
+
+> Note: test files must not import `.ts` sources directly. CI runs on Node 20, which does not strip types; bundle with esbuild and import dynamically, as the other tests do.
 
 ## License
 

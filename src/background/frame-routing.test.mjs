@@ -2,15 +2,22 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { build } from 'esbuild';
 
+// CI 运行在 Node 20，不能直接 import .ts（ERR_UNKNOWN_FILE_EXTENSION）。
+// 与其它测试一致：先用 esbuild 打包成 ESM 再动态导入。
 const bundle = await build({
   stdin: {
     contents: `export { routeFrameRef, frameSnapshotId, qualifyRef, parseQualifiedRef, MAIN_FRAME_ID } from './src/background/frame-routing.ts';`,
     resolveDir: process.cwd(),
     loader: 'ts',
   },
-  bundle: true, write: false, format: 'esm', platform: 'node',
+  bundle: true,
+  write: false,
+  format: 'esm',
+  platform: 'node',
 });
-const { routeFrameRef, frameSnapshotId, qualifyRef, parseQualifiedRef, MAIN_FRAME_ID } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].contents).toString('base64')}`);
+const { routeFrameRef, frameSnapshotId, qualifyRef, parseQualifiedRef, MAIN_FRAME_ID } = await import(
+  `data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].contents).toString('base64')}`
+);
 
 test('主框架 ref 不带后缀，snapshotId 沿用 tab 级', () => {
   const route = routeFrameRef('ec-abc-1', 'snap-1');

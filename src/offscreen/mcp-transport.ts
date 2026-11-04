@@ -1,4 +1,5 @@
 import { VERSION } from '../config';
+import { initScreenCapture } from './screen-capture';
 
 const DEFAULT_PORT = 30121;
 const PROTOCOL_VERSION = 1;
@@ -343,3 +344,5 @@ export const mcpOffscreenTransport = new McpOffscreenTransport();
 export const startMcpTransport = (): void => mcpOffscreenTransport.start();
 export const stopMcpTransport = (): void => mcpOffscreenTransport.stop();
 if (typeof chrome !== 'undefined' && chrome.runtime) startMcpTransport();
+// 屏幕录制（MediaRecorder）与本地桥接共用同一个 offscreen 文档
+if (typeof chrome !== 'undefined' && chrome.runtime) initScreenCapture();

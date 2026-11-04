@@ -75,7 +75,7 @@ For more details, see the [Getting Started Guide](/en/guide/getting-started).
 
 ### Step 8: Start Using!
 
-Visit any webpage and press **`Cmd+M`** (Mac) or **`Ctrl+M`** (Windows/Linux) to summon the AI assistant. You can also hover over the floating ball on the right side of the page.
+Visit any webpage, hover over the floating ball on the right side of the page, and click it to summon the AI assistant.
 
 ---
 

@@ -19,7 +19,7 @@ hero:
 features:
   - icon: "\U0001F4AC"
     title: Just Ask
-    details: Press Cmd+M and type what you need in plain language. "Find the cheapest flight to Tokyo" or "Fill in this form for me." Actspan figures out the rest.
+    details: Click the floating ball and type what you need in plain language. "Find the cheapest flight to Tokyo" or "Fill in this form for me." Actspan figures out the rest.
   - icon: "\U0001F512"
     title: Works Where You're Logged In
     details: Actspan runs right inside your Chrome browser, using your existing login sessions. Shop on Amazon, manage GitHub issues, check your bank — no re-login needed.
