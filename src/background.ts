@@ -32,13 +32,28 @@ import './background/timer-dispatch';
 import { initMcpBridge } from './background/mcp-bridge';
 import { initCloudBridge } from './background/cloud-bridge';
 import { getTaskExecutor, getTaskManager } from './background/policy-executor';
-import { createSession, runSessionNow } from './background/session-manager';
+import { createSession, dispatchSessionOp, runSessionNow } from './background/session-manager';
 
 // ============ 初始化 ============
+
+// 先占住会话队列，防止唤醒 SW 的首条消息抢在历史恢复前执行。
+const stateRestored = dispatchSessionOp('startup:restore', async () => {
+    try {
+        await restoreSessionState();
+    } catch (err) {
+        console.error('[Actspan] 恢复会话状态失败:', err);
+    }
+    try {
+        await getTaskExecutor().recover();
+    } catch (err) {
+        console.error('[Actspan] 恢复任务状态失败:', err);
+    }
+});
 
 // 启动 Channel 监听（background 侧不传 tabId）
 Channel.listen();
 getTaskManager().setRunner(async (task, input, context) => {
+    await stateRestored;
     const query = typeof input.query === 'string' ? input.query : typeof input.goal === 'string' ? input.goal : '';
     if (!query.trim()) throw new Error('任务缺少 query/goal');
     const session = createSession(query, context.tabId);
@@ -77,22 +92,12 @@ chrome.runtime.onInstalled.addListener((details) => {
 
 // ============ 启动恢复 ============
 
-// 顺序恢复（先会话、任务，再定时器）
-(async () => {
-    try {
-        await restoreSessionState();
-    } catch (err) {
-        console.error('[Actspan] 恢复会话状态失败:', err);
-    }
-    try {
-        await getTaskExecutor().recover();
-    } catch (err) {
-        console.error('[Actspan] 恢复任务状态失败:', err);
-    }
+// 会话与任务恢复完成后再启动定时器。
+void stateRestored.then(async () => {
     try {
         await restoreRuntimeTimers();
     } catch (err) {
         console.error('[Actspan] 恢复运行时定时器失败:', err);
     }
-})();
+});
 
