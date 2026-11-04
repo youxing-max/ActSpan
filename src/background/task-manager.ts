@@ -83,7 +83,8 @@ export class TaskManager {
 
   /** 删除超出保留上限的最旧终态任务；运行中/等待中的任务永不删除 */
   private pruneTerminalTasks(): void {
-    const terminal = [...this.tasks.values()].filter((task) => TERMINAL_TASK_STATES.has(task.state));
+    // 清理中的任务已计入淘汰额度；关页/释放租约触发 persist 时不能再次挤掉其他记录。
+    const terminal = [...this.tasks.values()].filter((task) => TERMINAL_TASK_STATES.has(task.state) && !this.pruning.has(task.taskId));
     if (terminal.length <= MAX_RETAINED_TERMINAL_TASKS) return;
     terminal.sort((left, right) => right.updatedAt - left.updatedAt);
     for (const stale of terminal.slice(MAX_RETAINED_TERMINAL_TASKS)) {

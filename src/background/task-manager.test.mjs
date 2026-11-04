@@ -86,6 +86,31 @@ test('cleanup preserves explicitly retained owned tabs', async () => {
   assert.equal(leases.get(26)?.releasedAt, undefined);
 });
 
+test('terminal history pruning retains the newest 50 tasks when owned-tab cleanup persists again', async () => {
+  removedTabs.length = 0;
+  const leases = new TabLeaseManager();
+  const tasks = new TaskManager(leases);
+  for (let index = 0; index < 50; index++) {
+    const task = tasks.create({ taskId: `retained-${index}`, sessionId: 'retention', owner: 'ide-agent', clientId: 'retention-client' });
+    if (index === 0) leases.acquire(task, 501, task.clientId);
+    tasks.markSucceeded(task.taskId, index);
+    task.updatedAt = index + 1;
+  }
+  const active = tasks.create({ taskId: 'retention-active', sessionId: 'retention', owner: 'ide-agent' });
+  tasks.markRunning(active.taskId);
+  const newest = tasks.create({ taskId: 'retained-50', sessionId: 'retention', owner: 'ide-agent' });
+  tasks.markSucceeded(newest.taskId, 50);
+  // 释放租约与清空 ownedTabIds 都会触发 persist；它们不能再次选中额外旧任务。
+  for (let index = 0; index < 5; index++) await new Promise(resolve => setImmediate(resolve));
+  await tasks.persist();
+  assert.deepEqual(removedTabs, [501]);
+  assert.equal(tasks.has('retained-0'), false);
+  const expected = Array.from({ length: 50 }, (_, index) => `retained-${index + 1}`).sort();
+  assert.deepEqual(tasks.list().filter(t => t.state === 'succeeded').map(t => t.taskId).sort(), expected);
+  assert.equal(tasks.get(active.taskId)?.state, 'running');
+  assert.deepEqual(values.actspan_task_state.tasks.filter(t => t.state === 'succeeded').map(t => t.taskId).sort(), expected);
+});
+
 
 test('separate task leases isolate explicit tabs and allow independent progress', async () => {
   const leases = new TabLeaseManager();
