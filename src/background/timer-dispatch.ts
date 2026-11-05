@@ -3,7 +3,7 @@
  * 从 background.ts 提取，处理定时任务触发、Chrome Alarms 和运行时定时器恢复
  */
 import Channel from '../lib/channel';
-import { TimerStore } from '../lib/timer-store';
+import { TimerStore, type TimerTask } from '../lib/timer-store';
 import { TimerScheduler } from '../lib/timer-scheduler';
 import { computeNextScheduleRun, TIMER_ALARM_PREFIX, LEGACY_TIMER_ALARM_PREFIX } from '../functions/timer';
 import { broadcastBgTasksChanged } from './bg-tasks-manager';
@@ -25,6 +25,20 @@ const activeTimerDispatch = new Set<string>();
 /** 定时器因同标签页任务而被跳过时的重试间隔 */
 const TIMER_BUSY_RETRY_MS = 15_000;
 
+const intervalDuration = (task: TimerTask): number =>
+    task.intervalMs || Math.max(1, Math.round((task.intervalMinutes || 1) * 60_000));
+
+async function scheduleNextInterval(task: TimerTask, nextRunAt: number) {
+    const intervalMs = intervalDuration(task);
+    if (task.scheduleMode === 'runtime') {
+        TimerScheduler.scheduleInterval(task.id, intervalMs, nextRunAt - Date.now());
+    }
+    // 持久周期 alarm 在 SW 挂起或上一轮仍执行时继续兜底，避免一次性 alarm 被消耗后丢失调度。
+    await chrome.alarms.create(`${TIMER_ALARM_PREFIX}${task.id}`, {
+        when: nextRunAt, periodInMinutes: Math.max(1, intervalMs / 60_000),
+    });
+}
+
 /**
  * 定时任务触发处理（支持 alarm + runtime）
  */
@@ -38,6 +52,8 @@ async function handleTimerTrigger(timerId: string, source: 'alarm' | 'runtime_ti
     try {
         const task = await TimerStore.get(timerId);
         if (!task) return;
+        // 两个通道可能先后报告同一轮；首个触发已经推进 nextRunAt，晚到的事件不再计数。
+        if (task.type === 'interval' && task.nextRunAt && task.nextRunAt > Date.now()) return;
 
         const coalesceKey = `timer:${timerId}`;
         const hasInFlightTimerRun = activeCoalescedTasks.has(coalesceKey);
@@ -47,10 +63,9 @@ async function handleTimerTrigger(timerId: string, source: 'alarm' | 'runtime_ti
             : hasRunningTasks();
         if (hasInFlightTimerRun || tabHasRunningTask) {
             if (task.type === 'interval') {
-                const intervalMs = task.intervalMs || Math.max(1, Math.round((task.intervalMinutes || 1) * 60 * 1000));
-                await TimerStore.update(timerId, {
-                    nextRunAt: Date.now() + intervalMs,
-                });
+                const nextRunAt = Date.now() + intervalDuration(task);
+                await TimerStore.update(timerId, { nextRunAt });
+                await scheduleNextInterval(task, nextRunAt);
             } else if (task.type === 'schedule') {
                 // 一次性 alarm 已触发，跳过时必须重新排下一次，否则永久丢失
                 const nextRunAt = computeNextScheduleRun(task.scheduleRule!);
@@ -84,15 +99,12 @@ async function handleTimerTrigger(timerId: string, source: 'alarm' | 'runtime_ti
                 console.log(`[Actspan] 周期任务已达最大次数，已清理: ${timerId}`);
                 void broadcastBgTasksChanged();
             } else {
-                const intervalMs = task.intervalMs || Math.max(1, Math.round((task.intervalMinutes || 1) * 60 * 1000));
-                const nextRunAt = Date.now() + intervalMs;
+                const nextRunAt = Date.now() + intervalDuration(task);
                 await TimerStore.update(timerId, {
                     currentCount: task.currentCount,
                     nextRunAt,
                 });
-                // runtime interval 的 setInterval 可能因 SW 挂起而死亡：
-                // 每次触发后重排一个 alarm 兜底，alarm 触发时 dispatch 会重建 runtime 循环
-                await chrome.alarms.create(`${TIMER_ALARM_PREFIX}${timerId}`, { when: nextRunAt });
+                await scheduleNextInterval(task, nextRunAt);
             }
         } else if (task.type === 'schedule') {
             task.currentCount++;
@@ -240,14 +252,15 @@ export async function restoreRuntimeTimers() {
         }
 
         if (task.type === 'interval') {
-            const intervalMs = task.intervalMs || Math.max(1, Math.round((task.intervalMinutes || 1) * 60 * 1000));
-            TimerScheduler.scheduleInterval(task.id, intervalMs);
+            const intervalMs = intervalDuration(task);
             // 保留原始节奏相位：按原 nextRunAt 推算下一个未来触发点，
             // 而不是重置为 now+intervalMs（那会丢弃 SW 睡眠期间的相位并整体漂移）。
             // 不追发欠账，避免 SW 启动瞬间突发放量执行。
             const base = typeof task.nextRunAt === 'number' && task.nextRunAt > 0 ? task.nextRunAt : now;
             const missed = Math.max(0, Math.ceil((now - base) / intervalMs));
-            await TimerStore.update(task.id, { nextRunAt: base + missed * intervalMs });
+            const nextRunAt = base + missed * intervalMs;
+            await TimerStore.update(task.id, { nextRunAt });
+            await scheduleNextInterval(task, nextRunAt);
         }
     }
 }

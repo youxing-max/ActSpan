@@ -38,13 +38,18 @@ export const TimerScheduler = {
     runtimeTimeouts.set(timerId, handle);
   },
 
-  scheduleInterval(timerId: string, intervalMs: number) {
+  scheduleInterval(timerId: string, intervalMs: number, firstDelayMs = intervalMs) {
     this.clear(timerId);
     const safeInterval = Math.max(1, Math.floor(intervalMs));
-    const handle = globalThis.setInterval(() => {
+    // 恢复时首轮只等待剩余时间，后续轮次仍使用完整周期。
+    const handle = globalThis.setTimeout(() => {
+      runtimeTimeouts.delete(timerId);
+      runtimeIntervals.set(timerId, globalThis.setInterval(() => {
+        void callTrigger(timerId, 'runtime_interval');
+      }, safeInterval));
       void callTrigger(timerId, 'runtime_interval');
-    }, safeInterval);
-    runtimeIntervals.set(timerId, handle);
+    }, Math.max(1, Math.ceil(firstDelayMs)));
+    runtimeTimeouts.set(timerId, handle);
   },
 
   clear(timerId: string) {

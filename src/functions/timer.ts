@@ -340,9 +340,8 @@ export const timerFunction: FunctionDefinition = {
 
         if (scheduleMode === 'runtime') {
           TimerScheduler.scheduleInterval(id, safeIntervalMs);
-        } else {
-          await chrome.alarms.create(alarmName, { delayInMinutes: minutes, periodInMinutes: minutes });
         }
+        await chrome.alarms.create(alarmName, { when: nextRunAt, periodInMinutes: minutes });
 
         await TimerStore.save({
           id, type: 'interval', action: taskAction, tabId: context?.tabId || 0,
@@ -443,18 +442,20 @@ export const timerFunction: FunctionDefinition = {
 
             const scheduleMode: 'alarm' | 'runtime' = newIntervalMs < ONE_MINUTE_MS ? 'runtime' : 'alarm';
             const minutes = Math.max(1, newIntervalMs / ONE_MINUTE_MS);
+            const nextRunAt = Date.now() + newIntervalMs;
 
             if (scheduleMode === 'runtime') {
               TimerScheduler.scheduleInterval(timer_id, newIntervalMs);
-            } else {
-              await chrome.alarms.create(`${TIMER_ALARM_PREFIX}${timer_id}`, { delayInMinutes: minutes, periodInMinutes: minutes });
             }
+            await chrome.alarms.create(`${TIMER_ALARM_PREFIX}${timer_id}`, {
+              when: nextRunAt, periodInMinutes: minutes,
+            });
 
             updates.intervalMs = newIntervalMs;
             updates.intervalMinutes = minutes;
             updates.scheduleMode = scheduleMode;
             updates.precision = newIntervalMs < ONE_MINUTE_MS ? 'millisecond' : 'minute';
-            updates.nextRunAt = Date.now() + newIntervalMs;
+            updates.nextRunAt = nextRunAt;
             changes.push('执行间隔');
             needReschedule = true;
           }
