@@ -40,11 +40,12 @@ const log = (msg) => console.log(`  ✓ ${msg}`);
 
 // ============ 启动云端服务 ============
 
-const server = spawn(process.execPath, [CLOUD_JS, '--port', String(PORT), '--tokens', tokensFile], {
+const server = spawn(process.execPath, [CLOUD_JS, '--host', '127.0.0.1', '--port', String(PORT), '--tokens', tokensFile], {
     stdio: ['ignore', 'pipe', 'pipe'],
 });
+let serverErrors = '';
 server.stdout.on('data', (d) => process.env.CLOUD_E2E_VERBOSE && process.stdout.write(`[srv] ${d}`));
-server.stderr.on('data', (d) => process.stderr.write(`[srv:err] ${d}`));
+server.stderr.on('data', (d) => { serverErrors += d.toString(); process.stderr.write(`[srv:err] ${d}`); });
 
 const waitHealth = async (tries = 50) => {
     for (let i = 0; i < tries; i++) {
@@ -137,6 +138,8 @@ const main = async () => {
         setTimeout(() => reject(new Error('4001 用例超时')), 5000);
     });
 
+    assert.doesNotMatch(serverErrors, /wrong-token/, '被拒绝的凭据也不能写入日志');
+
     // 7. 浏览器不在线时 IDE callTool 返回 isError
     {
         const client = await connectIde(BOB);
@@ -167,7 +170,9 @@ const main = async () => {
     // 1+4+5+6. alice 全链路
     const browser = await connectFakeBrowser(ALICE);
     armFakeBrowser(browser);
+    for (const frame of ['null', '[]', '"invalid"']) browser.send(frame);
     await new Promise((r) => setTimeout(r, 200));
+    assert.equal((await fetch(`${BASE}/health`)).status, 200, '异常浏览器帧不能终止云服务');
 
     const ide = await connectIde(ALICE);
     const { tools } = await ide.listTools();
@@ -206,6 +211,29 @@ const main = async () => {
     });
 
     await ide.close();
+
+    // 吊销已连接 token：HTTP、新旧 WS 和待返回调用都不能继续使用旧身份。
+    const revokeBrowser = await connectFakeBrowser(BOB);
+    const revokeIde = await connectIde(BOB);
+    const forwarded = new Promise(resolve => revokeBrowser.once('message', data => resolve(JSON.parse(data.toString()))));
+    const pendingCall = revokeIde.callTool({ name: 'pending', arguments: {} }).then(value => ({ value }), error => ({ error: error.message }));
+    assert.equal((await forwarded).method, 'tools/call');
+    const closed = new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('吊销后浏览器未在 5 秒内关闭')), 5000);
+        revokeBrowser.once('close', code => { clearTimeout(timer); resolve(code); });
+    });
+    writeFileSync(tokensFile, JSON.stringify({ alice: ALICE }));
+    assert.equal(await closed, 4001);
+    const revokedCall = await pendingCall;
+    assert.ok(revokedCall.error || revokedCall.value?.isError === true, '吊销中的工具调用必须明确失败');
+    const rejected = await fetch(`${BASE}/mcp`, {
+        method: 'POST', headers: { 'content-type': 'application/json', Authorization: `Bearer ${BOB}` },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 9, method: 'initialize', params: {} }),
+    });
+    assert.equal(rejected.status, 401);
+    assert.equal((await (await fetch(`${BASE}/health`)).json()).browserUsers.includes('bob'), false);
+    await revokeIde.close();
+    log('运行中吊销 token：旧浏览器4001、在途调用失败、后续HTTP401');
     console.log('\ncloud-e2e: 全部通过 ✅');
 };
 

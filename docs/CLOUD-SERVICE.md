@@ -125,8 +125,8 @@ node cloud-token.js revoke alice       # 吊销（离职/泄露时用）
 
 | 场景 | 行为 |
 |---|---|
-| 浏览器 token 无效 | 握手成功后立即 close **4001**，扩展停止重连并提示「Token 无效」 |
-| 同 token 第二个浏览器连入 | 顶替旧连接 close **4002**（单连接策略，防状态错乱） |
+| 浏览器 token 无效或运行中被吊销 | 无效握手或配置热加载后 close **4001**；扩展停止重连并提示「Token 无效」。吊销同时拒绝在途调用并关闭该 token 的旧 MCP 会话 |
+| 同 token 第二个浏览器连入 | 顶替旧连接 close **4002**；旧扩展提示「连接已被替换」并停止重连。需要恢复时先停用再启用；多台设备同时使用需分别分配 token |
 | IDE token 无效/缺失 | HTTP **401** |
 | IDE 拿别人的 mcp-session-id | **403**（会话绑定建会话时的 token） |
 | 浏览器不在线时 IDE 调工具 | 返回 isError 结果：「浏览器不在线（用户 xxx）…」 |
@@ -137,12 +137,13 @@ node cloud-token.js revoke alice       # 吊销（离职/泄露时用）
 
 - `GET /health`：在线浏览器用户列表、MCP 会话数、已加载 token 数（不泄露 token 本体）
 - 日志：连接/断开/会话建立均带 user 名，便于审计
+- 被拒绝的 token 不写入日志；切换连接后，旧连接的迟到工具结果不会发送给新连接
 - 扩容：单进程可支撑数百并发 WebSocket；更大规模按 token 哈希分片多实例即可
 
 ## 六、本地自测（无需真机）
 
 ```bash
-node test/cloud-e2e.mjs     # 8 用例：鉴权/路由/转发/顶替/离线，全绿
+node test/cloud-e2e.mjs     # 本机鉴权、路由、转发、顶替、离线、异常帧与运行中吊销
 ```
 
 扩展侧单独联调见 [CLOUD-BRIDGE-TESTING.md](./CLOUD-BRIDGE-TESTING.md)（mock 云端脚本）。

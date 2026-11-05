@@ -70,13 +70,37 @@ const CLOSE_CODE_REPLACED = 4002;
 /** token → name */
 let tokenRegistry = new Map();
 let tokensMtime = 0;
+/** token → { ws, name, connectedAt, lastPong, pending } */
+const browsers = new Map();
+/** mcp-session-id → { token, name, transport, server } */
+const mcpSessions = new Map();
+
+const replaceTokenRegistry = (next) => {
+    tokenRegistry = next;
+    for (const [token, session] of browsers) {
+        if (tokenRegistry.has(token)) continue;
+        browsers.delete(token);
+        for (const { reject, timer } of session.pending.values()) {
+            clearTimeout(timer);
+            reject(new Error('token 已被吊销'));
+        }
+        session.pending.clear();
+        session.ws.close(CLOSE_CODE_AUTH_FAILED, 'token revoked');
+    }
+    for (const [id, session] of mcpSessions) {
+        if (tokenRegistry.has(session.token)) continue;
+        mcpSessions.delete(id);
+        // 先让被拒绝的在途调用写出错误回执，再关闭其 HTTP/SSE 会话。
+        setImmediate(() => { void session.transport.close().catch(() => undefined); });
+    }
+};
 
 const loadTokens = () => {
     const inline = process.env.ACTSPAN_CLOUD_TOKENS;
     if (inline) {
         try {
             const obj = JSON.parse(inline);
-            tokenRegistry = new Map(Object.entries(obj).map(([name, token]) => [String(token), name]));
+            replaceTokenRegistry(new Map(Object.entries(obj).map(([name, token]) => [String(token), name])));
             console.log(`[cloud] 已从环境变量加载 ${tokenRegistry.size} 个 token`);
             return;
         } catch (err) {
@@ -84,6 +108,8 @@ const loadTokens = () => {
         }
     }
     if (!existsSync(TOKENS_FILE)) {
+        if (tokenRegistry.size > 0) replaceTokenRegistry(new Map());
+        tokensMtime = 0;
         if (tokenRegistry.size === 0) {
             console.warn(`[cloud] token 文件不存在: ${TOKENS_FILE}（所有连接将被拒绝，直到文件出现）`);
         }
@@ -92,9 +118,9 @@ const loadTokens = () => {
     try {
         const mtime = statSync(TOKENS_FILE).mtimeMs;
         if (mtime === tokensMtime && tokenRegistry.size > 0) return;
-        tokensMtime = mtime;
         const obj = JSON.parse(readFileSync(TOKENS_FILE, 'utf8'));
-        tokenRegistry = new Map(Object.entries(obj).map(([name, token]) => [String(token), name]));
+        replaceTokenRegistry(new Map(Object.entries(obj).map(([name, token]) => [String(token), name])));
+        tokensMtime = mtime;
         console.log(`[cloud] 已从 ${TOKENS_FILE} 加载 ${tokenRegistry.size} 个 token: ${[...tokenRegistry.values()].join(', ')}`);
     } catch (err) {
         console.error('[cloud] 读取 token 文件失败:', err.message);
@@ -109,9 +135,6 @@ const nameOfToken = (token) => tokenRegistry.get(token) || null;
 
 // ============ 浏览器会话注册表 ============
 
-/** token → { ws, name, connectedAt, lastPong, pending: Map<id, {resolve,reject,timer}> } */
-const browsers = new Map();
-
 class BrowserOfflineError extends Error {
     constructor(name) {
         super(`浏览器不在线（用户 ${name}）。请确认对方 Chrome 已打开、扩展已启用云端连接`);
@@ -121,6 +144,7 @@ class BrowserOfflineError extends Error {
 
 /** 向某用户的浏览器转发一帧 JSON-RPC 请求并等待响应 */
 const sendToBrowser = (token, method, params, timeoutMs = CALL_TIMEOUT_MS) => {
+    if (!tokenRegistry.has(token)) return Promise.reject(new Error('token 已被吊销'));
     const session = browsers.get(token);
     if (!session || session.ws.readyState !== 1) {
         return Promise.reject(new BrowserOfflineError(nameOfToken(token) || '?'));
@@ -137,9 +161,6 @@ const sendToBrowser = (token, method, params, timeoutMs = CALL_TIMEOUT_MS) => {
 };
 
 // ============ HTTP + MCP（IDE 侧） ============
-
-/** mcp-session-id → { token, name, transport, server } */
-const mcpSessions = new Map();
 
 const readBody = (req) => new Promise((resolve, reject) => {
     const chunks = [];
@@ -322,6 +343,7 @@ wss.on('connection', (ws, token, name) => {
         } catch {
             return;
         }
+        if (!frame || typeof frame !== 'object' || Array.isArray(frame)) return;
         // 响应帧：resolve 在途请求
         if (frame.id !== undefined && session.pending.has(frame.id)) {
             const { resolve, reject, timer } = session.pending.get(frame.id);
@@ -419,7 +441,7 @@ httpServer.on('upgrade', (req, socket, head) => {
     if (!name) {
         // 先完成握手再 close(4001)，保证扩展端能读到关闭码
         wss.handleUpgrade(req, socket, head, (ws) => {
-            console.warn(`[cloud] 拒绝浏览器连接：token 无效 (token="${token || '(空)'}")`);
+            console.warn(`[cloud] 拒绝浏览器连接：token ${token ? '无效' : '缺失'}`);
             ws.close(CLOSE_CODE_AUTH_FAILED, 'invalid token');
         });
         return;

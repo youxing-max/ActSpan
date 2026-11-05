@@ -18,7 +18,7 @@ const STATUS_GET_MESSAGE = '__cloud_bridge_status_get';
 /** 后台状态变更广播消息类型 */
 const STATUS_CHANGED_MESSAGE = '__cloud_bridge_status_changed';
 
-type CloudBridgeConnState = 'connected' | 'connecting' | 'disconnected' | 'auth_failed' | 'disabled';
+type CloudBridgeConnState = 'connected' | 'connecting' | 'disconnected' | 'auth_failed' | 'replaced' | 'disabled';
 
 interface CloudBridgeSettings {
     enabled: boolean;
@@ -99,6 +99,8 @@ const stateDisplay = (state: CloudBridgeConnState | undefined): { label: string;
             return { label: '连接中', color: 'processing', hint: '正在建立 WebSocket 连接' };
         case 'auth_failed':
             return { label: 'Token 无效', color: 'error', hint: '云端拒绝了 token，已停止重连。请检查 token 是否正确' };
+        case 'replaced':
+            return { label: '连接已被替换', color: 'warning', hint: '另一浏览器正在使用同一 token；需要在此恢复时请先停用，再启用' };
         case 'disconnected':
             return { label: '未连接', color: 'warning', hint: '每 2.5 秒自动重连' };
         case 'disabled':
@@ -270,7 +272,7 @@ export function CloudConnectorPage() {
                             autoComplete="off"
                         />
                         <Paragraph type="secondary" style={{ marginTop: 4, marginBottom: 0, fontSize: 12 }}>
-                            云端按 token 隔离用户。多个浏览器/设备可使用同一 token，也可各自分配。
+                            云端按 token 隔离用户。同一 token 仅保留最新浏览器连接；需同时使用多台设备时，请分别分配 token。
                         </Paragraph>
                     </div>
                     <Space>
@@ -304,7 +306,7 @@ export function CloudConnectorPage() {
                 className="options-section-gap"
             >
                 <Paragraph style={{ fontSize: 13 }}>
-                    1. 启用后，扩展在后台通过 WebSocket 连接到云端，断线每 2.5 秒自动重连；云端拒绝 token（close code 4001）时停止重连。
+                    1. 启用后，扩展在后台通过 WebSocket 连接到云端，断线每 2.5 秒自动重连；token 无效或连接被另一浏览器替换时停止重连，修改配置或重新启用可恢复。
                 </Paragraph>
                 <Paragraph style={{ fontSize: 13 }}>
                     2. 云端使用 JSON-RPC 2.0 协议下发请求：<Text code>tools/list</Text> 获取工具列表，

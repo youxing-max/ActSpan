@@ -56,7 +56,7 @@ export interface CloudBridgeSettings {
 }
 
 /** 状态码：connected 已连接 / connecting 连接中 / disconnected 未连接 / auth_failed token 无效 */
-export type CloudBridgeConnState = 'connected' | 'connecting' | 'disconnected' | 'auth_failed' | 'disabled';
+export type CloudBridgeConnState = 'connected' | 'connecting' | 'disconnected' | 'auth_failed' | 'replaced' | 'disabled';
 
 export interface CloudBridgeStatus {
     /** 配置是否启用 */
@@ -163,56 +163,58 @@ interface JsonRpcRequest {
     params?: unknown;
 }
 
-const sendFrame = (frame: Record<string, unknown>) => {
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+const sendFrame = (frame: Record<string, unknown>, socket: WebSocket) => {
+    // 工具可能在切换 token 后才完成，旧连接的回执不能流入新连接。
+    if (socket !== ws || socket.readyState !== WebSocket.OPEN) return;
     try {
-        ws.send(JSON.stringify(frame));
+        socket.send(JSON.stringify(frame));
     } catch (err) {
         _console.warn('[cloud-bridge] 发送帧失败:', err);
     }
 };
 
-const sendResult = (id: string | number | null, result: unknown) => {
-    sendFrame({ jsonrpc: '2.0', id, result });
+const sendResult = (id: string | number | null, result: unknown, socket: WebSocket) => {
+    sendFrame({ jsonrpc: '2.0', id, result }, socket);
 };
 
-const sendError = (id: string | number | null, code: number, message: string) => {
-    sendFrame({ jsonrpc: '2.0', id, error: { code, message } });
+const sendError = (id: string | number | null, code: number, message: string, socket: WebSocket) => {
+    sendFrame({ jsonrpc: '2.0', id, error: { code, message } }, socket);
 };
 
 /** 把一帧 JSON-RPC 请求路由到本地 MCPServer */
-const handleRequest = async (frame: JsonRpcRequest) => {
+const handleRequest = async (frame: JsonRpcRequest, socket: WebSocket) => {
     const id = frame.id ?? null;
     const method = frame.method;
     if (!method || typeof method !== 'string') {
-        if (id !== null) sendError(id, -32600, 'Invalid Request: missing method');
+        if (id !== null) sendError(id, -32600, 'Invalid Request: missing method', socket);
         return;
     }
 
     // 通知类帧：无 id，不需要响应
     if (id === null || id === undefined) {
         if (method === 'notifications/ping') {
-            sendFrame({ jsonrpc: '2.0', method: 'notifications/pong', params: { ts: Date.now() } });
+            sendFrame({ jsonrpc: '2.0', method: 'notifications/pong', params: { ts: Date.now() } }, socket);
         }
         return;
     }
 
     if (method !== 'tools/list' && method !== 'tools/call') {
-        sendError(id, -32601, `Method not found: ${method}`);
+        sendError(id, -32601, `Method not found: ${method}`, socket);
         return;
     }
 
     try {
         await ensureToolRegistryReady();
+        if (ws !== socket) return;
         if (method === 'tools/list') {
             const tools = await mcpClient.listTools();
-            sendResult(id, { tools });
+            sendResult(id, { tools }, socket);
             return;
         }
         // tools/call
         const params = (frame.params || {}) as { name?: string; arguments?: Record<string, unknown>; _meta?: Record<string, unknown> };
         if (typeof params.name !== 'string' || !params.name) {
-            sendError(id, -32602, 'tools/call 缺少 name 字段');
+            sendError(id, -32602, 'tools/call 缺少 name 字段', socket);
             return;
         }
         const result = await mcpClient.callTool(
@@ -220,9 +222,9 @@ const handleRequest = async (frame: JsonRpcRequest) => {
             (params.arguments && typeof params.arguments === 'object') ? params.arguments : {},
             params._meta as Record<string, unknown> | undefined,
         );
-        sendResult(id, result);
+        sendResult(id, result, socket);
     } catch (err: any) {
-        sendError(id, -32603, err?.message || '工具执行出错');
+        sendError(id, -32603, err?.message || '工具执行出错', socket);
     }
 };
 
@@ -268,8 +270,6 @@ const connect = async () => {
         setState('disabled', null);
         return;
     }
-    // 启用期间常驻保活，避免 SW 空闲挂起把长连接打死
-    ensureKeepAlive();
     // 已连接或正在连接时直接复用
     if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
 
@@ -281,11 +281,14 @@ const connect = async () => {
             throw new Error(`仅支持 ws:// 或 wss://，当前: ${serverUrl.protocol}`);
         }
     } catch (err: any) {
+        stopKeepAlive();
         setState('disconnected', `服务器地址非法: ${err?.message || '未知错误'}`);
         _console.warn('[cloud-bridge] 服务器地址非法:', settings.serverUrl);
         return;
     }
 
+    // 有效连接与暂时断线重连期间保活；配置错误或终止状态须释放。
+    ensureKeepAlive();
     const connectUrl = buildConnectUrl(settings.serverUrl, settings.token);
     setState('connecting', null);
     _console.log(`[cloud-bridge] 正在连接 ${serverUrl.origin}${serverUrl.pathname} (token 长度 ${settings.token.length})`);
@@ -302,6 +305,7 @@ const connect = async () => {
     ws = socket;
 
     socket.onopen = () => {
+        if (ws !== socket) return;
         lastConnectedAt = Date.now();
         setState('connected', null);
         _console.log('[cloud-bridge] 已连接');
@@ -314,7 +318,7 @@ const connect = async () => {
                     jsonrpc: '2.0',
                     method: 'notifications/ready',
                     params: { version: VERSION, toolCount: tools.length },
-                });
+                }, socket);
             } catch (err) {
                 _console.warn('[cloud-bridge] 发送 ready 通知失败:', err);
             }
@@ -322,29 +326,44 @@ const connect = async () => {
     };
 
     socket.onmessage = (event) => {
+        if (ws !== socket) return;
         if (typeof event.data !== 'string') return;
         let frame: JsonRpcRequest;
         try {
             frame = JSON.parse(event.data);
         } catch {
-            sendError(null, -32700, 'Parse error');
+            sendError(null, -32700, 'Parse error', socket);
             return;
         }
-        void handleRequest(frame);
+        if (!frame || typeof frame !== 'object' || Array.isArray(frame)) {
+            sendError(null, -32600, 'Invalid Request', socket);
+            return;
+        }
+        void handleRequest(frame, socket);
     };
 
     socket.onerror = () => {
+        if (ws !== socket) return;
         // 错误细节由 onclose 处理；这里只标记一下，避免 onclose 拿到空 reason
         if (!lastError) lastError = 'WebSocket 连接错误';
     };
 
     socket.onclose = (event) => {
-        if (ws === socket) ws = null;
+        if (ws !== socket) return;
+        ws = null;
 
         // 鉴权失败：停止重连
         if (event.code === CLOSE_CODE_AUTH_FAILED) {
+            clearReconnectTimer();
+            stopKeepAlive();
             _console.warn(`[cloud-bridge] 鉴权失败 (4001): ${event.reason || '(无原因)'}，停止重连。请检查 token`);
             setState('auth_failed', `token 无效${event.reason ? `: ${event.reason}` : ''}`);
+            return;
+        }
+        if (event.code === 4002) {
+            clearReconnectTimer();
+            stopKeepAlive();
+            setState('replaced', '另一浏览器已使用同一 token 连接，当前连接已停止重连。需要恢复时请先停用，再启用连接。');
             return;
         }
 
@@ -354,7 +373,7 @@ const connect = async () => {
 
         // 仅在配置仍启用时重连
         void readCloudBridgeSettings().then((s) => {
-            if (s?.enabled && s.serverUrl && s.token) scheduleReconnect();
+            if (!ws && s?.enabled && s.serverUrl && s.token) scheduleReconnect();
         });
     };
 };
@@ -366,6 +385,7 @@ export const applyCloudBridgeSettings = async (): Promise<void> => {
     const settings = await readCloudBridgeSettings();
     if (!settings || !settings.enabled || !settings.serverUrl || !settings.token) {
         disconnect();
+        stopKeepAlive();
         setState('disabled', null);
         return;
     }
