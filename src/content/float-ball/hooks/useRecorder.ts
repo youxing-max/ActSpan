@@ -76,10 +76,10 @@ export const useRecorder = () => {
 
 
   /** 提交未完成的输入步骤 */
-  const flushInputStep = useCallback(() => {
+  const flushInputStep = useCallback((send = true) => {
     const target = lastInputTargetRef.current;
     const value = lastInputValueRef.current;
-    if (!target || !value) return;
+    if (!target) return;
 
     const isSelect = target.tagName === 'SELECT';
     stepCountRef.current++;
@@ -95,12 +95,14 @@ export const useRecorder = () => {
       timestamp: Date.now(),
     };
     // 密码、验证码、银行卡等字段只保留「已填写」标记，原文不离开页面
-    Channel.send('__recorder_step', redactRecordedStep(step, lastInputMetaRef.current));
+    const redactedStep = redactRecordedStep(step, lastInputMetaRef.current);
+    if (send) Channel.send('__recorder_step', redactedStep);
     lastInputTargetRef.current = null;
     lastInputValueRef.current = '';
     lastInputMetaRef.current = {};
     dispatch({ type: 'SET_RECORDING', payload: { isRecording: true, stepCount: stepCountRef.current } });
     updateRecorderStepCount(stepCountRef.current);
+    return redactedStep;
   }, [dispatch]);
 
   // 事件处理器 refs（需要在 addEventListener 中保持稳定引用）
@@ -118,6 +120,7 @@ export const useRecorder = () => {
         const target = e.target as Element;
         if (!target || target.closest('#actspan-root') || target.closest('#actspan-recorder-overlay')) return;
 
+        flushInputStep();
         const selector = buildSimpleSelector(target);
         const semanticHint = getElementSemanticHint(target);
 
@@ -141,7 +144,7 @@ export const useRecorder = () => {
         const target = e.target as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
         if (!target || target.closest('#actspan-root') || target.closest('#actspan-recorder-overlay')) return;
 
-        if (target !== lastInputTargetRef.current && lastInputTargetRef.current && lastInputValueRef.current) {
+        if (target !== lastInputTargetRef.current && lastInputTargetRef.current) {
           flushInputStep();
         }
 
@@ -224,22 +227,21 @@ export const useRecorder = () => {
 
   /** 完成录制（停止 + 提交审计） */
   const stopRecording = useCallback(() => {
-    flushInputStep();
-    stopCapture();
-    hideRecorderOverlay();
-    Channel.send('__recorder_stop', {}, () => {
+    Channel.send('__recorder_stop', {}, (response) => {
+      if (!response?.success) {
+        console.warn('[Actspan] 停止录制失败:', response?.error);
+        return;
+      }
       dispatch({ type: 'SET_RECORDING', payload: { isRecording: false, stepCount: 0 } });
       submitRecording();
     });
-  }, [dispatch, flushInputStep, stopCapture, submitRecording]);
+  }, [dispatch, submitRecording]);
 
   /** 取消录制（丢弃所有步骤，不提交审计） */
   const cancelRecording = useCallback(() => {
     stopCapture();
     hideRecorderOverlay();
-    Channel.send('__recorder_stop', {}, () => {
-      dispatch({ type: 'SET_RECORDING', payload: { isRecording: false, stepCount: 0 } });
-    });
+    dispatch({ type: 'SET_RECORDING', payload: { isRecording: false, stepCount: 0 } });
     // 清理 background 录制状态
     Channel.send('__recorder_cancel_audit', {});
   }, [dispatch, stopCapture]);
@@ -327,11 +329,13 @@ export const useRecorder = () => {
       startCapture();
       updateRecorderStepCount(stepCountRef.current);
     };
-    const onEnd = () => {
-      if (!stateRef.current.isRecording) return;
+    const onEnd = (data: any, _sender?: chrome.runtime.MessageSender, sendResponse?: (response: unknown) => void) => {
+      // 待防抖的输入随停止响应交回后台，后台收齐后才关闭录制。
+      const step = data?.flush ? flushInputStep(false) : undefined;
       stopCapture();
       hideRecorderOverlay();
       dispatch({ type: 'SET_RECORDING', payload: { isRecording: false, stepCount: 0 } });
+      sendResponse?.({ success: true, step });
     };
     Channel.on('__recorder_begin', onBegin);
     Channel.on('__recorder_end', onEnd);
@@ -339,7 +343,7 @@ export const useRecorder = () => {
       Channel.off('__recorder_begin', onBegin);
       Channel.off('__recorder_end', onEnd);
     };
-  }, [dispatch, startCapture, stopCapture]);
+  }, [dispatch, startCapture, stopCapture, flushInputStep]);
 
 
   // 监听审计完成事件

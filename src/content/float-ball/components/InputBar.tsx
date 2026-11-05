@@ -3,7 +3,7 @@
  * 功能：文字输入、Enter 提交、上下键历史浏览、状态按钮（终止/新对话/重试）
  */
 
-import React, { useRef, useCallback, useEffect } from 'react';
+import React, { useRef, useCallback, useEffect, useState } from 'react';
 import Channel from '../../../lib/channel';
 import { useActspan } from '../context/useActspan';
 import { buildTaskTitle } from '../text-utils';
@@ -285,7 +285,7 @@ export const InputBar: React.FC<InputBarProps> = ({ resultRef: _resultRef }) => 
   })();
 
   const canResume = task?.status === 'error' && task.hasContext === true && !!task.failureCode;
-  const logoUrl = chrome.runtime.getURL('actspan-logo.svg');
+  const [logoUrl] = useState(() => chrome.runtime.getURL('actspan-logo.svg'));
 
   return (
     <div className="actspan-input-row">

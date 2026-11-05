@@ -9,6 +9,7 @@ import { ActspanRoot } from './float-ball/ActspanRoot';
 import { DISABLED_DOMAINS_KEY, LEGACY_DISABLED_DOMAINS_KEY } from './float-ball/constants';
 import { readMigratedStorage } from '../lib/legacy-storage';
 import { emitGlobalClickOutside, emitGlobalEscape } from './float-ball/global-events';
+import Channel from '../lib/channel';
 
 const storageArea = {
   get: (keys: string | string[]) => new Promise<Record<string, unknown>>((resolve) => chrome.storage.local.get<Record<string, unknown>>(keys, resolve)),
@@ -39,6 +40,26 @@ export const createFloatBallShadowHost = () => {
   return { host, shadow, reactRoot };
 };
 
+/** 扩展重载后旧 content 不会自动卸载，交互前及空闲时检查并释放旧 UI。 */
+export const watchExtensionContext = (onInvalidated: () => void) => {
+  const events = ['focus', 'resize', 'scroll', 'pointerdown', 'mouseover', 'keydown'];
+  let disposed = false;
+  const dispose = () => {
+    if (disposed) return;
+    disposed = true;
+    clearInterval(timer);
+    for (const event of events) window.removeEventListener(event, check, true);
+  };
+  const check = () => {
+    if (chrome.runtime?.id) return;
+    dispose();
+    onInvalidated();
+  };
+  const timer = setInterval(check, 1000);
+  for (const event of events) window.addEventListener(event, check, true);
+  return dispose;
+};
+
 export const initFloatBallReact = async () => {
   if (!document.body) return;
   if (window.location.protocol === 'chrome:' || window.location.protocol === 'chrome-extension:') return;
@@ -60,6 +81,7 @@ export const initFloatBallReact = async () => {
   } catch {
     // 读取失败时不阻塞初始化
   }
+  if (!chrome.runtime?.id) return;
 
   // 创建 Shadow DOM 宿主
   const { host, reactRoot } = createFloatBallShadowHost();
@@ -89,44 +111,60 @@ export const initFloatBallReact = async () => {
       host.style.top = `${curTop - offsetY}px`;
     }
   };
-  window.addEventListener('scroll', () => {
+  const onScroll = () => {
     cancelAnimationFrame(_compensateRAF);
     _compensateRAF = requestAnimationFrame(compensateHostPosition);
-  }, { passive: true });
-  requestAnimationFrame(compensateHostPosition);
+  };
+  window.addEventListener('scroll', onScroll, { passive: true });
+  _compensateRAF = requestAnimationFrame(compensateHostPosition);
 
   // React 挂载
   const root = ReactDOM.createRoot(reactRoot);
   root.render(<ActspanRoot />);
 
   // 截图时隐藏/恢复悬浮球（React 版补充，旧版 float-ball.ts 中有对应逻辑）
-  import('../lib/channel').then(({ default: Channel }) => {
-    Channel.on('__screenshot_hide', (_data: unknown, _sender: unknown, sendResponse?: (resp: unknown) => void) => {
+  const onScreenshotHide = (_data: unknown, _sender: unknown, sendResponse?: (resp: unknown) => void) => {
       host.style.display = 'none';
       sendResponse?.({ ok: true });
       return true;
-    });
-    Channel.on('__screenshot_show', () => {
+  };
+  const onScreenshotShow = () => {
       host.style.display = '';
-    });
-  });
+  };
+  Channel.on('__screenshot_hide', onScreenshotHide);
+  Channel.on('__screenshot_show', onScreenshotShow);
 
   // ---- 宿主文档上的全局事件监听 ----
   // 只接受用户真实输入（isTrusted），页面脚本合成的 keydown/mousedown 不得中止会话。
 
   // ESC 键（宿主文档）
-  document.addEventListener('keydown', (e) => {
+  const onKeyDown = (e: KeyboardEvent) => {
     if (e.isTrusted && e.key === 'Escape') {
       emitGlobalEscape();
     }
-  });
+  };
+  document.addEventListener('keydown', onKeyDown);
 
   // 点击外部关闭（宿主文档 mousedown）
-  document.addEventListener('mousedown', (e) => {
+  const onMouseDown = (e: MouseEvent) => {
     if (!e.isTrusted) return;
     const path = e.composedPath();
     if (!path.includes(host)) {
       emitGlobalClickOutside();
     }
+  };
+  document.addEventListener('mousedown', onMouseDown);
+
+  watchExtensionContext(() => {
+    userDismissed = true;
+    bodyObserver.disconnect();
+    window.removeEventListener('scroll', onScroll);
+    cancelAnimationFrame(_compensateRAF);
+    document.removeEventListener('keydown', onKeyDown);
+    document.removeEventListener('mousedown', onMouseDown);
+    Channel.off('__screenshot_hide', onScreenshotHide);
+    Channel.off('__screenshot_show', onScreenshotShow);
+    root.unmount();
+    host.remove();
   });
 };

@@ -8,7 +8,7 @@ const require = createRequire(import.meta.url);
 // 悬浮球入口：esbuild 打包后以 data: URL 引入，断言真实模块的 Shadow DOM 契约
 const hostBundle = await build({
   stdin: {
-    contents: `export { createFloatBallShadowHost } from './src/content/float-ball-react.tsx';`,
+    contents: `export { createFloatBallShadowHost, watchExtensionContext } from './src/content/float-ball-react.tsx';`,
     resolveDir: process.cwd(),
     loader: 'ts',
   },
@@ -17,9 +17,31 @@ const hostBundle = await build({
   format: 'esm',
   platform: 'node',
 });
-const { createFloatBallShadowHost } = await import(
+const { createFloatBallShadowHost, watchExtensionContext } = await import(
   `data:text/javascript;base64,${Buffer.from(hostBundle.outputFiles[0].contents).toString('base64')}`
 );
+
+test('扩展失效时仅卸载一次，并移除捕获监听和定时检查', () => {
+  const oldWindow = globalThis.window, oldChrome = globalThis.chrome;
+  const events = new Map();
+  globalThis.window = {
+    addEventListener(type, fn) { events.set(type, fn); },
+    removeEventListener(type) { events.delete(type); },
+  };
+  globalThis.chrome = { runtime: { id: 'test-extension' } };
+  let unmounted = 0;
+  const dispose = watchExtensionContext(() => unmounted++);
+  try {
+    events.get('resize')();
+    assert.equal(unmounted, 0);
+    delete chrome.runtime.id;
+    events.get('mouseover')();
+    assert.equal(unmounted, 1);
+    assert.equal(events.size, 0);
+    dispose();
+    assert.equal(unmounted, 1);
+  } finally { dispose(); globalThis.window = oldWindow; globalThis.chrome = oldChrome; }
+});
 
 // 确认卡片：真实组件 + 真实 React 服务端渲染，取真实 DOM class 契约
 const cardBundle = await build({

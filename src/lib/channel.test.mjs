@@ -149,3 +149,34 @@ await test('运行时单向消息与内容脚本重注册不会泄漏 Promise re
     assert.equal(logs.length, 1, '业务消息失败仍有诊断，卸载时重注册失败允许忽略');
   } finally { chrome.runtime.sendMessage = send; console.error = log; }
 });
+
+await test('回调式消息消费 lastError 并完成调用方，定向消息保留 frameId', () => {
+  const runtimeSend = chrome.runtime.sendMessage, tabSend = chrome.tabs.sendMessage;
+  const responses = [], errors = [], optionsSeen = [];
+  let reads = 0;
+  Object.defineProperty(chrome.runtime, 'lastError', { configurable: true, get() { reads++; return { message: 'port closed' }; } });
+  chrome.runtime.sendMessage = (_msg, cb) => cb('invalid response');
+  chrome.tabs.sendMessage = (_id, _msg, options, cb) => { optionsSeen.push(options); cb('invalid response'); };
+  try {
+    Channel.send('test', {}, r => responses.push(r));
+    Channel.sendToTab(8, 'test', {}, r => responses.push(r), 0, e => errors.push(e.message));
+    assert.equal(reads, 2);
+    assert.deepEqual(responses, [undefined, undefined]);
+    assert.deepEqual(errors, ['port closed']);
+    assert.deepEqual(optionsSeen, [{ frameId: 0 }]);
+  } finally {
+    chrome.runtime.sendMessage = runtimeSend; chrome.tabs.sendMessage = tabSend;
+    Object.defineProperty(chrome.runtime, 'lastError', { configurable: true, writable: true, value: undefined });
+  }
+});
+
+await test('上下文已失效导致同步抛错时仍结束调用方回调', () => {
+  const send = chrome.runtime.sendMessage, log = console.error;
+  const responses = [];
+  chrome.runtime.sendMessage = () => { throw Error('Extension context invalidated.'); };
+  console.error = () => {};
+  try {
+    Channel.send('test', {}, r => responses.push(r));
+    assert.deepEqual(responses, [undefined]);
+  } finally { chrome.runtime.sendMessage = send; console.error = log; }
+});

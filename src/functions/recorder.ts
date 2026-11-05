@@ -102,7 +102,7 @@ export const recorderFunction: FunctionDefinition = {
                     if (state?.active && context?.tabId && state.tabId !== context.tabId) {
                         return fail(`录制属于标签页 ${state.tabId}，当前上下文无权停止`);
                     }
-                    const result = recorderStop();
+                    const result = await recorderStop();
                     if (!result.success) return fail(result.error || '停止录制失败');
                     const steps = (result as { steps?: unknown[] }).steps || [];
                     return ok({

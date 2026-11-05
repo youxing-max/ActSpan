@@ -49,6 +49,7 @@ export interface RecorderState {
 
 /** 当前录制状态（内存中） */
 let recorderState: RecorderState | null = null;
+let recorderStopPending: Promise<{ success: boolean; steps?: RecorderStep[]; error?: string }> | null = null;
 
 /** 导航监听器引用，用于注销 */
 let recorderNavListener: ((details: chrome.webNavigation.WebNavigationFramedCallbackDetails) => void) | null = null;
@@ -187,6 +188,7 @@ export const recorderStart = (tabId: number | undefined, url: string) => {
     if (!tabId) {
         return { success: false, error: '缺少 tabId' };
     }
+    if (recorderState?.active) return { success: false, error: '已有进行中的录制，请先停止或取消' };
 
     recorderState = {
         active: true,
@@ -214,20 +216,32 @@ Channel.on('__recorder_start', (data, sender, sendResponse) => {
 });
 
 /** 停止录制并返回步骤（导出供 recorder 工具与 Channel 处理器共用） */
-export const recorderStop = () => {
+export const recorderStop = async () => {
+    if (recorderStopPending) return recorderStopPending;
     if (!recorderState) {
         return { success: false, error: '当前没有进行中的录制' };
     }
-
-    const tabId = recorderState.tabId;
-    recorderState.active = false;
-    void saveRecorderState();
-    unregisterRecorderNavListener();
-    // 通知目标页 content 停止事件采集
-    Channel.sendToTab(tabId, '__recorder_end', {});
-
-    console.log(`[Actspan] 工作流录制已停止, 共 ${recorderState.steps.length} 步`);
-    return { success: true, steps: recorderState.steps };
+    const state = recorderState;
+    if (!state.active) return { success: true, steps: state.steps };
+    const pending = (async () => {
+        const response = await new Promise<{ success?: boolean; step?: unknown } | undefined>((resolve) => {
+            const timer = setTimeout(() => resolve(undefined), 2000);
+            Channel.sendToTab(state.tabId, '__recorder_end', { flush: true }, (result) => {
+                clearTimeout(timer);
+                resolve(result as { success?: boolean; step?: unknown } | undefined);
+            }, 0);
+        });
+        if (recorderState !== state) return { success: false, error: '录制已取消或已被替换' };
+        if (!response?.success) return { success: false, error: '录制页面未确认停止，请重试或取消录制' };
+        if (response.step) appendRecorderStep(response.step);
+        state.active = false;
+        unregisterRecorderNavListener();
+        await saveRecorderState();
+        console.log(`[Actspan] 工作流录制已停止, 共 ${state.steps.length} 步`);
+        return { success: true, steps: state.steps };
+    })().finally(() => { if (recorderStopPending === pending) recorderStopPending = null; });
+    recorderStopPending = pending;
+    return pending;
 };
 
 /** 停止录制 */
@@ -240,13 +254,15 @@ Channel.on('__recorder_stop', (_data, sender, sendResponse) => {
         sendResponse?.({ success: false, error: '当前 Tab 没有录制权限' });
         return true;
     }
-    sendResponse?.(recorderStop());
+    void recorderStop().then(sendResponse).catch((error: unknown) => {
+        sendResponse?.({ success: false, error: error instanceof Error ? error.message : '停止录制失败' });
+    });
     return true;
 });
 
 /** 接收录制步骤 + 异步截图 */
-Channel.on('__recorder_step', (data, sender) => {
-    if (!recorderState?.active || !isRecorderOwner(sender) || !data) return;
+const appendRecorderStep = (data: any) => {
+    if (!recorderState?.active || !data) return;
 
     const rawStep = {
         seq: data.seq ?? (recorderState.steps.length + 1),
@@ -273,6 +289,10 @@ Channel.on('__recorder_step', (data, sender) => {
     // 串行队列截图（不阻塞消息处理）
     const tabId = recorderState.tabId;
     screenshotQueue = screenshotQueue.then(() => captureStepScreenshot(step, tabId));
+};
+
+Channel.on('__recorder_step', (data, sender) => {
+    if (isRecorderOwner(sender)) appendRecorderStep(data);
 });
 
 /** 查询当前录制状态（导出供 recorder 工具与 Channel 处理器共用） */
@@ -301,6 +321,7 @@ export const recorderCancel = () => {
     const tabId = recorderState?.tabId;
     auditCancelled = true;
     recorderState = null;
+    recorderStopPending = null;
     void saveRecorderState();
     unregisterRecorderNavListener();
     if (tabId) Channel.sendToTab(tabId, '__recorder_end', {});

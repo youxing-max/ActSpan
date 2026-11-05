@@ -85,7 +85,10 @@ class Channel {
         const msg = { type, data };
         try {
             if (callback) {
-                chrome.runtime.sendMessage(msg, callback);
+                chrome.runtime.sendMessage(msg, (response) => {
+                    const error = chrome.runtime.lastError;
+                    callback(error ? undefined : response);
+                });
             } else {
                 void Promise.resolve(chrome.runtime.sendMessage(msg)).catch(error => {
                     console.error('[Channel] 发送消息失败:', error);
@@ -93,6 +96,7 @@ class Channel {
             }
         } catch (error) {
             console.error('[Channel] 发送消息失败:', error);
+            callback?.(undefined);
         }
     }
 
@@ -101,14 +105,20 @@ class Channel {
         if (!chrome.tabs) {
             console.error('[Channel] chrome.tabs API 不可用');
             onError?.(new Error('chrome.tabs API 不可用'));
+            callback?.(undefined);
             return;
         }
         const msg = { type, data };
         const options = typeof frameId === 'number' ? { frameId } : undefined;
         try {
             if (callback) {
-                if (options) chrome.tabs.sendMessage(tabId, msg, options, callback);
-                else chrome.tabs.sendMessage(tabId, msg, callback);
+                const respond = (response: unknown) => {
+                    const error = chrome.runtime.lastError;
+                    if (error) onError?.(new Error(error.message));
+                    callback(error ? undefined : response);
+                };
+                if (options) chrome.tabs.sendMessage(tabId, msg, options, respond);
+                else chrome.tabs.sendMessage(tabId, msg, respond);
             } else {
                 const pending = options ? chrome.tabs.sendMessage(tabId, msg, options) : chrome.tabs.sendMessage(tabId, msg);
                 void Promise.resolve(pending).catch(error => {
@@ -119,6 +129,7 @@ class Channel {
         } catch (error) {
             console.error(`[Channel] 发送消息到 tab ${tabId} 失败:`, error);
             onError?.(error);
+            callback?.(undefined);
         }
     }
 

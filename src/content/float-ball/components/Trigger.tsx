@@ -117,7 +117,7 @@ export const Trigger: React.FC<{ onRecordClick: () => void; statusText?: string 
   const { side, currentY, savePosition, getTriggerX } = usePosition();
   const [isHovering, setIsHovering] = useState(false);
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const logoUrl = chrome.runtime.getURL('actspan-logo.svg');
+  const [logoUrl] = useState(() => chrome.runtime.getURL('actspan-logo.svg'));
   const currentHostname = window.location.hostname;
 
   // 拖拽
