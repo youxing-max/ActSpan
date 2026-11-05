@@ -20,6 +20,7 @@ function createPort() {
 
 globalThis.chrome = {
   runtime: {
+    id: 'test-extension',
     onMessage: { addListener(listener) { onMessage = listener; } },
     onConnect: { addListener() {} },
     sendMessage() {},
@@ -179,4 +180,39 @@ await test('上下文已失效导致同步抛错时仍结束调用方回调', ()
     Channel.send('test', {}, r => responses.push(r));
     assert.deepEqual(responses, [undefined]);
   } finally { chrome.runtime.sendMessage = send; console.error = log; }
+});
+
+await test('上下文失效后消息不再调用 runtime API，回调仅结束一次且不报预期失效错误', () => {
+  const send = chrome.runtime.sendMessage, log = console.error, id = chrome.runtime.id;
+  const responses = [], logs = [];
+  let sends = 0;
+  chrome.runtime.sendMessage = () => { sends++; throw Error('Extension context invalidated.'); };
+  console.error = (...args) => logs.push(args);
+  delete chrome.runtime.id;
+  try {
+    Channel.send('__recorder_state', {}, response => responses.push(response));
+    Channel.send('__recorder_step', {});
+    assert.equal(sends, 0);
+    assert.deepEqual(responses, [undefined]);
+    assert.deepEqual(logs, []);
+  } finally { chrome.runtime.id = id; chrome.runtime.sendMessage = send; console.error = log; }
+});
+
+await test('发送后上下文失效时不把旧响应交给调用方，失败回调不会重复执行', () => {
+  const send = chrome.runtime.sendMessage, log = console.error, id = chrome.runtime.id;
+  let respond, calls = 0;
+  const responses = [], logs = [];
+  chrome.runtime.sendMessage = (_msg, cb) => { respond = cb; };
+  console.error = (...args) => logs.push(args);
+  try {
+    Channel.send('delayed', {}, response => responses.push(response));
+    delete chrome.runtime.id;
+    respond({ stale: true });
+    assert.deepEqual(responses, [undefined]);
+    chrome.runtime.id = id;
+    chrome.runtime.sendMessage = (_msg, cb) => cb({ success: true });
+    Channel.send('callback-error', {}, () => { calls++; throw Error('callback failed'); });
+    assert.equal(calls, 1);
+    assert.equal(logs.length, 1, '有效上下文的真实错误仍可诊断');
+  } finally { chrome.runtime.id = id; chrome.runtime.sendMessage = send; console.error = log; }
 });

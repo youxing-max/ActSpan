@@ -66,6 +66,23 @@ test('fetch validates savePath and binary compatibility before calling the bridg
     assert.deepEqual(calls, []);
 });
 
+test('binary save releases the transfer when the initial file write fails', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'actspan-binary-write-'));
+    const savePath = join(directory, 'absent', 'payload.bin');
+    const calls = [];
+    const handlers = setup(async (method, args) => {
+        calls.push({ method, args });
+        if (method === 'data.fetch') return { transferId: 'write-failure', bytes: 1 };
+        if (method === 'data.fetch_release') throw new Error('cleanup also failed');
+        throw new Error(`Unexpected bridge call: ${method}`);
+    });
+    try {
+        await assert.rejects(handlers.get('actspan_data_fetch')({ url: 'https://cdn.test/file', binary: true, savePath }), { code: 'ENOENT' });
+        assert.deepEqual(calls.map(call => call.method), ['data.fetch', 'data.fetch_release']);
+        assert.equal(calls[1].args.transferId, 'write-failure');
+    } finally { await rmdir(directory); }
+});
+
 test('pagination validates savePath before calling the bridge', async () => {
     const calls = [];
     const handlers = setup(async method => { calls.push(method); return { ok: false, status: 503 }; });

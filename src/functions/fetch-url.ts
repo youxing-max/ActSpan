@@ -24,8 +24,8 @@ const encodeBase64 = (bytes: Uint8Array): string => {
 
 const fetchBinaryBytes = async (url: string, via: 'extension' | 'page', referer: string | undefined, signal?: AbortSignal): Promise<{ bytes: Uint8Array; contentType: string; status: number; url: string }> => {
   if (via === 'page') {
-    const result = await withHiddenTab(url, async (tabId) => {
-      await waitForTabComplete(tabId, 24_000, '页面加载超时', signal);
+    const result = await withHiddenTab(url, async (tabId, guardedSignal) => {
+      await waitForTabComplete(tabId, 24_000, '页面加载超时', guardedSignal);
       const injected = await chrome.scripting.executeScript({
         target: { tabId }, world: 'MAIN', args: [url, MAX_BINARY_BYTES],
         func: async (targetUrl: string, limit: number) => {
@@ -126,19 +126,19 @@ export const fetchUrlFunction: FunctionDefinition = {
       if (params.binary) return { success: true, data: await startBinaryTransfer(params, context as ToolExecutionContext & { taskId?: string }) };
       const requestedLength = params.max_content_length;
       const maxContentLength = requestedLength === undefined || Number.isNaN(requestedLength) ? 5000 : Math.min(Math.max(Math.floor(requestedLength), 500), 10000);
-      return await withHiddenTab(params.url, async (tabId) => {
-        await waitForTabComplete(tabId, 24_000, '页面加载超时', signal);
+      return await withHiddenTab(params.url, async (tabId, guardedSignal) => {
+        await waitForTabComplete(tabId, 24_000, '页面加载超时', guardedSignal);
         // 初始 URL 已校验，但导航可能 302 到内网；以隐藏标签页的最终地址为准再校验一次。
         let finalUrl: string | undefined;
         try { finalUrl = (await chrome.tabs.get(tabId))?.url; } catch { /* 测试桩或无 tabs.get 的环境仅依赖初始 URL 校验 */ }
         if (finalUrl && isBlockedFetchUrl(finalUrl)) {
           return { success: false, error: '页面重定向到本地/内网地址，已拒绝' };
         }
-        await waitForAnySelector(tabId, ['body', 'main', 'article', '[role="main"]'], 12_000, 280, signal);
+        await waitForAnySelector(tabId, ['body', 'main', 'article', '[role="main"]'], 12_000, 280, guardedSignal);
         const response = await sendToTabWithRetry<{ success: boolean; data?: any; error?: string }>(
           tabId, '__parse_page_content',
           { sections: params.sections, max_content_length: maxContentLength },
-          { signal, deadlineMs: 12_000, timeoutMessage: '页面内容解析超时', frameId: 0 });
+          { signal: guardedSignal, deadlineMs: 12_000, timeoutMessage: '页面内容解析超时', frameId: 0 });
         if (!response || !response.success) return { success: false, error: response?.error || '页面内容解析失败' };
         return { success: true, data: redactDataPayload(response.data, response.data?.url || params.url) };
       }, signal);

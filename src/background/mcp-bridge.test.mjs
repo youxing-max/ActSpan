@@ -5,7 +5,7 @@ import { build } from 'esbuild';
 
 const bundle = await build({
   stdin: { contents: `
-    export { filterTabsForContext, getWorkflowPlanForExecution, registerWorkflowPlanHandlers, executeBridgeRequest, dispatch, handleOffscreenRequest, wrapUntrustedPageContent, buildActionTarget, initMcpBridge } from './src/background/mcp-bridge.ts';
+    export { filterTabsForContext, getWorkflowPlanForExecution, registerWorkflowPlanHandlers, executeBridgeRequest, dispatch, handleOffscreenRequest, wrapUntrustedPageContent, buildActionTarget, initMcpBridge, waitComplete } from './src/background/mcp-bridge.ts';
     export { requestConfirmationFunction } from './src/functions/request-confirmation.ts';
     export { taskManager } from './src/background/task-manager.ts';
     export { getTaskExecutor } from './src/background/policy-executor.ts';
@@ -16,12 +16,12 @@ const bundle = await build({
   bundle: true, write: false, format: 'esm', platform: 'node',
   plugins: [{ name: 'bridge-test-exports', setup(build) {
     build.onLoad({ filter: /mcp-bridge\.ts$/ }, async ({ path }) => ({
-      contents: `${await readFile(path, 'utf8')}`, loader: 'ts',
+      contents: `${await readFile(path, 'utf8')}\nexport { waitComplete };`, loader: 'ts',
     }));
   } }],
 });
 const { filterTabsForContext, getWorkflowPlanForExecution, registerWorkflowPlanHandlers, executeBridgeRequest, dispatch, handleOffscreenRequest,
-  wrapUntrustedPageContent, buildActionTarget, initMcpBridge, requestConfirmationFunction, taskManager, tabLeaseManager, getTaskExecutor, CDPSessionManager, DATA_CAPABILITY_POLICIES } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].contents).toString('base64')}`);
+  wrapUntrustedPageContent, buildActionTarget, initMcpBridge, waitComplete, requestConfirmationFunction, taskManager, tabLeaseManager, getTaskExecutor, CDPSessionManager, DATA_CAPABILITY_POLICIES } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].contents).toString('base64')}`);
 
 test('accepts recorder-shaped plan-only workflows without structured steps', () => {
   const plan = {
@@ -430,6 +430,61 @@ test('eval names the probe that can read DOM state after V8 refuses the expressi
       },
     );
   } finally { fixture.restore(); }
+});
+
+test('waitComplete rejects a loading tab at timeout instead of returning its unresolved URL', async () => {
+  const fixture = browserFixture();
+  try {
+    for (const url of ['', 'https://shop.test/loading']) {
+      globalThis.chrome.tabs.get = async (id) => ({ id, url, status: 'loading' });
+      await assert.rejects(() => waitComplete(fixture.context.tabId, 1), /页面加载超时/);
+    }
+  } finally { fixture.restore(); }
+});
+
+test('waitComplete preserves completed navigation and cancellation', async () => {
+  const fixture = browserFixture();
+  try {
+    let reads = 0;
+    globalThis.chrome.tabs.get = async (id) => ({ id, url: 'https://shop.test/done', status: ++reads === 1 ? 'loading' : 'complete' });
+    const done = await waitComplete(fixture.context.tabId, 1000);
+    assert.equal(done.status, 'complete');
+    assert.equal(done.url, 'https://shop.test/done');
+    assert.equal(reads, 2);
+    const alreadyAborted = new AbortController();
+    alreadyAborted.abort();
+    await assert.rejects(() => waitComplete(fixture.context.tabId, 0, alreadyAborted.signal), /Bridge 请求已取消/);
+    assert.equal(reads, 2, 'an already cancelled request must not read the tab');
+    const controller = new AbortController();
+    globalThis.chrome.tabs.get = async (id) => ({ id, url: '', status: 'loading' });
+    const pending = waitComplete(fixture.context.tabId, 1000, controller.signal);
+    setImmediate(() => controller.abort());
+    await assert.rejects(() => pending, /Bridge 请求已取消/);
+  } finally { fixture.restore(); }
+});
+
+test('tab.open closes its created tab and releases ownership after load timeout or cancellation', async (t) => {
+  let now = Date.now();
+  t.mock.method(Date, 'now', () => now);
+  for (const cancelled of [false, true]) {
+    const fixture = browserFixture();
+    const tabId = fixture.context.tabId;
+    const controller = new AbortController();
+    try {
+      globalThis.chrome.tabs.get = async (id) => {
+        if (cancelled) controller.abort();
+        else now += 20001;
+        return { id, url: '', status: 'loading' };
+      };
+      await assert.rejects(
+        () => dispatch('tab.open', { url: 'about:blank' }, { ...fixture.context, tabId: undefined, owner: 'ide-agent', signal: controller.signal }),
+        cancelled ? /Bridge 请求已取消/ : /页面加载超时/,
+      );
+      assert.deepEqual(fixture.effects.removed, [tabId]);
+      assert.equal(taskManager.get(fixture.context.taskId).ownedTabIds.includes(tabId), false);
+      assert.ok(tabLeaseManager.get(tabId)?.releasedAt);
+    } finally { fixture.restore(); }
+  }
 });
 
 test('tab.open waits for created tab and returns its resolved data', async () => {

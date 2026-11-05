@@ -117,7 +117,7 @@ export const Trigger: React.FC<{ onRecordClick: () => void; statusText?: string 
   const { side, currentY, savePosition, getTriggerX } = usePosition();
   const [isHovering, setIsHovering] = useState(false);
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [logoUrl] = useState(() => chrome.runtime.getURL('actspan-logo.svg'));
+  const [logoUrl] = useState(() => chrome.runtime?.id ? chrome.runtime.getURL('actspan-logo.svg') : '');
   const currentHostname = window.location.hostname;
 
   // 拖拽
@@ -226,7 +226,7 @@ export const Trigger: React.FC<{ onRecordClick: () => void; statusText?: string 
     // 通过 Channel 发送，但 Channel 的导入在 hooks 里，这里直接 import
     import('../../../lib/channel').then(({ default: Channel }) => {
       Channel.send('__open_options_page', {}, (response?: { success?: boolean }) => {
-        if (response?.success) return;
+        if (response?.success || !chrome.runtime?.id) return;
         window.open(chrome.runtime.getURL('options.html'), '_blank');
       });
     });

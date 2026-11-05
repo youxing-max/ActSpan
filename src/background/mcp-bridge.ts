@@ -785,6 +785,7 @@ async function waitComplete(tabId: number, timeoutMs = 20000, signal?: AbortSign
         tab = await chrome.tabs.get(tabId);
         assertSignalActive(signal);
     }
+    if (tab.status !== 'complete') throw new Error(`页面加载超时（${timeoutMs}ms）`);
     return tab;
 }
 

@@ -285,7 +285,7 @@ export const InputBar: React.FC<InputBarProps> = ({ resultRef: _resultRef }) => 
   })();
 
   const canResume = task?.status === 'error' && task.hasContext === true && !!task.failureCode;
-  const [logoUrl] = useState(() => chrome.runtime.getURL('actspan-logo.svg'));
+  const [logoUrl] = useState(() => chrome.runtime?.id ? chrome.runtime.getURL('actspan-logo.svg') : '');
 
   return (
     <div className="actspan-input-row">

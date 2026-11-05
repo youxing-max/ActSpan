@@ -51,14 +51,18 @@ export const watchExtensionContext = (onInvalidated: () => void) => {
     for (const event of events) window.removeEventListener(event, check, true);
   };
   const check = () => {
-    if (chrome.runtime?.id) return;
+    if (disposed || chrome.runtime?.id) return;
     dispose();
     onInvalidated();
   };
   const timer = setInterval(check, 1000);
   for (const event of events) window.addEventListener(event, check, true);
+  check();
   return dispose;
 };
+
+// createRoot 的首次渲染可晚于初始化，必须在 React 真正进入组件时再次检查。
+const LiveActspanRoot = () => chrome.runtime?.id ? <ActspanRoot /> : null;
 
 export const initFloatBallReact = async () => {
   if (!document.body) return;
@@ -120,7 +124,6 @@ export const initFloatBallReact = async () => {
 
   // React 挂载
   const root = ReactDOM.createRoot(reactRoot);
-  root.render(<ActspanRoot />);
 
   // 截图时隐藏/恢复悬浮球（React 版补充，旧版 float-ball.ts 中有对应逻辑）
   const onScreenshotHide = (_data: unknown, _sender: unknown, sendResponse?: (resp: unknown) => void) => {
@@ -164,7 +167,11 @@ export const initFloatBallReact = async () => {
     document.removeEventListener('mousedown', onMouseDown);
     Channel.off('__screenshot_hide', onScreenshotHide);
     Channel.off('__screenshot_show', onScreenshotShow);
-    root.unmount();
-    host.remove();
+    try {
+      root.unmount();
+    } finally {
+      host.remove();
+    }
   });
+  if (!userDismissed) root.render(<LiveActspanRoot />);
 };

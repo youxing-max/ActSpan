@@ -25,8 +25,8 @@ const writePage = async (savePath, value, first) => {
 };
 const writeBinaryChunks = async (savePath, transfer, callBridge, task) => {
     const target = safePath(savePath);
-    await writeFile(target, '');
     try {
+        await writeFile(target, '');
         for (let offset = 0; offset < transfer.bytes; offset += 65536) {
             const chunk = await callBridge('data.fetch_chunk', { transferId: transfer.transferId, offset, length: 65536 }, 30000, task);
             if (!chunk?.base64 || chunk.offset !== offset) throw new Error('Invalid binary transfer chunk');

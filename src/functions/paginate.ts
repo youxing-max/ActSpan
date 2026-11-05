@@ -16,6 +16,11 @@ const pathValue = (value: any, path?: string): unknown => {
   if (!path) return undefined;
   return path.split('.').filter(Boolean).reduce((current, key) => current == null ? undefined : current[key], value);
 };
+const observedPageSize = (data: unknown): number | undefined => {
+  const rows = Array.isArray(data) ? data : pathValue(data, 'items');
+  return [pathValue(data, 'page.ps'), pathValue(data, 'page.pageSize'), pathValue(data, 'page.size'), pathValue(data, 'ps'), pathValue(data, 'page_size'), Array.isArray(rows) ? rows.length : undefined]
+    .find((value): value is number => typeof value === 'number');
+};
 const withQuery = (url: string, params: Record<string, unknown>): string => {
   const next = new URL(url);
   for (const [key, value] of Object.entries(params)) {
@@ -89,7 +94,7 @@ export const paginateFunction: FunctionDefinition = {
         const signature = canonical(data);
         if (previous && signature === previous) { stopReason = 'identical_response'; break; }
         previous = signature;
-        const observedSize = [pathValue(data, 'page.ps'), pathValue(data, 'page.pageSize'), pathValue(data, 'page.size'), pathValue(data, 'ps'), pathValue(data, 'page_size'), Array.isArray(data) ? data.length : pathValue(data, 'items') && Array.isArray(pathValue(data, 'items')) ? (pathValue(data, 'items') as unknown[]).length : undefined].find((value) => typeof value === 'number') as number | undefined;
+        const observedSize = observedPageSize(data);
         pages.push({ page: index + 1, status: response.status, data: redactDataPayload(data, pageUrl), requested: redactSensitive(requested), ...(observedSize === undefined ? {} : { actual_page_size: observedSize }) });
         if (params.cursorParam) {
           const next = pathValue(data, params.cursorPath);
@@ -131,7 +136,7 @@ export const fetchPaginatedPage = async (params: any, context?: ToolExecutionCon
     if (new TextEncoder().encode(text).byteLength > 64 * 1024) return { success: false, error: 'PAGE_TOO_LARGE' };
     let data: unknown; try { data = text ? JSON.parse(text) : null; } catch { data = text; }
     const nextCursor = params.cursorParam ? pathValue(data, params.cursorPath) : undefined;
-    const observedSize = [pathValue(data, 'page.ps'), pathValue(data, 'page.pageSize'), pathValue(data, 'page.size'), Array.isArray(data) ? data.length : undefined].find((value) => typeof value === 'number');
+    const observedSize = observedPageSize(data);
     return { success: true, data: { ok: true, status: response.status, data: redactDataPayload(data, pageUrl), nextCursor, actual_page_size: observedSize } };
   } catch (err: any) { return { success: false, error: err?.message || '分页请求失败' }; }
 };

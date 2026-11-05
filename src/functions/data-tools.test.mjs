@@ -11,8 +11,9 @@ globalThis.chrome = {
   bookmarks: { getTree: async () => tree, search: async () => bookmarks, getRecent: async (count) => bookmarks.slice(0, count) },
   downloads: { download: async (options) => { downloads.push(options); return downloads.length; } },
   debugger: {
-    onEvent: { addListener: (fn) => listeners.add(fn) }, onDetach: { addListener: () => {} },
-    attach: async () => {}, sendCommand: async (_target, method, params) => {
+    onEvent: { addListener: (fn) => listeners.add(fn), removeListener: (fn) => listeners.delete(fn) },
+    onDetach: { addListener: () => {}, removeListener: () => {} },
+    attach: async () => {}, detach: async () => {}, sendCommand: async (_target, method, params) => {
       commands.push({ method, params });
       if (method === 'Network.getResponseBody') return { body: Buffer.from([0, 255, 128]).toString('base64'), base64Encoded: true };
       return {};
@@ -189,8 +190,12 @@ test('fetch clamps size and always removes hidden tab on completion or timeout',
   let maxLength;
   const removed = [];
   let complete = true;
+  let tabUrl;
   chrome.tabs = {
-    create: async () => ({ id: 77 }), remove: async (id) => removed.push(id),
+    create: async (options) => { assert.equal(options.url, 'about:blank'); tabUrl = options.url; return { id: 77 }; },
+    update: async (_id, options) => { tabUrl = options.url; },
+    get: (_id, callback) => { const tab = { id: 77, url: tabUrl, status: complete ? 'complete' : 'loading' }; callback?.(tab); return Promise.resolve(tab); },
+    remove: async (id) => removed.push(id),
     onUpdated: { addListener: (fn) => { listener = fn; if (complete) queueMicrotask(() => fn(77, { status: 'complete' })); }, removeListener: () => {} },
     sendMessage: (_id, message, options, callback) => { const done = typeof options === 'function' ? options : callback; maxLength = message.data.max_content_length; done({ success: true, data: { title: 'ok' } }); },
   };
@@ -388,6 +393,31 @@ test('pagination preserves explicit initial pages including zero across both ext
   } finally { globalThis.fetch = originalFetch; }
 });
 
+test('pagination reports the same observed page size in full and single-page paths', async () => {
+  const originalFetch = globalThis.fetch;
+  const cases = [
+    [{ items: [{ id: 1 }, { id: 2 }] }, 2],
+    [{ items: [] }, 0],
+    [{ ps: 7, items: [{ id: 1 }] }, 7],
+    [{ page_size: 8, items: [{ id: 1 }] }, 8],
+    [{ page: { ps: 9 }, ps: 7, items: [{ id: 1 }] }, 9],
+    [[{ id: 1 }, { id: 2 }], 2],
+    [{ message: 'no size metadata' }, undefined],
+  ];
+  try {
+    for (const [payload, size] of cases) {
+      globalThis.fetch = async () => new Response(JSON.stringify(payload), { status: 200 });
+      const params = { url: 'https://api.test/items', param: 'page', maxPages: 1 };
+      const full = await paginateFunction.execute(params);
+      const single = await fetchPaginatedPage(params);
+      assert.equal(full.success, true);
+      assert.equal(single.success, true);
+      assert.equal(full.data.pages[0].actual_page_size, size);
+      assert.equal(single.data.actual_page_size, size, JSON.stringify(payload));
+    }
+  } finally { globalThis.fetch = originalFetch; }
+});
+
 test('lazy image extraction prefers data-src over transparent src', async () => {
   const original = chrome.scripting;
   let injected;
@@ -426,9 +456,13 @@ test('fetch masks content when the final URL is a credential page but keeps ordi
   const originalScripting = chrome.scripting;
   const originalRuntime = chrome.runtime;
   let payload;
+  let tabUrl;
   const sentFrames = [];
   chrome.tabs = {
-    create: async () => ({ id: 91 }), remove: async () => {},
+    create: async (options) => { assert.equal(options.url, 'about:blank'); tabUrl = options.url; return { id: 91 }; },
+    update: async (_id, options) => { tabUrl = options.url; },
+    get: (_id, callback) => { const tab = { id: 91, url: tabUrl, status: 'complete' }; callback?.(tab); return Promise.resolve(tab); },
+    remove: async () => {},
     onUpdated: { addListener: (fn) => queueMicrotask(() => fn(91, { status: 'complete' })), removeListener: () => {} },
     sendMessage: (_id, _message, options, callback) => {
       const done = typeof options === 'function' ? options : callback;
@@ -489,9 +523,12 @@ for (const via of ['extension', 'page']) {
     const originalTabs = chrome.tabs;
     const originalScripting = chrome.scripting;
     const removed = [];
+    let tabUrl;
     chrome.tabs = {
-      create: async () => ({ id: 92 }), remove: async id => removed.push(id),
-      get: (_id, callback) => callback?.({ status: 'complete' }),
+      create: async (options) => { assert.equal(options.url, 'about:blank'); tabUrl = options.url; return { id: 92 }; },
+      update: async (_id, options) => { tabUrl = options.url; },
+      remove: async id => removed.push(id),
+      get: (_id, callback) => { const tab = { id: 92, url: tabUrl, status: 'complete' }; callback?.(tab); return Promise.resolve(tab); },
       onUpdated: { addListener: () => {}, removeListener: () => {} },
     };
     // Execute the injected function from its serialized source, like Chrome (no extension closures).

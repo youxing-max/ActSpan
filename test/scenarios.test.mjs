@@ -1,17 +1,18 @@
 import assert from 'node:assert/strict';
 import { connect as openSocket } from 'node:net';
+import { resolve } from 'node:path';
 import { after, before, test } from 'node:test';
+import { pathToFileURL } from 'node:url';
 import { DEFAULT_BRIDGE_URL, TOOL_NAMES } from '../mcp-server/catalog.js';
 import { extensionIdFromKey } from '../mcp-server/install.js';
-// 只从靶场拿本地 HTTP 服务器与 MCP 客户端；本套件不连 Chrome DevTools。
-// DevTools HTTP 端点（/json/version、/json/list）在很多 Chrome 上返回 404，
-// 直接连接 /devtools/browser WebSocket 又需要人手确认与端口可达，两种情况都会让
-// 「被测行为」与「环境能力」缠在一起。这里改为只用扩展自报的能力观察页面。
+// 默认只读本地夹具；显式 live 可通过调用方已有 Options 页安装完整 HTML。
+// 安装器在被测 MCP 动作开始前释放 debugger，不创建浏览器或修改产品单例。
 import {
   createMcpHarness,
   delay,
   startFixtureHost,
 } from './browser-fixtures.mjs';
+import { installPublicFixture, publicFixtureUrl, removeFixtureDownload, PUBLIC_JSON_URL, PUBLIC_PAGE_URL } from './helpers/public-fixtures.mjs';
 
 const TOOLS = TOOL_NAMES;
 const LIVE_ENABLED = process.env.ACTSPAN_LIVE === '1';
@@ -22,6 +23,9 @@ let tabId;
 let pageUrl;
 let hostError;
 let harnessError;
+let fixtureEvaluate;
+let fixturePreviousTab;
+const fixtureRunId = `scenarios-${Date.now()}`;
 
 function ready() {
   assert.ok(mcp && Number.isInteger(tabId) && pageUrl, 'Acceptance harness did not initialize');
@@ -47,7 +51,25 @@ async function pageSnapshot(queryOrLimit, options = {}) {
   else if (typeof queryOrLimit === 'number') params.limit = queryOrLimit;
   return mcp.call('actspan_page_snapshot', params);
 }
-async function navigate(name) { ready(); pageUrl = host.url(name); await mcp.call('actspan_tab_navigate', { tabId, url: pageUrl }); return pageUrl; }
+async function navigate(name, { reuse = false } = {}) {
+  ready();
+  if (fixtureEvaluate) {
+    // 每个场景使用新的自有页，上一场景的持续 Network 监听不会阻碍安装器交接。
+    if (!reuse) {
+      await mcp.call('actspan_tab_close', { tabId });
+      tabId = undefined;
+      const opened = await mcp.call('actspan_tab_open', { url: 'about:blank', focus: true });
+      if (!Number.isInteger(opened?.tabId)) throw new Error('Public fixture tab did not return an id');
+      tabId = opened.tabId;
+    }
+    const installed = await installPublicFixture({ evaluate: fixtureEvaluate, tabId, name, runId: fixtureRunId });
+    pageUrl = installed.url;
+  } else {
+    pageUrl = host.url(name);
+    await mcp.call('actspan_tab_navigate', { tabId, url: pageUrl });
+  }
+  return pageUrl;
+}
 
 const BRIDGE_URL = process.env.ACTSPAN_BRIDGE_URL || DEFAULT_BRIDGE_URL;
 
@@ -82,7 +104,8 @@ async function waitFor(probe, timeoutMs = 5000) {
 
 /**
  * 默认测试只跳过未显式启用的真机场景；显式启用后，初始化或工具失败必须报错。
- * 当前本机 fixture 导航仍被 SSRF 策略拒绝：保留真实失败，不关闭守卫换取通过。
+ * ACTSPAN_FIXTURE_CONNECTOR 指向 export evaluate 的本地模块；未配置时本机导航仍
+ * 被 SSRF 策略拒绝，保留真实失败，不关闭守卫换取通过。
  */
 function scenario(name, body, { harness = true } = {}) {
   test(name, async (t) => {
@@ -111,11 +134,20 @@ before(async () => {
     if (!process.env.ACTSPAN_EXTENSION_IDS && !process.env.ACTSPAN_EXTENSION_ID) {
       process.env.ACTSPAN_EXTENSION_IDS = extensionIdFromKey();
     }
+    if (process.env.ACTSPAN_FIXTURE_CONNECTOR) {
+      const source = process.env.ACTSPAN_FIXTURE_CONNECTOR;
+      const connector = await import(source.startsWith('file:') ? source : pathToFileURL(resolve(source)).href);
+      if (typeof connector.evaluate !== 'function') throw new Error('ACTSPAN_FIXTURE_CONNECTOR must export evaluate(expression) for an existing extension Options page');
+      fixtureEvaluate = connector.evaluate;
+      fixturePreviousTab = await fixtureEvaluate('chrome.tabs.query({ active: true, currentWindow: true }).then(tabs => tabs[0]?.id)');
+    }
     mcp = await createMcpHarness();
-    pageUrl = host.url('playground.html');
-    const opened = await mcp.call('actspan_tab_open', { url: pageUrl, focus: false });
+    pageUrl = fixtureEvaluate ? 'about:blank' : host.url('playground.html');
+    // 真实夹具安装使用前台页，避免后台渲染调度拖住加载；产品动作仍走公开 MCP。
+    const opened = await mcp.call('actspan_tab_open', { url: pageUrl, focus: Boolean(fixtureEvaluate) });
     tabId = opened?.tabId;
     if (!Number.isInteger(tabId)) throw new Error(`actspan_tab_open returned no tabId: ${JSON.stringify(opened)}`);
+    if (fixtureEvaluate) await navigate('playground.html', { reuse: true });
     // 页面就绪以实际正文为准，不把工具返回成功当作加载完成。
     const loaded = await waitFor(async () => {
       const content = String((await mcp.call('actspan_page_read', { tabId, format: 'text' })).content || '');
@@ -128,10 +160,17 @@ before(async () => {
 });
 
 after(async () => {
+  const restoreFocus = fixtureEvaluate && Number.isInteger(fixturePreviousTab) && Number.isInteger(tabId)
+    ? await fixtureEvaluate(`chrome.tabs.query({ active: true, currentWindow: true }).then(tabs => tabs[0]?.id === ${tabId})`)
+    : false;
   try {
     if (mcp && Number.isInteger(tabId)) await mcp.call('actspan_tab_close', { tabId });
   } finally {
-    try { if (mcp) await mcp.close(); }
+    try {
+      try {
+        if (restoreFocus) await fixtureEvaluate(`chrome.tabs.get(${fixturePreviousTab}).then(tab => chrome.tabs.update(tab.id, { active: true }), () => undefined)`);
+      } finally { if (mcp) await mcp.close(); }
+    }
     finally { if (host) await host.close(); }
   }
 });
@@ -158,16 +197,18 @@ scenario('S5: page_read proves the live playground and cross-origin iframe are l
   assert.match(page.content, /id="event-log"/);
   assert.match(page.content, /id="shadow-host"/);
   assert.match(page.content, /id="fixture-frame"/);
-  // 靶场把 iframe 指到同一端口上的另一个主机名（跨源由页面自己造成），读回 DOM 就能看到。
+  // 本地模式切换 hostname；公开模式由完整 HTML 指向另一公开 origin。
   const frameSrc = /<iframe[^>]*\bid="fixture-frame"[^>]*\bsrc="([^"]+)"/.exec(page.content)?.[1];
   assert.ok(frameSrc, 'the fixture iframe must expose its src in the live DOM');
-  assert.equal(new URL(frameSrc).hostname, '127.0.0.1');
+  const expectedFrameUrl = fixtureEvaluate ? publicFixtureUrl('frame-inner.html', fixtureRunId) : host.url('frame-inner.html', '127.0.0.1');
+  assert.equal(frameSrc, expectedFrameUrl);
+  assert.notEqual(new URL(frameSrc).origin, new URL(pageUrl).origin);
   // 帧归属由产品自报的 frames 清单证明：跨源 iframe 必须以非主帧的 frame_id 出现在实时帧树里。
   const snapshot = await pageSnapshot(1, { include_frames: true });
   const child = (snapshot.frames || []).find((frame) => String(frame.url || '').endsWith('/frame-inner.html'));
   assert.ok(child, `cross-origin iframe must be present in the live frame tree; got ${JSON.stringify(snapshot.frames)}`);
   assert.notEqual(child.frame_id, 0, 'the child frame must not be reported as the main frame');
-  assert.equal(new URL(child.url).hostname, '127.0.0.1');
+  assert.equal(child.url, expectedFrameUrl);
 });
 
 scenario('S5/G1/G2: real click produces complete event sequence and SVG effect evidence', async () => {
@@ -223,7 +264,7 @@ scenario('S5/G4: open shadow DOM descendants are snapshotted and actionable thro
   await navigate('playground.html');
   const snapshot = await pageSnapshot('Shadow action');
   const action = snapshot.elements.find((element) => String(element.text || '') === 'Shadow action');
-  assert.ok(action, `snapshot must include open shadow root descendants; got ${JSON.stringify(snapshot.elements)}`);
+  assert.ok(action, `snapshot must include open shadow root descendants; got ${JSON.stringify(snapshot)}`);
   assert.equal(/@f\d+$/.test(String(action.element_id)), false, 'shadow descendants live in the main frame and must not carry a frame suffix');
 
   const clicked = await mcp.call('actspan_page_click', { tabId, ref: action.element_id, snapshotId: snapshot.snapshot_id });
@@ -235,7 +276,9 @@ scenario('S5/G4: open shadow DOM descendants are snapshotted and actionable thro
 scenario('S5/G5/H2: cross-origin iframe refs are frame-qualified and route to the exact frame', async () => {
   await navigate('playground.html');
   const frameSource = await pageEval('document.querySelector("#fixture-frame").src');
-  assert.equal(new URL(frameSource).hostname, '127.0.0.1');
+  const expectedFrameUrl = fixtureEvaluate ? publicFixtureUrl('frame-inner.html', fixtureRunId) : host.url('frame-inner.html', '127.0.0.1');
+  assert.equal(frameSource, expectedFrameUrl);
+  assert.notEqual(new URL(frameSource).origin, new URL(pageUrl).origin);
   const liveFrames = await pageSnapshot(1, { include_frames: true });
   const childFrame = (liveFrames.frames || []).find((frame) => String(frame.url || '').endsWith('/frame-inner.html'));
   assert.ok(childFrame, `cross-origin iframe was not present in the live frame list; got ${JSON.stringify(liveFrames.frames)}`);
@@ -245,7 +288,7 @@ scenario('S5/G5/H2: cross-origin iframe refs are frame-qualified and route to th
 
   const snapshot = await pageSnapshot('Frame action', { include_frames: true });
   const action = snapshot.elements.find((element) => String(element.text || '') === 'Frame action');
-  assert.ok(action, `snapshot must expose the child frame control; got ${JSON.stringify(snapshot.elements)}`);
+  assert.ok(action, `snapshot must expose the child frame control; got ${JSON.stringify(snapshot)}`);
   const suffix = /@f(\d+)$/.exec(String(action.element_id));
   assert.ok(suffix, `child frame ref must be frame-qualified with @fN; got ${action.element_id}`);
   const frameId = Number(suffix[1]);
@@ -264,36 +307,47 @@ scenario('S5/G5/H2: cross-origin iframe refs are frame-qualified and route to th
   assert.equal(read.content, '<page-content untrusted>\nFrame action completed\n</page-content>');
 });
 
-scenario('S5: browser read, network and data tools have fixture round trips', async () => {
-  await navigate('playground.html');
+scenario('S5: browser read, network and data tools have fixture round trips', async (t) => {
+  const readUrl = fixtureEvaluate ? PUBLIC_PAGE_URL : host.url('playground.html');
+  const expectedText = fixtureEvaluate ? /Web form/ : /Grounding playground/;
+  await mcp.call('actspan_tab_navigate', { tabId, url: readUrl });
   const tabs = await mcp.call('actspan_tabs_list');
   assert.ok(Array.isArray(tabs));
   assert.ok(tabs.some((tab) => tab.id === tabId));
   const shot = await mcp.callRaw('actspan_screenshot', { tabId });
   assert.notEqual(shot.isError, true, shot.content?.[0]?.text);
   assert.equal(shot.content?.[0]?.type, 'image');
-  const navigated = await mcp.call('actspan_tab_navigate', { tabId, url: host.url('playground.html') });
+  const navigated = await mcp.call('actspan_tab_navigate', { tabId, url: readUrl });
   assert.equal(navigated.tabId, tabId);
   const read = await mcp.call('actspan_page_read', { tabId, format: 'text', maxChars: 2000 });
-  assert.match(read.content, /Grounding playground/);
+  assert.match(read.content, expectedText);
   const snapshot = await mcp.call('actspan_page_snapshot', { tabId, limit: 10 });
   assert.ok(Array.isArray(snapshot.elements) && snapshot.elements.length > 0, JSON.stringify(snapshot));
   assert.match(String(snapshot.snapshot_id || ''), /^snap-/);
   assert.ok(snapshot.frames?.some((frame) => frame.frame_id === 0), 'the main frame must always be reported');
   const networkList = await mcp.call('actspan_network_list', { tabId, reload: true, limit: 20 });
-  const request = networkList.events.find(event => event.url === host.url('playground.html'));
+  const request = networkList.events.find(event => event.url === readUrl);
   assert.ok(request?.requestId, 'reload must capture the fixture document');
   const networkDetail = await mcp.call('actspan_network_detail', { tabId, requestId: request.requestId, includeBody: true });
   assert.equal(networkDetail.statusCode, 200);
-  assert.match(networkDetail.body, /Grounding playground/);
+  assert.match(networkDetail.body, expectedText);
   const networkQuery = await mcp.call('actspan_network_query', { tabId, urlFilter: request.url });
-  assert.match(networkQuery.body, /Grounding playground/);
-  const fetched = await mcp.call('actspan_data_fetch', { tabId, url: host.url('playground.html'), sections: ['headings', 'meta'], max_content_length: 4000 });
-  assert.match(JSON.stringify(fetched), /Grounding playground/);
-  const paginated = await mcp.call('actspan_data_paginate', { tabId, url: host.url('acceptance.json'), param: 'page', maxPages: 2 });
-  assert.equal(paginated.stop_reason, 'normal_end');
-  const downloaded = await mcp.call('actspan_data_download', { tabId, content: 'acceptance fixture', filename: 'actspan-acceptance.txt' });
-  assert.ok(downloaded && (downloaded.downloadId || downloaded.id || downloaded.filename || downloaded.success !== false));
+  assert.match(networkQuery.body, expectedText);
+  const fetched = await mcp.call('actspan_data_fetch', { tabId, url: readUrl, sections: ['headings', 'meta'], max_content_length: 4000 });
+  assert.match(JSON.stringify(fetched), expectedText);
+  // DOM 安装器不拦截后台 fetch 或隐藏标签，数据接口始终使用真实网络响应。
+  const pagination = fixtureEvaluate
+    ? { url: PUBLIC_JSON_URL, params: { _limit: 2 }, param: '_page', maxPages: 2 }
+    : { url: host.url('acceptance.json'), param: 'page', maxPages: 2 };
+  const paginated = await mcp.call('actspan_data_paginate', { tabId, ...pagination });
+  assert.equal(paginated.stop_reason, fixtureEvaluate ? 'max_pages' : 'identical_response');
+  assert.equal(paginated.page_count, fixtureEvaluate ? 2 : 1);
+  assert.equal(typeof fixtureEvaluate, 'function', 'Download acceptance requires ACTSPAN_FIXTURE_CONNECTOR to remove its own file and download record');
+  const filename = `actspan-${fixtureRunId}-acceptance.txt`;
+  const downloaded = await mcp.call('actspan_data_download', { tabId, content: 'acceptance fixture', filename });
+  assert.ok(Number.isInteger(downloaded?.download_id) && downloaded.download_id >= 0, JSON.stringify(downloaded));
+  t.after(() => removeFixtureDownload({ evaluate: fixtureEvaluate, downloadId: downloaded.download_id, filename }));
+  t.diagnostic(`acceptance download_id=${downloaded.download_id}, filename=${filename}`);
 });
 
 scenario('S5/G6/G7/G8: file role, unlabeled controls, current values and accessibility hooks remain observable', async () => {
@@ -382,6 +436,8 @@ scenario('S5/CSP and eval policy: permitted fixture handler runs, side-effect ev
   await navigate('csp.html');
   await mcp.call('actspan_page_click', { tabId, selector: '#data-csp-probe' });
   assert.equal(await pageText('#csp-result'), 'Permitted handler completed');
+  await mcp.call('actspan_page_click', { tabId, selector: '#csp-inline-blocked' });
+  assert.equal(await pageText('#csp-inline-result'), 'Inline handler blocked');
   const denied = await mcp.callRaw('actspan_page_eval', { tabId, expression: 'document.querySelector("#csp-result").textContent = "forged"' });
   assert.equal(denied.isError, true, 'eval side effect must be rejected by policy');
   assert.equal(await pageText('#csp-result'), 'Permitted handler completed');
@@ -397,23 +453,49 @@ scenario('S5/credentials: credential page output is masked and never repeats syn
 });
 
 scenario('S5/drift: direct navigation outside the Actspan task produces a warning', async () => {
-  await navigate('creds.html');
-  await pageRead();
-  // creds.html 自己用 history.replaceState 换到另一个路径：这不是 ActSpan 发起的导航，
-  // 等价于「带外导航」，漂移检测必须在下一次读取时报出来。
-  await mcp.call('actspan_page_click', { tabId, selector: '#url-credential' });
-  const page = await pageRead();
-  assert.match(page.warning || '', /漂移|drift/i);
-  await navigate('playground.html');
+  ready();
+  assert.equal(typeof fixtureEvaluate, 'function', 'drift requires the existing Options connector for out-of-band navigation');
+  // 漂移按会话只提示一次；夹具安装已消耗共享会话的提示，必须独立建立同 URL 基线。
+  const identity = { taskId: `${fixtureRunId}-drift-task`, sessionId: `${fixtureRunId}-drift-session` };
+  const baselineUrl = publicFixtureUrl('creds.html', fixtureRunId);
+  const previousTab = await fixtureEvaluate('chrome.tabs.query({ active: true, currentWindow: true }).then(tabs => tabs[0]?.id)');
+  const opened = await mcp.call('actspan_tab_open', { ...identity, url: baselineUrl, focus: true });
+  assert.ok(Number.isInteger(opened?.tabId), 'drift fixture tab did not return an id');
+  const driftTabId = opened.tabId;
+  try {
+    assert.equal(opened.url, baselineUrl, 'the task must establish its baseline at the exact fixture URL');
+    await installPublicFixture({ evaluate: fixtureEvaluate, tabId: driftTabId, name: 'creds.html', runId: fixtureRunId });
+    const read = () => mcp.call('actspan_page_read', { ...identity, tabId: driftTabId, format: 'text' });
+    assert.doesNotMatch((await read()).warning || '', /漂移|drift/i);
+    const driftUrl = new URL('account/recovery-codes', baselineUrl).href;
+    // 由测试连接器在任务外改 history，避免把 MCP 自己点击引起的导航误称为带外导航。
+    const actualUrl = await fixtureEvaluate(`chrome.scripting.executeScript({
+      target: { tabId: ${driftTabId} }, world: 'MAIN',
+      func: (url) => { history.replaceState(null, '', url); return location.href; },
+      args: [${JSON.stringify(driftUrl)}]
+    }).then(results => results[0]?.result)`);
+    assert.equal(actualUrl, driftUrl);
+    assert.match((await read()).warning || '', /漂移|drift/i);
+    assert.doesNotMatch((await read()).warning || '', /漂移|drift/i, 'the same session must not repeat its drift warning');
+  } finally {
+    const restore = await fixtureEvaluate(`chrome.tabs.query({ active: true, currentWindow: true }).then(tabs => tabs[0]?.id === ${driftTabId})`);
+    try { await mcp.call('actspan_tab_close', { ...identity, tabId: driftTabId }); }
+    finally {
+      if (restore && Number.isInteger(previousTab)) await fixtureEvaluate(`chrome.tabs.get(${previousTab}).then(tab => chrome.tabs.update(tab.id, { active: true }), () => undefined)`);
+    }
+  }
 });
 
-scenario('S5/new-tabs: local child opened by the fixture is observable and follows its opener', async () => {
+scenario('S5/new-tabs: child opened by the fixture is observable and follows its opener', async () => {
   await navigate('newtab.html');
   await mcp.call('actspan_page_click', { tabId, selector: '#data-newtab-launcher' });
   assert.equal(await pageText('#newtab-result'), 'Link launch requested');
-  const childTab = await waitFor(async () => (await mcp.call('actspan_tabs_list')).find((tab) => tab.url?.endsWith('/newtab-child.html')), 5000);
+  const childUrl = fixtureEvaluate ? publicFixtureUrl('newtab-child.html', fixtureRunId) : host.url('newtab-child.html');
+  const childTab = await waitFor(async () => (await mcp.call('actspan_tabs_list')).find((tab) => tab.url === childUrl), 5000);
   assert.ok(childTab?.id, 'the opened child tab must be tracked by the task, proving it follows its opener');
   try {
+    // 先由真实点击和任务 tabs_list 证明 child 归属，再给该 child 安装完整文档。
+    if (fixtureEvaluate) await installPublicFixture({ evaluate: fixtureEvaluate, tabId: childTab.id, name: 'newtab-child.html', runId: fixtureRunId });
     const childRead = await mcp.call('actspan_page_read', { tabId: childTab.id, format: 'text' });
     assert.match(childRead.content, /Child loaded/);
   } finally {

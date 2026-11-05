@@ -82,21 +82,32 @@ class Channel {
 
     /** 发送消息（支持回调） */
     static send(type: string, data?: any, callback?: (response: any) => void) {
+        let settled = false;
+        const respond = (response?: unknown) => {
+            if (settled) return;
+            settled = true;
+            callback?.(response);
+        };
+        // 重载后的旧 content 仍可能刷新 React effect，不再向已失效的运行时发送。
+        if (!chrome.runtime?.id) {
+            respond();
+            return;
+        }
         const msg = { type, data };
         try {
             if (callback) {
                 chrome.runtime.sendMessage(msg, (response) => {
                     const error = chrome.runtime.lastError;
-                    callback(error ? undefined : response);
+                    respond(error || !chrome.runtime?.id ? undefined : response);
                 });
             } else {
                 void Promise.resolve(chrome.runtime.sendMessage(msg)).catch(error => {
-                    console.error('[Channel] 发送消息失败:', error);
+                    if (chrome.runtime?.id) console.error('[Channel] 发送消息失败:', error);
                 });
             }
         } catch (error) {
-            console.error('[Channel] 发送消息失败:', error);
-            callback?.(undefined);
+            if (chrome.runtime?.id) console.error('[Channel] 发送消息失败:', error);
+            respond();
         }
     }
 
