@@ -158,6 +158,12 @@ export class TabLeaseManager {
       expiresAt: now + Math.max(1_000, ttlMs),
     };
     this.leases.set(tabId, lease);
+    const debuggerLease = this.debuggerLeases.get(tabId);
+    if (debuggerLease && debuggerLease.taskId !== task.taskId) {
+      // 接管空闲调试器时一并转移计时器归属，旧任务不能在新命令中途 detach。
+      this.debuggerOwners.set(tabId, task.taskId);
+      this.armDebuggerIdle(tabId, task.taskId, debuggerLease.detach);
+    }
     task.clientId = clientId;
     if (!task.ownedTabIds.includes(tabId)) task.ownedTabIds.push(tabId);
     task.activeTabId = tabId;

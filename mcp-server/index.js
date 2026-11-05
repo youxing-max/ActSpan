@@ -192,7 +192,7 @@ async function main(config) {
     }, run(({ focus = false, ...args }) => callBridge('tab.open', { ...args, active: focus === true }, 90000, args)));
 
     registerTool('actspan_tabs_select', {
-        title: 'Select active tab', description: 'Select a task-owned tab as the active browser tab.',
+        title: 'Select task tab', description: 'Select a registered tab as this task\'s default without bringing it to the foreground. Explicitly reclaims an expired lease or a tab whose prior client disconnected. A live foreign owner returns a warning without transferring ownership; unknown or closed tabs are rejected. Use the owning taskId for another task in the same session.',
         inputSchema: { ...taskParams, tabId: z.number().int().nonnegative() },
     }, run((args) => callBridge('tabs.select', args, 10000, args)));
 

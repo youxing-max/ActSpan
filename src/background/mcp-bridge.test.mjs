@@ -303,6 +303,7 @@ function browserFixture({ label = 'Continue', nearby = label, approved = true, f
       },
       async detach(target) { debuggerAttached.delete(target.tabId); },
       async sendCommand(_target, method, options) {
+      if (!debuggerAttached.has(_target.tabId)) throw Error(`Debugger is not attached to the tab with id: ${_target.tabId}.`);
       if (method === 'Emulation.setFocusEmulationEnabled') {
         effects.focusEmulated = options.enabled;
         return {};
@@ -623,6 +624,17 @@ test('an explicit real click does not block a later debugger operation on the sa
   } finally { fixture.restore(); }
 });
 
+test('the first page.eval reattaches after the browser disconnects the debugger within its idle window', async () => {
+  const fixture = browserFixture();
+  const tabId = fixture.context.tabId;
+  try {
+    assert.equal(await executeBridgeRequest('page.eval', { tabId, expression: 'document.title.length' }, fixture.context), 7);
+    await CDPSessionManager.detach(tabId);
+    // 标签页租约仍在5秒复用窗口，只有底层调试器已断开。
+    assert.equal(await executeBridgeRequest('page.eval', { tabId, expression: 'document.title.length' }, fixture.context), 7);
+  } finally { fixture.restore(); }
+});
+
 test('a plain click sends a serializable args array to the page', async () => {
   const fixture = browserFixture();
   try {
@@ -937,6 +949,81 @@ test('tabs.list distinguishes own default, own extra, and foreign tabs without l
     assert.equal(fixture.effects.prompts.length, 0);
     assert.notEqual(ownTask.activeTabId, fixture.context.tabId + 400);
   } finally { fixture.restore(); }
+});
+
+for (const reason of ['disconnected', 'expired', 'expired-after-restore']) {
+  test(`tabs.select inherits a ${reason} owner and permits the next write`, async () => {
+    const fixture = browserFixture({ field: true });
+    const tabId = fixture.context.tabId;
+    const previousOwner = taskManager.get(fixture.context.taskId);
+    const inheritor = taskManager.create({ taskId: `inheritor-${tabId}`, sessionId: `inheritor-session-${tabId}`, clientId: 'inheritor', owner: 'ide-agent' });
+    const next = { taskId: inheritor.taskId, sessionId: inheritor.sessionId, clientId: inheritor.clientId, owner: inheritor.owner, requestId: `inherit-${tabId}`, tabId };
+    try {
+      if (reason === 'disconnected') tabLeaseManager.setSessionConnected(fixture.context, false);
+      else {
+        tabLeaseManager.get(tabId).expiresAt = Date.now() - 1;
+        if (reason === 'expired-after-restore') tabLeaseManager.restore(tabLeaseManager.snapshot());
+      }
+      assert.deepEqual(await executeBridgeRequest('tabs.select', { tabId }, next), { tabId });
+      assert.equal(tabLeaseManager.get(tabId)?.taskId, inheritor.taskId);
+      assert.equal(inheritor.activeTabId, tabId);
+      assert.ok(inheritor.ownedTabIds.includes(tabId));
+      assert.equal(tabLeaseManager.listTabs(next).find(t => t.tabId === tabId).marker, '*');
+      await executeBridgeRequest('page.type', { tabId, selector: '#target', text: 'inherited' }, next);
+      assert.equal(fixture.input.value, 'inherited');
+      await assert.rejects(() => executeBridgeRequest('page.type', { tabId, selector: '#target', text: 'old owner' }, fixture.context), /不属于|未拥有/);
+      assert.equal(fixture.input.value, 'inherited');
+      await taskManager.closeOwnedTabs(previousOwner.taskId);
+      assert.deepEqual(fixture.effects.removed, []);
+    } finally { fixture.restore(); }
+  });
+}
+
+test('tabs.select restores the same task after lease expiry without opening another page', async () => {
+  const fixture = browserFixture();
+  const tabId = fixture.context.tabId;
+  try {
+    tabLeaseManager.get(tabId).expiresAt = Date.now() - 1;
+    assert.deepEqual(await executeBridgeRequest('tabs.select', { tabId }, fixture.context), { tabId });
+    assert.equal(await executeBridgeRequest('page.eval', { tabId, expression: 'document.title.length' }, fixture.context), 7);
+  } finally { fixture.restore(); }
+});
+
+test('tabs.select does not acquire a closed tab whose registry entry has not been removed yet', async () => {
+  const fixture = browserFixture();
+  const tabId = fixture.context.tabId;
+  const before = tabLeaseManager.get(tabId);
+  const task = taskManager.get(fixture.context.taskId);
+  const previousActive = task.activeTabId;
+  const previousGet = chrome.tabs.get;
+  chrome.tabs.get = async () => { throw new Error('No tab with id'); };
+  try {
+    await assert.rejects(() => executeBridgeRequest('tabs.select', { tabId }, fixture.context), /No tab/);
+    assert.equal(tabLeaseManager.get(tabId), before);
+    assert.equal(task.activeTabId, previousActive);
+  } finally { chrome.tabs.get = previousGet; fixture.restore(); }
+});
+
+test('tabs.select waits for an in-flight page operation before inheriting its disconnected owner', async () => {
+  const fixture = browserFixture();
+  const tabId = fixture.context.tabId;
+  const replacement = taskManager.create({ taskId: `queued-inheritor-${tabId}`, sessionId: `queued-session-${tabId}`, clientId: 'replacement', owner: 'ide-agent' });
+  const next = { taskId: replacement.taskId, sessionId: replacement.sessionId, clientId: replacement.clientId, owner: replacement.owner, requestId: 'queued-select', tabId };
+  let release;
+  const running = tabLeaseManager.serialize(tabId, () => new Promise(resolve => { release = resolve; }));
+  try {
+    await new Promise(resolve => setImmediate(resolve));
+    tabLeaseManager.setSessionConnected(fixture.context, false);
+    let selected = false;
+    const selection = executeBridgeRequest('tabs.select', { tabId }, next).then(result => { selected = true; return result; });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(selected, false);
+    assert.equal(tabLeaseManager.get(tabId).taskId, fixture.context.taskId);
+    release();
+    await running;
+    assert.deepEqual(await selection, { tabId });
+    assert.equal(tabLeaseManager.get(tabId).taskId, replacement.taskId);
+  } finally { release?.(); await running; fixture.restore(); }
 });
 
 test('implicit selection reminds a multi-tab session at most once in ten minutes', async () => {

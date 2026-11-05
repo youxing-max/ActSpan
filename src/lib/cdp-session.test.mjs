@@ -250,3 +250,43 @@ test('nested iframe discovery isolates context clearing, listener events and chi
     debuggerApi.sendCommand = originalSend;
   }
 });
+
+test('a stale debugger connection retries a main-frame read once but never replays input or a frame context', async () => {
+  const originalSend = debuggerApi.sendCommand;
+  let attempts = 0;
+  debuggerApi.sendCommand = async (_target, method) => {
+    if (method.endsWith('.enable')) return {};
+    attempts++;
+    if (attempts === 1) throw new Error('Debugger is not attached to the tab with id: 73.');
+    return { result: { value: 'reconnected' } };
+  };
+  try {
+    const read = await CDPSessionManager.sendCommand(73, 'Runtime.evaluate', { expression: 'document.title', throwOnSideEffect: true });
+    assert.equal(read.success, true);
+    assert.equal(read.result.result.value, 'reconnected');
+    assert.equal(attempts, 2);
+
+    attempts = 0;
+    const write = await CDPSessionManager.sendCommand(73, 'Input.dispatchMouseEvent', { type: 'mousePressed' });
+    assert.equal(write.success, false);
+    assert.equal(attempts, 1);
+
+    attempts = 0;
+    const frameRead = await CDPSessionManager.sendCommand(73, 'Runtime.evaluate', { expression: 'document.title', contextId: 1, throwOnSideEffect: true });
+    assert.equal(frameRead.success, false);
+    assert.equal(attempts, 1, 'a frame context id must not be reused after reattach');
+
+    attempts = 0;
+    debuggerApi.sendCommand = async (_target, method) => {
+      if (method.endsWith('.enable')) return {};
+      attempts++;
+      throw new Error('Debugger is not attached');
+    };
+    const missing = await CDPSessionManager.sendCommand(73, 'Page.getFrameTree');
+    assert.equal(missing.success, false);
+    assert.equal(attempts, 2, 'retry is bounded');
+  } finally {
+    await CDPSessionManager.detach(73);
+    debuggerApi.sendCommand = originalSend;
+  }
+});

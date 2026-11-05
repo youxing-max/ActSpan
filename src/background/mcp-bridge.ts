@@ -877,13 +877,21 @@ export async function dispatch(method: string, params: Record<string, unknown>, 
         case 'tabs.select': {
             const tabId = params.tabId;
             if (!Number.isSafeInteger(tabId)) throw new PolicyError('必须提供有效 tabId', 'E_TAB_OWNERSHIP');
+            await chrome.tabs.get(tabId as number);
+            assertSignalActive(context.signal);
+            const task = taskManager.get(context.taskId);
+            if (!task) throw new PolicyError('任务记录不存在', 'E_TASK_OWNERSHIP');
             const lease = tabLeaseManager.get(tabId as number);
             if (lease && lease.sessionId === context.sessionId && lease.clientId === context.clientId && lease.taskId !== context.taskId) {
                 return { tabId, warning: `标签页 ${tabId} 属于本会话的另一任务，请使用该任务的 taskId，当前任务的默认标签页不变。` };
             }
             const selected = tabLeaseManager.selectTab(context, tabId as number);
-            if (!selected.warning && lease?.taskId === context.taskId && lease.sessionId === context.sessionId && lease.clientId === context.clientId) {
+            if (!selected.warning) {
+                // select 只接受已登记页面；原主人断开/租约过期后，显式选择才能转移所有权。
+                tabLeaseManager.acquire(task, tabId as number, context.clientId);
+                tabLeaseManager.registerTab(task, tabId as number, { defaultSlot: true });
                 taskManager.update(context.taskId, { activeTabId: tabId as number });
+                await taskManager.persist();
             }
             return selected;
         }
@@ -954,13 +962,15 @@ export async function dispatch(method: string, params: Record<string, unknown>, 
             const opened = await taskManager.withNewTabs(context, tab.id!, () => withDebugger(context, tab.id!, async () => {
                 tabLeaseManager.authorizeWrite(context, tab.id!);
                 assertSignalActive(context.signal);
-                const r = await chrome.debugger.sendCommand({ tabId: tab.id! }, 'Runtime.evaluate', {
+                const evaluated = await CDPSessionManager.sendCommand(tab.id!, 'Runtime.evaluate', {
                     expression: String(params.expression),
                     returnByValue: true,
                     awaitPromise: true,
                     userGesture: false,
                     throwOnSideEffect: true,
-                }) as {
+                });
+                if (!evaluated.success) throw new Error(evaluated.error || 'JS 执行失败');
+                const r = evaluated.result as {
                     result?: { value?: unknown };
                     exceptionDetails?: { exception?: { description?: string }; text?: string };
                 };

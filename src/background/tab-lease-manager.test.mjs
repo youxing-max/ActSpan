@@ -135,3 +135,27 @@ test('select still switches the default slot between registered session tabs', (
     { tabId: 38, marker: '+' }, { tabId: 39, marker: '*' },
   ]);
 });
+
+test('an inherited tab can use the attached debugger before the prior idle timer expires', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const leases = new TabLeaseManager();
+  const old = makeTask();
+  const next = makeTask({ taskId: 'next', sessionId: 'next-session', clientId: 'next-client' });
+  const calls = [];
+  const attach = async () => { calls.push('attach'); };
+  const detach = async () => { calls.push('detach'); };
+  leases.acquire(old, 40);
+  await leases.withDebugger(context(old, 40), 40, attach, detach, async () => 'old');
+  leases.setSessionConnected(context(old), false);
+  leases.acquire(next, 40);
+  await leases.withDebugger(context(next, 40), 40, attach, detach, async () => {
+    t.mock.timers.tick(6000);
+    await Promise.resolve();
+    assert.equal(calls.filter(x => x === 'detach').length, 0, 'the old timer cannot detach during the new owner command');
+    return 'inherited';
+  });
+  t.mock.timers.tick(6000);
+  await Promise.resolve();
+  assert.equal(calls.filter(x => x === 'attach').length, 1);
+  assert.equal(calls.filter(x => x === 'detach').length, 1);
+});

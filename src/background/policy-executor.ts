@@ -118,7 +118,7 @@ export class PolicyExecutor {
     if (task && task.sessionId !== context.sessionId) throw new PolicyError('任务不属于当前 session', 'E_TASK_OWNERSHIP');
     if (task && task.clientId && task.clientId !== context.clientId) throw new PolicyError('任务不属于当前 client', 'E_TASK_OWNERSHIP');
     if (task && !cancellationExempt) this.tasks.assertNotCancelled(context.taskId);
-    // tabs.select only updates our session's default slot; foreign IDs return a warning without touching the tab.
+    // tabs.select 可显式接管已断开/过期的已登记页面；有效外部租约仍只返回警告。
     if (tabId !== undefined && task && capability !== 'tabs.select') {
       this.leases.authorize(context, tabId, !readOnly);
     }
@@ -159,7 +159,8 @@ export class PolicyExecutor {
       }
       return result;
     };
-    try { return tabId !== undefined && capability !== 'tabs.select' ? await this.leases.serialize(tabId, invoke, controller.signal) : await invoke(); }
+    // 选择/接管也须排在旧页面操作之后，不能在旧写入执行中途转移所有权。
+    try { return tabId !== undefined ? await this.leases.serialize(tabId, invoke, controller.signal) : await invoke(); }
     catch (err) {
       if (task && this.tasks.isCancelled(context.taskId)) throw new PolicyError('任务已取消，未执行后续副作用', 'E_TASK_CANCELLED');
       if (task && context.workflowStep !== true) this.tasks.markFailed(context.taskId, normalizeError(err));

@@ -72,7 +72,7 @@ MCP 服务日志不输出到终端，默认写入：`~/.actspan/mcp-server.log`�
 
 | 工具 | 说明 |
 |---|---|
-| `actspan_tabs_list` / `actspan_tabs_select` / `actspan_tab_open` / `actspan_tab_close` / `actspan_tab_navigate` | 标签页管理，列表只显示当前任务 lease；`tabs_select` 把任务名下的标签页设为活动页 |
+| `actspan_tabs_list` / `actspan_tabs_select` / `actspan_tab_open` / `actspan_tab_close` / `actspan_tab_navigate` | 列表标记本会话默认页 `*`、其他页 `+`、外部会话页 `×`，外部页不返回标题或 URL。`tabs_select` 设置任务默认页，不切前台；原客户端断开或租约过期后可显式接管已登记页面，在线外部租约只返回警告。同会话另一任务的页面须使用其 taskId，未知/已关闭页面拒绝接管。 |
 
 ### 页面原子操作（5）
 

@@ -339,6 +339,7 @@ const sendCommand = async (
   method: string,
   params?: Record<string, any>,
   sessionId?: string,
+  retryReadAfterDetach = true,
 ): Promise<CDPCommandResult> => {
   const attachResult = await attach(tabId);
   if (!attachResult.success) {
@@ -362,6 +363,13 @@ const sendCommand = async (
     if (msg.includes('Debugger is not attached') || msg.includes('No tab with given id')) {
       if (sessionId && !msg.includes('No tab with given id')) removeChildFrameSession(tabId, sessionId);
       else cleanupTabState(tabId);
+      // 未附加时命令未执行；只重连一次主页面只读命令，不重放输入或失效 frame context。
+      const reconnectableRead = method === 'Page.getFrameTree' || method === 'Page.captureScreenshot'
+        || (method === 'Runtime.evaluate' && params?.throwOnSideEffect === true
+          && params.contextId === undefined && params.uniqueContextId === undefined);
+      if (retryReadAfterDetach && !sessionId && !msg.includes('No tab with given id') && reconnectableRead) {
+        return await sendCommand(tabId, method, params, undefined, false);
+      }
       return { success: false, code: 'NEEDS_L2', error: `NEEDS_L2：${msg}` };
     }
     return { success: false, error: msg };
