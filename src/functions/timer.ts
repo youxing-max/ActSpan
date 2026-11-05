@@ -240,15 +240,15 @@ export const timerFunction: FunctionDefinition = {
       if (typeof params.max_count === 'number' && params.max_count <= 0) return 'max_count must be greater than 0';
     }
 
-    if (params.action === 'set_schedule') {
-      if (!params.task_action || !params.task_action.trim()) return 'task_action must not be empty';
+    if (params.action === 'set_schedule' || params.action === 'update') {
+      if (params.action === 'set_schedule' && (!params.task_action || !params.task_action.trim())) return 'task_action must not be empty';
       const hasDaily = typeof params.daily_at === 'string' && params.daily_at.trim().length > 0;
       const hasWeekly = typeof params.weekly_at === 'string' && params.weekly_at.trim().length > 0;
-      if (!hasDaily && !hasWeekly) return 'Must provide daily_at or weekly_at';
+      if (params.action === 'set_schedule' && !hasDaily && !hasWeekly) return 'Must provide daily_at or weekly_at';
       if (hasDaily && hasWeekly) return 'daily_at and weekly_at cannot be used together';
-      if (hasDaily && !/^\d{1,2}:\d{2}$/.test(params.daily_at.trim())) return 'daily_at format should be HH:MM';
-      if (hasWeekly && !/^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+\d{1,2}:\d{2}$/i.test(params.weekly_at.trim())) {
-        return 'weekly_at format should be "Day HH:MM", e.g. "Mon 09:00"';
+      if (hasDaily && !/^(?:[01]?\d|2[0-3]):[0-5]\d$/.test(params.daily_at.trim())) return 'daily_at must be a valid time from 00:00 to 23:59';
+      if (hasWeekly && !/^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+(?:[01]?\d|2[0-3]):[0-5]\d$/i.test(params.weekly_at.trim())) {
+        return 'weekly_at must be "Day HH:MM" with a valid time from 00:00 to 23:59';
       }
     }
 

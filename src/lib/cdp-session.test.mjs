@@ -71,6 +71,19 @@ test('holds the L2 attach while console capture is active, releases it after sto
   assert.equal(calls.filter((call) => call === 'detach').length, 1);
 });
 
+test('screencast keeps its debugger beyond the idle timeout and releases it after stop', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  calls.length = 0;
+  assert.equal((await CDPSessionManager.sendCommand(74, 'Page.startScreencast', {})).success, true);
+  t.mock.timers.tick(L2_IDLE_MS + 1000);
+  await flushAsyncWork();
+  assert.equal(calls.filter(c => c === 'detach').length, 0);
+  assert.equal((await CDPSessionManager.sendCommand(74, 'Page.stopScreencast')).success, true);
+  t.mock.timers.tick(L2_IDLE_MS + 1000);
+  await flushAsyncWork();
+  assert.equal(calls.filter(c => c === 'detach').length, 1);
+});
+
 test('holds the L2 attach while Fetch interception is active, releases it after stop', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   calls.length = 0;

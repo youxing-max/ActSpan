@@ -15,6 +15,11 @@ let stream: MediaStream | null = null;
 let chunks: Blob[] = [];
 let active = false;
 let autoStopTimer: ReturnType<typeof setTimeout> | null = null;
+let canvas: HTMLCanvasElement | null = null;
+let canvasMode = false;
+let frameQueue: Promise<void> = Promise.resolve();
+let finishing: Promise<void> | null = null;
+let captureError: Error | null = null;
 
 /** Uint8Array → base64（分块拼接，避免大数组的栈溢出） */
 const arrayBufferToBase64 = (buffer: ArrayBuffer): string => {
@@ -57,19 +62,60 @@ const clearAutoStop = (): void => {
     }
 };
 
-/** 停止 MediaRecorder 与音视频轨；chunks 保留供 stopRecording 组装。 */
-const finishRecorder = (): void => {
+/** 等最后一帧及 dataavailable/stop 完成，保留 chunks 供取件。 */
+const finishRecorder = (): Promise<void> => {
+    if (finishing) return finishing;
     clearAutoStop();
-    if (recorder && recorder.state !== 'inactive') {
-        try { recorder.stop(); } catch { /* 忽略 */ }
-    }
-    recorder = null;
     active = false;
-    stopTracks();
+    finishing = (async () => {
+        try {
+            await frameQueue;
+            const rec = recorder;
+            if (rec && rec.state !== 'inactive') {
+                await new Promise<void>((resolve, reject) => {
+                    rec.onstop = () => resolve();
+                    rec.onerror = () => reject(new Error('录屏编码失败'));
+                    rec.stop();
+                });
+            }
+        } finally {
+            recorder = null;
+            canvas = null;
+            stopTracks();
+        }
+    })();
+    return finishing;
+};
+
+const prepareRecording = (): void => {
+    if (active || recorder || chunks.length) throw new Error('已有进行中或待取件的录制');
+    chunks = [];
+    finishing = null;
+    frameQueue = Promise.resolve();
+    captureError = null;
+};
+
+const beginMediaRecorder = (media: MediaStream): void => {
+    stream = media;
+    const mimeType = pickMimeType();
+    recorder = new MediaRecorder(media, mimeType ? { mimeType } : undefined);
+    recorder.ondataavailable = (event: BlobEvent) => {
+        if (event.data && event.data.size > 0) chunks.push(event.data);
+    };
+    recorder.start(1000);
+};
+
+const armAutoStop = (maxDurationMs: number): void => {
+    if (maxDurationMs > 0) {
+        autoStopTimer = setTimeout(() => {
+            void finishRecorder().catch(err => { captureError = err; });
+        }, maxDurationMs);
+    }
 };
 
 const startRecording = async (streamId: string, maxDurationMs: number): Promise<void> => {
-    if (active) throw new Error('录制已在进行中');
+    prepareRecording();
+    canvasMode = false;
     const constraints = {
         audio: false,
         video: {
@@ -83,44 +129,22 @@ const startRecording = async (streamId: string, maxDurationMs: number): Promise<
         },
     } as MediaStreamConstraints;
 
-    stream = await navigator.mediaDevices.getUserMedia(constraints);
-    chunks = [];
-    const mimeType = pickMimeType();
-    recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
-    recorder.ondataavailable = (event: BlobEvent) => {
-        if (event.data && event.data.size > 0) chunks.push(event.data);
-    };
-    recorder.start(1000);
-    active = true;
-
-    if (maxDurationMs > 0) {
-        autoStopTimer = setTimeout(() => finishRecorder(), maxDurationMs);
-    }
+    try {
+        beginMediaRecorder(await navigator.mediaDevices.getUserMedia(constraints));
+        active = true;
+        armAutoStop(maxDurationMs);
+    } catch (err) { stopTracks(); recorder = null; throw err; }
 };
 
 const stopRecording = async (): Promise<{ dataUrl: string; sizeBytes: number }> => {
-    if (!active) {
-        if (chunks.length === 0) throw new Error('没有进行中的录制');
-        return assembleBlob();
-    }
-
-    const rec = recorder;
-    clearAutoStop();
-    if (rec && rec.state !== 'inactive') {
-        await new Promise<void>((resolve) => {
-            rec.onstop = () => resolve();
-            rec.stop();
-        });
-    }
-    recorder = null;
-    active = false;
-    stopTracks();
+    await finishRecorder();
+    if (captureError) throw captureError;
+    if (chunks.length === 0) throw new Error('录屏未采集到任何帧');
     return assembleBlob();
 };
 
-const cancelRecording = (): void => {
-    finishRecorder();
-    chunks = [];
+const cancelRecording = async (): Promise<void> => {
+    try { await finishRecorder(); } finally { chunks = []; captureError = null; }
 };
 
 /** 解码 base64 jpeg 为 HTMLImageElement */
@@ -132,52 +156,59 @@ const loadImage = (src: string): Promise<HTMLImageElement> =>
         img.src = src;
     });
 
-/**
- * 把 debugger screencast 的 jpeg 帧序列按 fps 实时重放到 canvas，
- * 经 captureStream + MediaRecorder 编成 webm（无需额外 muxer 库）。
- * 用于无人值守录屏回退路径（tabCapture 因 activeTab 手势被拒时）。
- */
-const encodeFrames = async (
-    frames: Array<{ data: string; ts: number }>,
-    fps: number,
-): Promise<{ dataUrl: string; sizeBytes: number }> => {
-    if (!frames.length) throw new Error('没有可编码的帧');
-    // 并行预解码全部帧（消除逐帧 loadImage 的串行延迟）
-    const images = await Promise.all(frames.map((f) => loadImage(`data:image/jpeg;base64,${f.data}`)));
-    const first = images[0];
-    const canvas = document.createElement('canvas');
-    canvas.width = first.naturalWidth || 1280;
-    canvas.height = first.naturalHeight || 720;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) throw new Error('无法创建 canvas 上下文');
+const startCanvasRecording = (maxDurationMs: number): void => {
+    prepareRecording();
+    canvasMode = true;
+    active = true;
+    armAutoStop(maxDurationMs);
+};
 
-    const stream = canvas.captureStream(fps);
-    const mimeType = pickMimeType();
-    const rec = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
-    const out: Blob[] = [];
-    rec.ondataavailable = (e: BlobEvent) => { if (e.data && e.data.size > 0) out.push(e.data); };
-    const stopped = new Promise<void>((resolve) => { rec.onstop = () => resolve(); });
-    rec.start();
-
-    // 快进绘制：不等真实帧间隔（旧实现 N 帧 × 1000/fps 毫秒导致长录屏必然超时），
-    // 每帧用 requestAnimationFrame 让出一拍采样窗口，编码耗时从秒级降到毫秒级。
-    for (const img of images) {
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-    }
-    rec.stop();
-    await stopped;
-    stream.getTracks().forEach((t) => t.stop());
-
-    const blob = new Blob(out, { type: 'video/webm' });
-    const buffer = await blob.arrayBuffer();
-    return { dataUrl: `data:video/webm;base64,${arrayBufferToBase64(buffer)}`, sizeBytes: buffer.byteLength };
+const appendFrame = (data: string): Promise<void> => {
+    if (!active || !canvasMode) return Promise.resolve();
+    const next = frameQueue.then(async () => {
+        const image = await loadImage(`data:image/jpeg;base64,${data}`);
+        if (!canvas) {
+            canvas = document.createElement('canvas');
+            canvas.width = image.naturalWidth;
+            canvas.height = image.naturalHeight;
+            beginMediaRecorder(canvas.captureStream(0));
+        }
+        const ctx = canvas.getContext('2d');
+        if (!ctx) throw new Error('无法创建 canvas 上下文');
+        ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+        // 显式请求采样，隐藏 offscreen 文档没有 requestAnimationFrame 回调。
+        (stream!.getVideoTracks()[0] as CanvasCaptureMediaStreamTrack).requestFrame();
+        await new Promise(resolve => setTimeout(resolve, 0));
+    });
+    frameQueue = next.catch(err => { captureError = err; });
+    return next;
 };
 
 export const initScreenCapture = (): void => {
     chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) => {
         if (!message || typeof message !== 'object' || Array.isArray(message)) return false;
         const frame = message as Record<string, unknown>;
+        if (frame.type === 'screen_record_canvas_start') {
+            try {
+                startCanvasRecording(Number(frame.maxDurationMs) || 0);
+                sendResponse({ success: true });
+            } catch (err) { sendResponse({ success: false, error: String(err) }); }
+            return false;
+        }
+        if (frame.type === 'screen_record_frame') {
+            void appendFrame(String(frame.data || '')).then(
+                () => sendResponse({ success: true }),
+                err => sendResponse({ success: false, error: String(err) }),
+            );
+            return true;
+        }
+        if (frame.type === 'screen_record_finish') {
+            void finishRecorder().then(
+                () => sendResponse({ success: true }),
+                err => sendResponse({ success: false, error: String(err) }),
+            );
+            return true;
+        }
         if (frame.type === 'screen_record_start') {
             void startRecording(String(frame.streamId), Number(frame.maxDurationMs) || 0).then(
                 () => sendResponse({ success: true }),
@@ -193,14 +224,8 @@ export const initScreenCapture = (): void => {
             return true;
         }
         if (frame.type === 'screen_record_cancel') {
-            cancelRecording();
-            sendResponse({ success: true });
-            return true;
-        }
-        if (frame.type === 'screen_record_encode') {
-            const frames = Array.isArray(frame.frames) ? frame.frames as Array<{ data: string; ts: number }> : [];
-            void encodeFrames(frames, Number(frame.fps) || 2).then(
-                (payload) => sendResponse({ success: true, ...payload }),
+            void cancelRecording().then(
+                () => sendResponse({ success: true }),
                 (err: unknown) => sendResponse({ success: false, error: err instanceof Error ? err.message : String(err) }),
             );
             return true;

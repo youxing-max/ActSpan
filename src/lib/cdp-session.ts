@@ -139,6 +139,7 @@ export interface CDPCommandResult {
 const sessions = new Map<number, CDPSessionEntry>();
 const idleTimers = new Map<number, ReturnType<typeof setTimeout>>();
 const inFlightCommands = new Map<number, number>();
+const screencastTabs = new Set<number>();
 
 /** debugger 协议版本 */
 const PROTOCOL_VERSION = '1.3';
@@ -201,7 +202,8 @@ const notifyCommandIdle = (tabId: number): void => {
 const hasActiveListeners = (tabId: number): boolean => {
   return networkListening.get(tabId)?.active === true
     || consoleListening.get(tabId)?.active === true
-    || fetchInterception.get(tabId)?.active === true;
+    || fetchInterception.get(tabId)?.active === true
+    || screencastTabs.has(tabId);
 };
 
 const scheduleIdleDetach = (tabId: number): void => {
@@ -304,6 +306,7 @@ const cleanupTabState = (tabId: number): void => {
   consoleListening.delete(tabId);
   fetchPausedRequests.delete(tabId);
   fetchInterception.delete(tabId);
+  screencastTabs.delete(tabId);
 };
 
 const waitForCommands = async (tabId: number): Promise<void> => {
@@ -351,6 +354,8 @@ const sendCommand = async (
     const pausedRequest = !sessionId && (method === 'Fetch.continueRequest' || method === 'Fetch.fulfillRequest' || method === 'Fetch.failRequest')
       ? fetchPausedRequests.get(tabId)?.get(params?.requestId) : undefined;
     const result = await chrome.debugger.sendCommand({ tabId, ...(sessionId ? { sessionId } : {}) }, method, params || {});
+    if (!sessionId && method === 'Page.startScreencast') screencastTabs.add(tabId);
+    if (!sessionId && method === 'Page.stopScreencast') screencastTabs.delete(tabId);
     if (pausedRequest && fetchPausedRequests.get(tabId)?.get(params?.requestId) === pausedRequest) {
       fetchPausedRequests.get(tabId)?.delete(params?.requestId);
     }

@@ -19,11 +19,14 @@
  */
 
 import type { FunctionDefinition, FunctionResult, ToolExecutionContext } from './types';
+import { CDPSessionManager } from '../lib/cdp-session';
+import { acquireServiceWorkerKeepAlive } from '../background/service-worker-keepalive';
 
 const RECORDING_SESSION_KEY = 'actspan_screen_record_state';
 
 interface RecordState {
     active: boolean;
+    ready?: boolean;
     tabId?: number;
     startedAt?: number;
     /** tabcapture=人手已授权(activeTab)走 tabCapture；screencast=无人值守走 debugger 截帧 */
@@ -135,18 +138,32 @@ const resolveTabId = async (params: Record<string, any>, context?: ToolExecution
 // tabCapture 需要 activeTab 用户手势；云端 agent 无人值守时拿不到，
 // 故回退到 debugger 截帧（无需手势、可录任意标签页），帧流交 offscreen 编成 webm。
 
-interface ScreencastState { tabId: number; frames: Array<{ data: string; ts: number }>; }
-let screencast: ScreencastState | null = null;
+let screencastTabId: number | null = null;
+let autoStopTimer: ReturnType<typeof setTimeout> | null = null;
+let releaseKeepAlive: (() => void) | null = null;
+let operation: Promise<unknown> = Promise.resolve();
+const serialize = <T>(run: () => Promise<T>): Promise<T> => {
+    const next = operation.then(run, run);
+    operation = next.catch(() => undefined);
+    return next;
+};
+
+const releaseRecording = (): void => {
+    if (autoStopTimer !== null) clearTimeout(autoStopTimer);
+    autoStopTimer = null;
+    releaseKeepAlive?.();
+    releaseKeepAlive = null;
+};
 
 const onScreencastFrame = (source: chrome.debugger.Debuggee, method: string, params: any): void => {
     if (method !== 'Page.screencastFrame') return;
-    if (!screencast || source.tabId !== screencast.tabId) return;
-    screencast.frames.push({
-        data: params?.data as string,
-        ts: typeof params?.metadata?.timestamp === 'number' ? params.metadata.timestamp * 1000 : Date.now(),
-    });
-    // 必须 ack，否则 Chrome 不再推送后续帧
-    chrome.debugger.sendCommand(source, 'Page.screencastFrameAck', { sessionId: params?.sessionId }).catch(() => undefined);
+    if (source.tabId !== screencastTabId || (source as chrome.debugger.Debuggee & { sessionId?: string }).sessionId) return;
+    // 编码完成后再 ack，限制在途帧；隐藏 offscreen 不依赖 requestAnimationFrame。
+    void sendToOffscreen({ type: 'screen_record_frame', data: params?.data }).finally(() => {
+        if (source.tabId === screencastTabId) {
+            void chrome.debugger.sendCommand(source, 'Page.screencastFrameAck', { sessionId: params?.sessionId }).catch(() => undefined);
+        }
+    }).catch(() => undefined);
 };
 
 const startScreencast = async (tabId: number): Promise<void> => {
@@ -156,27 +173,39 @@ const startScreencast = async (tabId: number): Promise<void> => {
         const tab = await chrome.tabs.get(tabId);
         if (tab.windowId != null) await chrome.windows.update(tab.windowId, { focused: true });
     } catch { /* 聚焦失败不阻断录制尝试 */ }
-    screencast = { tabId, frames: [] };
+    // 先用可安全重连的只读请求确认连接，处理 detach 事件尚未更新缓存的情况。
+    const connected = await CDPSessionManager.sendCommand(tabId, 'Page.getFrameTree');
+    if (!connected.success) throw new Error(connected.error || '无法附加录屏调试器');
+    screencastTabId = tabId;
     chrome.debugger.onEvent.addListener(onScreencastFrame);
-    await chrome.debugger.attach({ tabId }, '1.3');
-    await chrome.debugger.sendCommand({ tabId }, 'Page.enable');
-    await chrome.debugger.sendCommand({ tabId }, 'Page.startScreencast', {
+    const started = await CDPSessionManager.sendCommand(tabId, 'Page.startScreencast', {
         format: 'jpeg',
         quality: 60,
         maxWidth: 1280,
         maxHeight: 720,
         everyNthFrame: 4, // 每 4 个合成帧取 1 帧（约 15fps，防止帧爆炸导致编码慢/内存高）
     });
+    if (!started.success) throw new Error(started.error || '开始截帧失败');
 };
 
-const stopScreencast = async (): Promise<Array<{ data: string; ts: number }>> => {
-    if (!screencast) return [];
-    const { tabId, frames } = screencast;
-    try { await chrome.debugger.sendCommand({ tabId }, 'Page.stopScreencast'); } catch { /* 忽略 */ }
-    try { await chrome.debugger.detach({ tabId }); } catch { /* 忽略 */ }
+const stopScreencast = async (): Promise<void> => {
+    const tabId = screencastTabId;
+    screencastTabId = null;
     chrome.debugger.onEvent.removeListener(onScreencastFrame);
-    screencast = null;
-    return frames;
+    if (tabId === null) return;
+    await CDPSessionManager.sendCommand(tabId, 'Page.stopScreencast');
+    await CDPSessionManager.detach(tabId);
+};
+
+const finishRecording = async (): Promise<void> => {
+    const current = await readState();
+    if (!current.active) return;
+    try {
+        await stopScreencast();
+        const result = await sendToOffscreen({ type: 'screen_record_finish' });
+        if (!result.success) throw new Error(String(result.error || '结束录屏失败'));
+        await writeState({ ...current, active: false, ready: true });
+    } finally { releaseRecording(); }
 };
 
 const ok = (data: unknown): FunctionResult => ({ success: true, data });
@@ -189,6 +218,7 @@ export const screenRecordFunction: FunctionDefinition = {
         '动作：start（开始，默认当前活动页）/ stop（停止并产出视频）/ state（查询）/ cancel（放弃）。',
         '默认 1280x720@15fps、最长 60 秒；用 max_duration_seconds 限时，save_mode=download（默认，存下载目录）',
         '或 save_mode=inline（base64 回传，仅适合短视频）。',
+        '无人值守模式会将目标页切到前台并显示调试提示条；达到时限后停止采集，仍需 stop 取件或 cancel 丢弃。',
         '⚠️ 不要用此工具来：截取单张画面（用 screenshot）；录制操作步骤复用（用 recorder）。',
     ].join(''),
     parameters: {
@@ -220,46 +250,54 @@ export const screenRecordFunction: FunctionDefinition = {
     actionPermissions: {
         state: 'read',
     },
-    execute: async (params: any, context?: ToolExecutionContext): Promise<FunctionResult> => {
+    execute: async (params: any, context?: ToolExecutionContext): Promise<FunctionResult> => serialize(async () => {
         const action = params?.action as 'start' | 'stop' | 'state' | 'cancel' | undefined;
 
         try {
             switch (action) {
                 case 'start': {
                     const current = await readState();
-                    if (current.active) {
-                        return fail(`已有进行中的录制（tab ${current.tabId}），先 stop 或 cancel`);
+                    if (current.active || current.ready) {
+                        return fail(`已有进行中或待取件的录制（tab ${current.tabId}），先 stop 或 cancel`);
                     }
                     const tabId = await resolveTabId(params, context);
                     if (!tabId) return fail('无法确定录制标签页：请传 tab_id');
 
                     const maxSeconds = Math.min(
                         600,
-                        Math.max(0, typeof params.max_duration_seconds === 'number' ? params.max_duration_seconds : 60),
+                        Math.max(1, Number.isFinite(params.max_duration_seconds) ? params.max_duration_seconds : 60),
                     );
                     let mode: 'tabcapture' | 'screencast' = 'tabcapture';
+                    await ensureOffscreen();
+                    let streamId: string | undefined;
+                    try { streamId = await getStreamId(tabId); } catch { mode = 'screencast'; }
+                    releaseKeepAlive = acquireServiceWorkerKeepAlive();
                     try {
-                        await ensureOffscreen();
-                        const streamId = await getStreamId(tabId);
                         const resp = await sendToOffscreen({
-                            type: 'screen_record_start',
+                            type: mode === 'tabcapture' ? 'screen_record_start' : 'screen_record_canvas_start',
                             streamId,
                             maxDurationMs: maxSeconds * 1000,
                         });
-                        if (!resp.success) return fail((resp.error as string) || '开始录屏失败');
-                    } catch {
-                        // tabCapture 被 activeTab 手势拒绝 → 无人值守回退到 debugger 截帧
-                        mode = 'screencast';
-                        await startScreencast(tabId);
+                        if (!resp.success) throw new Error(String(resp.error || '开始录屏失败'));
+                        if (mode === 'screencast') await startScreencast(tabId);
+                        const state: RecordState = { active: true, tabId, startedAt: Date.now(), mode };
+                        await writeState(state);
+                        autoStopTimer = setTimeout(() => {
+                            void serialize(finishRecording).catch(err => console.warn('[screen-record] 自动停止失败:', err));
+                        }, maxSeconds * 1000);
+                    } catch (err) {
+                        await stopScreencast();
+                        await sendToOffscreen({ type: 'screen_record_cancel' }).catch(() => undefined);
+                        releaseRecording();
+                        await writeState({ active: false });
+                        throw err;
                     }
 
-                    const state: RecordState = { active: true, tabId, startedAt: Date.now(), mode };
-                    await writeState(state);
                     return ok({
                         recording: true,
                         tab_id: tabId,
                         mode,
-                        started_at: state.startedAt,
+                        started_at: (await readState()).startedAt,
                         max_duration_seconds: maxSeconds,
                         hint: mode === 'screencast'
                             ? '无人值守录屏（debugger 截帧），录制期该页顶部有调试提示条；完成后 stop 产出视频'
@@ -268,45 +306,19 @@ export const screenRecordFunction: FunctionDefinition = {
                 }
                 case 'stop': {
                     const current = await readState();
-                    if (!current.active) return fail('没有进行中的录制');
-
-                    let dataUrl = '';
-                    let sizeBytes = 0;
-                    if (current.mode === 'screencast') {
-                        const frames = await stopScreencast();
+                    if (!current.active && !current.ready) return fail('没有进行中或待取件的录制');
+                    let resp: Record<string, unknown>;
+                    try {
+                        await stopScreencast();
+                        resp = await sendToOffscreen({ type: 'screen_record_stop' });
+                    } finally {
                         await writeState({ active: false });
-                        if (!frames.length) return fail('无人值守录屏未采集到任何帧');
-                        const framesKB = Math.round(frames.reduce((s, f) => s + f.data.length, 0) * 3 / 4 / 1024);
-
-                        // 方案 A（优先）：offscreen 编码成 webm 视频
-                        try {
-                            await ensureOffscreen();
-                            const enc = await sendToOffscreen({ type: 'screen_record_encode', frames, fps: 2 }, 30_000);
-                            if (enc.success && enc.dataUrl) {
-                                dataUrl = enc.dataUrl as string;
-                                sizeBytes = Number(enc.sizeBytes) || 0;
-                            }
-                        } catch { /* offscreen 编码失败，降级到方案 B */ }
-
-                        // 方案 B（降级）：offscreen 不可用时，返回自包含可播放的 HTML 帧序列
-                        if (!dataUrl) {
-                            const html = `<!doctype html><title>Actspan 录屏 ${frames.length} 帧</title><body style="background:#000;text-align:center"><h2 style="color:#fff">录屏：${frames.length} 帧 / ${framesKB}KB</h2><div id="p" style="min-height:200px;color:#888">点击开始播放</div><script>
-const F=${JSON.stringify(frames.map(f=>f.data))};
-let i=0,timer=null;
-document.body.onclick=()=>{if(timer){clearInterval(timer);timer=null;document.getElementById('p').innerHTML='暂停在第 '+i+' 帧';return;}
-timer=setInterval(()=>{if(i>=F.length){clearInterval(timer);timer=null;document.getElementById('p').innerHTML='播放完毕';return;}
-document.getElementById('p').innerHTML='<img src="data:image/jpeg;base64,'+F[i++]+'" style="max-width:100%">';},500);};</script></body>`;
-                            dataUrl = `data:text/html;base64,${btoa(unescape(encodeURIComponent(html)))}`;
-                            sizeBytes = html.length;
-                        }
-                    } else {
-                        await ensureOffscreen();
-                        const resp = await sendToOffscreen({ type: 'screen_record_stop' });
-                        await writeState({ active: false });
-                        if (!resp.success) return fail((resp.error as string) || '停止录屏失败');
-                        dataUrl = resp.dataUrl as string;
-                        sizeBytes = Number(resp.sizeBytes) || 0;
+                        releaseRecording();
                     }
+                    if (!resp.success) return fail(String(resp.error || '停止录屏失败'));
+                    const dataUrl = String(resp.dataUrl || '');
+                    const sizeBytes = Number(resp.sizeBytes) || 0;
+                    if (!dataUrl.startsWith('data:video/webm;base64,') || sizeBytes <= 0) return fail('录屏未生成有效 WebM');
                     const sizeKB = Math.round(sizeBytes / 1024);
                     const saveMode = params.save_mode === 'inline' ? 'inline' : 'download';
 
@@ -337,15 +349,24 @@ document.getElementById('p').innerHTML='<img src="data:image/jpeg;base64,'+F[i++
                     const current = await readState();
                     return ok({
                         active: current.active,
+                        ready: current.ready === true,
+                        mode: current.mode,
                         tab_id: current.tabId,
                         started_at: current.startedAt,
                     });
                 }
                 case 'cancel': {
-                    await ensureOffscreen();
-                    const resp = await sendToOffscreen({ type: 'screen_record_cancel' });
-                    await writeState({ active: false });
-                    return resp.success ? ok({ cancelled: true }) : fail((resp.error as string) || '取消录屏失败');
+                    try {
+                        await stopScreencast();
+                        if (await chrome.offscreen?.hasDocument()) {
+                            const resp = await sendToOffscreen({ type: 'screen_record_cancel' });
+                            if (!resp.success) return fail(String(resp.error || '取消录屏失败'));
+                        }
+                        return ok({ cancelled: true });
+                    } finally {
+                        await writeState({ active: false });
+                        releaseRecording();
+                    }
                 }
                 default:
                     return fail(`未知 action: ${String(action)}`);
@@ -353,5 +374,5 @@ document.getElementById('p').innerHTML='<img src="data:image/jpeg;base64,'+F[i++
         } catch (err: any) {
             return fail(err?.message || 'screen_record 执行失败');
         }
-    },
+    }),
 };

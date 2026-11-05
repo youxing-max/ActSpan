@@ -34,6 +34,21 @@ test('timer mutations require approval', () => {
   assert.equal(permissions.list, undefined);
 });
 
+test('daily and weekly schedules reject invalid clock values on create and update', () => {
+  for (const action of ['set_schedule', 'update']) {
+    const base = { action, task_action: '本地测试', timer_id: 'owned-timer' };
+    for (const daily_at of ['24:00', '12:60', '99:99', '-1:20', 'not-a-time']) {
+      assert.ok(timerFunction.validate({ ...base, daily_at }), `${action} must reject ${daily_at}`);
+    }
+    for (const weekly_at of ['Mon 24:00', 'Sun 09:60', 'Bad 10:00']) {
+      assert.ok(timerFunction.validate({ ...base, weekly_at }), `${action} must reject ${weekly_at}`);
+    }
+    assert.ok(timerFunction.validate({ ...base, daily_at: '09:00', weekly_at: 'Mon 09:00' }));
+    assert.equal(timerFunction.validate({ ...base, daily_at: '23:59' }), null);
+    assert.equal(timerFunction.validate({ ...base, weekly_at: 'Sun 0:00' }), null);
+  }
+});
+
 test('resident AI without task identity cannot list or mutate timers', async () => {
   storage.actspan_timers = [
     { id: 'legacy-1', type: 'timeout', action: '旧任务', tabId: 0, createdAt: Date.now(), currentCount: 0 },
