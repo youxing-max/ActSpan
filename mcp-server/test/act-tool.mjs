@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import registerActTool from '../act-tool.js';
+import registerActTool, { conditionMatch } from '../act-tool.js';
 import { createToolResult } from '../tool-result.js';
 
 const schemaParams = { taskId: {}, sessionId: {} };
@@ -161,6 +161,55 @@ test('repeat 拼错次数字段时整段脚本在执行前被拒绝', async () =
         assert.equal(result.success, false);
         assert.match(result.error, /INVALID_SCRIPT.*times/);
         assert.deepEqual(calls, []);
+    }
+});
+
+test('mixed OR conditions use their own probes and invert not exactly once', async () => {
+    for (const exists of [false, true]) {
+        for (const matched of [false, true]) {
+            for (const not of [false, true]) {
+                const calls = [];
+                const { handler } = setup(async (method, params) => {
+                    calls.push({ method, params });
+                    if (method === 'page.read' && params.attr === 'exists') return { exists };
+                    if (method === 'page.read' && params.attr === 'textContains') return { exists: true, matched };
+                    return { changed: true };
+                });
+                const result = await handler({ steps: [
+                    { action: 'assert', cond: { selectorExists: '#optional', textContains: 'ready', not } },
+                    { action: 'click', selector: '#next' },
+                ] });
+                const expected = not ? !(exists || matched) : exists || matched;
+                assert.equal(result.success, expected, JSON.stringify({ exists, matched, not }));
+                assert.equal(calls.some(({ method }) => method === 'page.click'), expected);
+                assert.equal(calls.some(({ method }) => method === 'act.draft'), expected);
+                if (!expected) assert.match(result.error, /^ASSERT_FAILED:/);
+            }
+        }
+    }
+});
+
+test('missing or unkeyed condition evidence cannot satisfy a predicate', () => {
+    for (const observed of [undefined, null, [], {}, { matched: true, exists: true }, [{ matched: true, exists: true }]]) {
+        assert.equal(conditionMatch(observed, { selectorExists: '#missing', textContains: 'ready', not: true }), false);
+    }
+});
+
+test('urlContains remains an OR predicate alongside every DOM probe', async () => {
+    for (const [key, value] of [['checked', true], ['value', 'yes'], ['text', 'ready'], ['textContains', 'ready'], ['selectorExists', '#result']]) {
+        const calls = [];
+        const { handler } = setup(async (method, params) => {
+            calls.push({ method, params });
+            if (method === 'page.read' && params.attr) return { exists: false, matched: false };
+            if (method === 'page.read') return { url: 'https://example.test/complete' };
+            return { changed: true };
+        });
+        const result = await handler({ steps: [
+            { action: 'assert', cond: { selector: '#result', [key]: value, urlContains: '/complete' } },
+            { action: 'click', selector: '#next' },
+        ] });
+        assert.equal(result.success, true, key);
+        assert.equal(calls.some(({ method }) => method === 'page.click'), true, key);
     }
 });
 

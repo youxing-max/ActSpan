@@ -107,7 +107,17 @@ export async function interactOnPage(method: string, params: Record<string, unkn
             return { uploaded: true, filename: file.name, bytes: file.size ?? data.length, via: drop ? 'drop' : 'input' };
         }
         if (method === 'page.key') {
-            if (selector || ref) target().focus();
+            const focused = (): HTMLElement | null => {
+                let current = document.activeElement;
+                while (current?.shadowRoot?.activeElement) current = current.shadowRoot.activeElement;
+                return current as HTMLElement | null;
+            };
+            if (selector || ref) {
+                const requested = target();
+                if (requested.matches?.(':disabled')) throw new Error('按键目标已禁用');
+                requested.focus();
+                if (focused() !== requested) throw new Error('按键目标无法获得焦点；未发送按键');
+            }
             const keys = params.keys as string[];
             const repeat = Number(params.repeat ?? 1);
             let pressed = 0;
@@ -116,16 +126,16 @@ export async function interactOnPage(method: string, params: Record<string, unkn
                 const key = parts.pop()!;
                 const modifiers = parts.map((part) => part.toLowerCase());
                 if (modifiers.some((part) => !['ctrl', 'control', 'shift', 'alt', 'meta', 'cmd'].includes(part))) throw new Error(`不支持的修饰键: ${sequenceKey}`);
-                const current = document.activeElement as HTMLElement | null;
-                const eventOptions = { key, bubbles: true, cancelable: true,
+                const current = focused();
+                const eventOptions = { key, bubbles: true, cancelable: true, composed: true,
                     ctrlKey: modifiers.includes('ctrl') || modifiers.includes('control'), shiftKey: modifiers.includes('shift'),
                     altKey: modifiers.includes('alt'), metaKey: modifiers.includes('meta') || modifiers.includes('cmd') };
                 if (!current) throw new Error('页面无聚焦元素；请传 selector 或 ref');
                 const activation = key === 'Enter' || key === ' ' || key === 'Space';
                 const proceed = current.dispatchEvent(new KeyboardEvent('keydown', eventOptions));
-                if (proceed && !modifiers.length && key === 'Tab') {
+                if (proceed && !eventOptions.ctrlKey && !eventOptions.metaKey && !eventOptions.altKey && key === 'Tab') {
                     const focusable = Array.from(document.querySelectorAll('a[href],button,input,select,textarea,[tabindex]')) as HTMLElement[];
-                    const eligible = focusable.filter((el) => !el.hasAttribute?.('disabled') && el.getAttribute?.('tabindex') !== '-1');
+                    const eligible = focusable.filter((el) => !el.matches?.(':disabled') && el.getAttribute?.('tabindex') !== '-1');
                     const from = eligible.indexOf(current);
                     if (eligible.length) eligible[(from + (eventOptions.shiftKey ? eligible.length - 1 : 1)) % eligible.length].focus();
                 } else if (proceed && activation && !modifiers.length && (current.matches?.('button,a,[role="button"],[role="link"],input[type="submit"]') ||
@@ -136,7 +146,7 @@ export async function interactOnPage(method: string, params: Record<string, unkn
                         form.requestSubmit();
                     }
                 } else if (proceed && (current.tagName === 'INPUT' || current.tagName === 'TEXTAREA') &&
-                    !(current as HTMLInputElement).disabled && !(current as HTMLInputElement).readOnly &&
+                    !current.matches?.(':disabled') && !(current as HTMLInputElement).readOnly &&
                     (current.tagName !== 'INPUT' || /^(?:text|search|url|tel|email|password)$/i.test((current as HTMLInputElement).type))) {
                     const input = current as HTMLInputElement | HTMLTextAreaElement;
                     if ((eventOptions.ctrlKey || eventOptions.metaKey) && key.toLowerCase() === 'a') {
@@ -144,24 +154,25 @@ export async function interactOnPage(method: string, params: Record<string, unkn
                     } else if (!eventOptions.ctrlKey && !eventOptions.metaKey && !eventOptions.altKey) {
                         const start = input.selectionStart ?? input.value.length;
                         const end = input.selectionEnd ?? start;
-                        const text = key === 'Space' ? ' ' : key.length === 1 ? key : key === 'Enter' && current.tagName === 'TEXTAREA' ? '\n' : '';
+                        const text = key === 'Space' ? ' ' : Array.from(key).length === 1 ? key : key === 'Enter' && current.tagName === 'TEXTAREA' ? '\n' : '';
                         if (text || key === 'Backspace' || key === 'Delete') {
-                            const left = key === 'Backspace' && start === end ? Math.max(0, start - 1) : start;
-                            const right = key === 'Delete' && start === end ? Math.min(input.value.length, end + 1) : end;
-                            const change = new InputEvent('beforeinput', { bubbles: true, cancelable: true,
-                                inputType: text ? 'insertText' : 'deleteContentBackward', data: text || null });
+                            // selectionStart/End 是 UTF-16 偏移，删除须跨过完整码点，避免留下半个代理对。
+                            const left = key === 'Backspace' && start === end ? start - (Array.from(input.value.slice(0, start)).at(-1)?.length ?? 0) : start;
+                            const right = key === 'Delete' && start === end ? end + (Array.from(input.value.slice(end))[0]?.length ?? 0) : end;
+                            const inputType = text ? 'insertText' : key === 'Delete' ? 'deleteContentForward' : 'deleteContentBackward';
+                            const change = new InputEvent('beforeinput', { bubbles: true, cancelable: true, composed: true,
+                                inputType, data: text || null });
                             if (input.dispatchEvent(change)) {
                                 input.setRangeText(text, left, right, 'end');
-                                input.dispatchEvent(new InputEvent('input', { bubbles: true,
-                                    inputType: text ? 'insertText' : 'deleteContentBackward', data: text || null }));
+                                input.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, inputType, data: text || null }));
                             }
                         }
                     }
                 }
-                current.dispatchEvent(new KeyboardEvent('keyup', eventOptions));
+                (focused() || current).dispatchEvent(new KeyboardEvent('keyup', eventOptions));
                 pressed++;
             }
-            return { pressed, focused: (document.activeElement as HTMLElement | null)?.tagName || null };
+            return { pressed, focused: focused()?.tagName || null };
         }
         if (method === 'page.scroll') {
             const el = selector ? target() : null;
@@ -169,13 +180,14 @@ export async function interactOnPage(method: string, params: Record<string, unkn
             const beforeY = el ? el.scrollTop : window.scrollY;
             const x = Number(params.deltaX ?? 0), y = Number(params.deltaY ?? 0);
             if (el) el.scrollBy(x, y); else window.scrollBy(x, y);
-            const afterX = el ? el.scrollLeft : window.scrollX;
-            const afterY = el ? el.scrollTop : window.scrollY;
-            const changed = afterX !== beforeX || afterY !== beforeY;
             // 真正被滚动的是目标元素或文档滚动元素。scrollBy 只改 scrollLeft/Top，只监听 wheel 的
             // 懒加载与自定义滚动容器不会响应，所以滚动后向该元素补发一条语义与真实事件一致的合成 wheel。
             const scrolled = el || document.scrollingElement || document.documentElement;
             scrolled.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaX: x, deltaY: y, deltaMode: 0 }));
+            // wheel 监听器可能同步调整滚动位置，必须在事件派发后重新测量最终值。
+            const afterX = el ? el.scrollLeft : window.scrollX;
+            const afterY = el ? el.scrollTop : window.scrollY;
+            const changed = afterX !== beforeX || afterY !== beforeY;
             // 某些后台标签页/滚动容器的 scrollBy 不触发 scroll；仅在位置实际改变时补发非冒泡 scroll。
             if (changed) scrolled.dispatchEvent(new Event('scroll'));
             const result: Record<string, unknown> = { requested: { deltaX: x, deltaY: y },
@@ -237,12 +249,13 @@ export async function handleMcpInteraction(method: string, params: Record<string
     const ref = params.ref ? String(params.ref) : undefined;
     // assertValid 保证 ref 必带 snapshotId；两者都没有时尾部参数必须整段省略。
     const snapshotId = ref && params.snapshotId !== undefined ? String(params.snapshotId) : undefined;
-    const execute = async (actionParams: Record<string, unknown> = params, actionRef = ref): Promise<Record<string, unknown>> => {
+    const execute = async (actionParams: Record<string, unknown> = params, useRef = true): Promise<Record<string, unknown>> => {
         if (context.signal?.aborted) throw new Error('Bridge 请求已取消');
         if (mutate) tabLeaseManager.authorizeWrite(context, tabId);
         else tabLeaseManager.authorize(context, tabId, false);
         // 数组里出现 undefined 会让 executeScript 直接报 "Value is unserializable"，
         // 而无 ref 的 scroll/select/upload/key/wait 是常态：缺省时整段省略，不占位。
+        const actionRef = useRef ? ref : undefined;
         const injectedArgs: [string, Record<string, unknown>, string?, string?] = actionRef === undefined || snapshotId === undefined
             ? [method, actionParams]
             : [method, actionParams, actionRef, snapshotId];
@@ -261,9 +274,11 @@ export async function handleMcpInteraction(method: string, params: Record<string
     if (method === 'page.key') {
         const keys = params.keys as string[];
         let last: Record<string, unknown> = {};
-        // 每次按键都重新解析 ref 并聚焦：前一次按键可能触发重绘，焦点落到旧节点上就会打错目标。
+        let firstKey = true;
+        // 只在序列开始定位；Tab 或页面处理器移焦后，后续按键必须跟随实际焦点。
         for (let i = 0; i < Number(params.repeat ?? 1); i++) for (const key of keys) {
-            last = await execute({ keys: [key], ...(params.selector ? { selector: String(params.selector) } : {}) }, ref);
+            last = await execute({ keys: [key], ...(firstKey && params.selector ? { selector: String(params.selector) } : {}) }, firstKey);
+            firstKey = false;
         }
         return { pressed: keys.length * Number(params.repeat ?? 1), focused: last.focused };
     }

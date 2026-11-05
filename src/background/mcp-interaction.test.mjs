@@ -12,8 +12,11 @@ const context = { clientId: 'client', taskId: 'task', sessionId: 'session', requ
 
 function browser(elements = {}) {
   const events = [], injectedArgs = [];
-  globalThis.Event = class { constructor(type, init) { this.type = type; this.bubbles = init?.bubbles; } };
-  globalThis.KeyboardEvent = class extends Event { constructor(type, init) { super(type, init); this.key = init.key; this.shiftKey = init.shiftKey; this.ctrlKey = init.ctrlKey; } };
+  globalThis.Event = class {
+    constructor(type, init) { this.type = type; this.bubbles = init?.bubbles; this.cancelable = init?.cancelable; this.defaultPrevented = false; }
+    preventDefault() { if (this.cancelable) this.defaultPrevented = true; }
+  };
+  globalThis.KeyboardEvent = class extends Event { constructor(type, init) { super(type, init); Object.assign(this, init); } };
   globalThis.DragEvent = class extends Event { constructor(type, init) { super(type, init); this.dataTransfer = init.dataTransfer; } };
   globalThis.InputEvent = class extends Event { constructor(type, init) { super(type, init); this.inputType = init.inputType; this.data = init.data; } };
   globalThis.WheelEvent = class extends Event { constructor(type, init) { super(type, init); this.deltaX = init.deltaX; this.deltaY = init.deltaY; this.deltaMode = init.deltaMode; } };
@@ -37,8 +40,11 @@ function browser(elements = {}) {
     try { return [{ result: await func(...args) }]; } catch { return [{ result: null }]; }
   } } };
   const make = (tagName, extra = {}) => ({ tagName, textContent: '', parentElement: null, files: [], value: '',
-    getAttribute() { return null; }, matches(pattern) { return pattern.includes(this.tagName.toLowerCase()); }, dispatchEvent(event) { events.push(event.type); return true; },
-    focus() { document.activeElement = this; }, click() { events.push('click'); }, ...extra });
+    getAttribute() { return null; }, hasAttribute(name) { return name === 'disabled' && this.disabled === true; },
+    matches(pattern) { return pattern.split(',').some((part) => part === ':disabled' ? this.disabled === true
+      : part === 'input[type="submit"]' ? this.tagName === 'INPUT' && this.type === 'submit' : part === this.tagName.toLowerCase()); },
+    dispatchEvent(event) { events.push(event.type); this.onEvent?.(event); return !event.defaultPrevented; },
+    focus() { if (!this.disabled) document.activeElement = this; }, click() { events.push('click'); }, ...extra });
   return { events, make, injectedArgs };
 }
 // A denied write must fail before chrome.scripting.executeScript can touch the page.
@@ -158,6 +164,128 @@ test('key sequence edits a focused input and emits input events', async () => {
     assert.deepEqual(events.filter((type) => type === 'input'), ['input', 'input']);
   } finally { tabLeaseManager.authorizeWrite = authorize; }
 });
+
+test('key focuses a selector or ref once, then follows Tab through the sequence and repeats', async () => {
+  const { make } = browser();
+  const clicked = [];
+  const first = make('BUTTON', { click: () => clicked.push('first') });
+  const second = make('BUTTON', { click: () => clicked.push('second') });
+  const third = make('BUTTON', { click: () => clicked.push('third') });
+  document.querySelector = () => first;
+  document.querySelectorAll = () => [first, second, third];
+  const authorize = tabLeaseManager.authorizeWrite;
+  const resolve = globalThis.__actspan_resolve_element_handle;
+  tabLeaseManager.authorizeWrite = () => {};
+  globalThis.__actspan_resolve_element_handle = () => ({ target: first });
+  try {
+    for (const target of [{ selector: '#first' }, { ref: 's1:e1', snapshotId: 's1' }]) {
+      await handleMcpInteraction('page.key', { ...target, keys: ['Tab', 'Enter'], repeat: 2 }, context, 7);
+      assert.deepEqual(clicked.splice(0), ['second', 'third']);
+    }
+    await handleMcpInteraction('page.key', { keys: ['Shift+Tab', 'Enter'] }, context, 7);
+    assert.deepEqual(clicked, ['second']);
+  } finally { tabLeaseManager.authorizeWrite = authorize; globalThis.__actspan_resolve_element_handle = resolve; }
+});
+
+test('key refuses an unfocusable or disabled target without editing the previous field', async () => {
+  const { events, make } = browser();
+  const previous = make('INPUT', { type: 'text', value: 'safe', selectionStart: 4, selectionEnd: 4,
+    setRangeText(text) { this.value += text; } });
+  const authorize = tabLeaseManager.authorizeWrite;
+  tabLeaseManager.authorizeWrite = () => {};
+  try {
+    for (const target of [make('INPUT', { type: 'text', disabled: true }), make('DIV', { focus() {} })]) {
+      previous.focus();
+      document.querySelector = () => target;
+      await assert.rejects(handleMcpInteraction('page.key', { selector: '#target', keys: ['x'] }, context, 7), /焦点|禁用/);
+      assert.equal(previous.value, 'safe');
+      assert.deepEqual(events, []);
+    }
+  } finally { tabLeaseManager.authorizeWrite = authorize; }
+});
+
+test('key uses the deep shadow focus for a referenced input', async () => {
+  const { make } = browser();
+  const host = make('DIV', { shadowRoot: { activeElement: null } });
+  const input = make('INPUT', { type: 'text', selectionStart: 0, selectionEnd: 0,
+    focus() { document.activeElement = host; host.shadowRoot.activeElement = this; },
+    setRangeText(text) { this.value += text; this.selectionStart = this.selectionEnd = this.value.length; } });
+  const authorize = tabLeaseManager.authorizeWrite;
+  const resolve = globalThis.__actspan_resolve_element_handle;
+  tabLeaseManager.authorizeWrite = () => {};
+  globalThis.__actspan_resolve_element_handle = () => ({ target: input });
+  try {
+    const result = await handleMcpInteraction('page.key', { ref: 's1:e1', snapshotId: 's1', keys: ['中', 'a'] }, context, 7);
+    assert.equal(input.value, '中a');
+    assert.equal(result.focused, 'INPUT');
+  } finally { tabLeaseManager.authorizeWrite = authorize; globalThis.__actspan_resolve_element_handle = resolve; }
+});
+
+test('key inserts Unicode characters and deletes full code points with the matching inputType', async () => {
+  const { make } = browser();
+  const changes = [];
+  const input = make('INPUT', { type: 'text', selectionStart: 0, selectionEnd: 0,
+    onEvent(event) { if (event.type === 'beforeinput') changes.push(event.inputType); },
+    setRangeText(text, start, end) { this.value = this.value.slice(0, start) + text + this.value.slice(end); this.selectionStart = this.selectionEnd = start + text.length; } });
+  input.focus();
+  const authorize = tabLeaseManager.authorizeWrite;
+  tabLeaseManager.authorizeWrite = () => {};
+  try {
+    await handleMcpInteraction('page.key', { keys: ['中', '😀'] }, context, 7);
+    assert.equal(input.value, '中😀');
+    await handleMcpInteraction('page.key', { keys: ['Backspace'] }, context, 7);
+    assert.equal(input.value, '中');
+    input.value = '😀中'; input.selectionStart = input.selectionEnd = 0;
+    await handleMcpInteraction('page.key', { keys: ['Delete'] }, context, 7);
+    assert.equal(input.value, '中');
+    assert.deepEqual(changes, ['insertText', 'insertText', 'deleteContentBackward', 'deleteContentForward']);
+  } finally { tabLeaseManager.authorizeWrite = authorize; }
+});
+
+test('key preserves cancellation, readonly and disabled editing boundaries', async () => {
+  const { events, make } = browser();
+  const input = make('INPUT', { type: 'text', value: 'safe', selectionStart: 4, selectionEnd: 4,
+    setRangeText(text) { this.value += text; } });
+  const authorize = tabLeaseManager.authorizeWrite;
+  tabLeaseManager.authorizeWrite = () => {};
+  try {
+    input.focus();
+    for (const cancelledEvent of ['keydown', 'beforeinput']) {
+      input.onEvent = (event) => { if (event.type === cancelledEvent) event.preventDefault(); };
+      await handleMcpInteraction('page.key', { keys: ['x'] }, context, 7);
+      assert.equal(input.value, 'safe');
+    }
+    input.onEvent = undefined;
+    for (const flag of ['readOnly', 'disabled']) {
+      input[flag] = true;
+      await handleMcpInteraction('page.key', { keys: ['x', 'Backspace'] }, context, 7);
+      assert.equal(input.value, 'safe');
+      input[flag] = false;
+    }
+    assert.ok(!events.includes('input'));
+    const first = make('BUTTON', { onEvent(event) { if (event.type === 'keydown') event.preventDefault(); } });
+    const second = make('BUTTON');
+    document.querySelectorAll = () => [first, second];
+    first.focus();
+    await handleMcpInteraction('page.key', { keys: ['Tab', 'Enter'] }, context, 7);
+    assert.equal(document.activeElement, first);
+    assert.ok(!events.includes('click'));
+  } finally { tabLeaseManager.authorizeWrite = authorize; }
+});
+
+test('key stops a sequence immediately when its request is cancelled', async () => {
+  const { events, make } = browser();
+  const controller = new AbortController();
+  const button = make('BUTTON', { onEvent(event) { if (event.type === 'keyup') controller.abort(); } });
+  button.focus();
+  const authorize = tabLeaseManager.authorizeWrite;
+  tabLeaseManager.authorizeWrite = () => {};
+  try {
+    await assert.rejects(handleMcpInteraction('page.key', { keys: ['a', 'Enter'] }, { ...context, signal: controller.signal }, 7), /已取消/);
+    assert.deepEqual(events, ['keydown', 'keyup']);
+  } finally { tabLeaseManager.authorizeWrite = authorize; }
+});
+
 test('upload denied by lease leaves file input unchanged', async () => {
   const { make } = browser();
   const input = make('INPUT', { type: 'file' });
@@ -215,6 +343,28 @@ test('scroll re-dispatches a synthetic wheel and explains a zero delta with all 
     assert.match(stuck.diagnostic, /focus:true/);
     // 余量是「还能滚多少」：滚到 300/300 后必须报 0，报 300（总量）会让调用方误判成还能滚。
     assert.match(stuck.diagnostic, /余量 x=0 y=0/);
+  } finally { tabLeaseManager.authorizeWrite = authorize; }
+});
+
+test('scroll reports the final offset after synchronous wheel handlers', async () => {
+  const { events, make } = browser();
+  const box = make('DIV', { scrollTop: 0, scrollLeft: 0, clientHeight: 100, clientWidth: 100, scrollHeight: 400, scrollWidth: 100,
+    scrollBy(_x, y) { this.scrollTop += y; },
+    onEvent(event) { if (event.type === 'wheel') this.scrollTop += event.deltaY; } });
+  document.querySelector = () => box;
+  const authorize = tabLeaseManager.authorizeWrite;
+  tabLeaseManager.authorizeWrite = () => {};
+  try {
+    const moved = await handleMcpInteraction('page.scroll', { selector: '#scroll-box', deltaY: 30 }, context, 7);
+    assert.equal(moved.after.y, box.scrollTop);
+    assert.equal(moved.after.y, 60);
+    assert.equal(moved.changed, true);
+    box.scrollBy = () => {};
+    const custom = await handleMcpInteraction('page.scroll', { selector: '#scroll-box', deltaY: 30 }, context, 7);
+    assert.equal(custom.after.y, 90);
+    assert.equal(custom.changed, true);
+    assert.equal(custom.diagnostic, undefined);
+    assert.deepEqual(events, ['wheel', 'scroll', 'wheel', 'scroll']);
   } finally { tabLeaseManager.authorizeWrite = authorize; }
 });
 

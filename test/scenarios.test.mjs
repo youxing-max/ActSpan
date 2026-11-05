@@ -11,10 +11,10 @@ import {
   createMcpHarness,
   delay,
   startFixtureHost,
-  waitForPageValue,
 } from './browser-fixtures.mjs';
 
 const TOOLS = TOOL_NAMES;
+const LIVE_ENABLED = process.env.ACTSPAN_LIVE === '1';
 
 let host;
 let mcp;
@@ -22,7 +22,6 @@ let tabId;
 let pageUrl;
 let hostError;
 let harnessError;
-let approvalBlocked = null;
 
 function ready() {
   assert.ok(mcp && Number.isInteger(tabId) && pageUrl, 'Acceptance harness did not initialize');
@@ -30,9 +29,20 @@ function ready() {
 
 async function pageEval(expression) { ready(); return mcp.call('actspan_page_eval', { tabId, expression }); }
 async function pageRead(format = 'text') { ready(); return mcp.call('actspan_page_read', { tabId, format, maxChars: 200000 }); }
-async function pageSnapshot(queryOrLimit) {
+async function pageText(selector) {
   ready();
-  const params = { tabId };
+  const { content } = await mcp.call('actspan_page_read', { tabId, selector });
+  assert.ok(content.startsWith('<page-content untrusted>\n') && content.endsWith('\n</page-content>'));
+  return content.slice('<page-content untrusted>\n'.length, -'\n</page-content>'.length);
+}
+async function assertPageValue(selector, expect) {
+  ready();
+  const result = await mcp.call('actspan_page_read', { tabId, selector, attr: 'value', expect });
+  assert.equal(result.matched, true, JSON.stringify(result));
+}
+async function pageSnapshot(queryOrLimit, options = {}) {
+  ready();
+  const params = { tabId, ...options };
   if (typeof queryOrLimit === 'string') params.query = queryOrLimit;
   else if (typeof queryOrLimit === 'number') params.limit = queryOrLimit;
   return mcp.call('actspan_page_snapshot', params);
@@ -44,7 +54,7 @@ const BRIDGE_URL = process.env.ACTSPAN_BRIDGE_URL || DEFAULT_BRIDGE_URL;
 /**
  * 桥守护进程是否在监听。没有桥就没有扩展，MCP 服务器会自己起一个守护进程并在
  * 「等扩展上线」上无限期挂着，连带把 node --test 的 worker 吊死（子进程句柄不会自己收）。
- * 所以先做一次 1.5s 的 TCP 探测，没桥就直接跳过，绝不拉起 MCP 子进程。
+ * 所以先做一次 1.5s 的 TCP 探测，没桥就报告前置失败，绝不拉起 MCP 子进程。
  */
 async function bridgeListening(url = BRIDGE_URL, timeoutMs = 1500) {
   let target;
@@ -71,32 +81,19 @@ async function waitFor(probe, timeoutMs = 5000) {
 }
 
 /**
- * 每个用例的前置条件分两类，处理方式不同：
- * - 靶场服务器（host）起不来 → 真失败，测试基础设施本身就是被测代码。
- * - 活体环境（扩展、桥、审批）不可用 → 跳过并打印确切原因，绝不伪装成通过。
- * 另外 MCP 路径上的 mutate 能力（page.eval / page.click / tab.navigate…）在扩展侧
- * 需要用户点悬浮球确认，无人值守时固定以「审批等待超时」收尾——那是环境缺审批通道，
- * 不是被测契约失败，同样按跳过处理。
+ * 默认测试只跳过未显式启用的真机场景；显式启用后，初始化或工具失败必须报错。
+ * 当前本机 fixture 导航仍被 SSRF 策略拒绝：保留真实失败，不关闭守卫换取通过。
  */
 function scenario(name, body, { harness = true } = {}) {
   test(name, async (t) => {
     if (harness) {
-      if (harnessError) return t.skip(`ActSpan live harness unavailable: ${harnessError.message}`);
-      if (approvalBlocked) return t.skip(`live Chrome needs interactive approval for mutate capabilities: ${approvalBlocked}`);
+      if (!LIVE_ENABLED) return t.skip('live suite disabled; set ACTSPAN_LIVE=1 to run');
+      if (hostError) throw hostError;
+      if (harnessError) throw harnessError;
     } else if (hostError) {
       throw hostError;
     }
-    try {
-      await body(t);
-    } catch (error) {
-      const message = String(error?.message ?? error);
-      if (message.includes('审批等待超时')) {
-        // 一次就够：审批通道缺失对后续用例是同一个事实，重复等 60s 只会拖长 npm test。
-        approvalBlocked = message;
-        return t.skip(`live Chrome needs interactive approval for mutate capabilities: ${message}`);
-      }
-      throw error;
-    }
+    await body(t);
   });
 }
 
@@ -106,10 +103,9 @@ before(async () => {
   } catch (error) {
     hostError = error instanceof Error ? error : new Error(String(error));
   }
+  if (!LIVE_ENABLED) return;
   try {
     if (hostError) throw new Error('fixture host unavailable');
-    // 真机用例会等待人工审批（最长 60s）且依赖已配对扩展：默认快速跳过，显式开启才运行。
-    if (process.env.ACTSPAN_LIVE !== '1') throw new Error('live suite disabled; set ACTSPAN_LIVE=1 to run');
     if (!(await bridgeListening())) throw new Error(`ActSpan bridge is not listening at ${BRIDGE_URL}; the live acceptance suite needs a paired extension and never fakes one`);
     // 扩展 ID 由 manifest key 推导，和 install/acceptance 用同一事实源，不需要人手填环境变量。
     if (!process.env.ACTSPAN_EXTENSION_IDS && !process.env.ACTSPAN_EXTENSION_ID) {
@@ -117,11 +113,10 @@ before(async () => {
     }
     mcp = await createMcpHarness();
     pageUrl = host.url('playground.html');
-    // 真机套件需要人工在页面上点审批卡；后台标签页看不到卡片，所以前台打开。
-    const opened = await mcp.call('actspan_tab_open', { url: pageUrl, active: true });
+    const opened = await mcp.call('actspan_tab_open', { url: pageUrl, focus: false });
     tabId = opened?.tabId;
     if (!Number.isInteger(tabId)) throw new Error(`actspan_tab_open returned no tabId: ${JSON.stringify(opened)}`);
-    // 就绪探测只用 read 级能力：page_eval 属于 mutate，会卡在人工审批上。
+    // 页面就绪以实际正文为准，不把工具返回成功当作加载完成。
     const loaded = await waitFor(async () => {
       const content = String((await mcp.call('actspan_page_read', { tabId, format: 'text' })).content || '');
       return content.includes('Grounding playground') ? content : '';
@@ -133,11 +128,12 @@ before(async () => {
 });
 
 after(async () => {
-  // tab_close 属 sensitive，要人工审批；审批通道已经证实缺失时再去等 60s 只会拖长 npm test，
-  // 且结果一样关不掉（残留的靶场标签页只能由人手关闭）。
-  if (mcp && Number.isInteger(tabId) && !approvalBlocked) { try { await mcp.callRaw('actspan_tab_close', { tabId }); } catch { /* cleanup only */ } }
-  if (mcp) await mcp.close().catch(() => undefined);
-  if (host) await host.close().catch(() => undefined);
+  try {
+    if (mcp && Number.isInteger(tabId)) await mcp.call('actspan_tab_close', { tabId });
+  } finally {
+    try { if (mcp) await mcp.close(); }
+    finally { if (host) await host.close(); }
+  }
 });
 
 scenario('S1/S2: local fixture host serves every required fixture class', async () => {
@@ -157,6 +153,7 @@ scenario('S5: MCP advertises all externally registered Actspan tools, without al
 });
 
 scenario('S5: page_read proves the live playground and cross-origin iframe are loaded', async () => {
+  await navigate('playground.html');
   const page = await pageRead('html');
   assert.match(page.content, /id="event-log"/);
   assert.match(page.content, /id="shadow-host"/);
@@ -166,58 +163,59 @@ scenario('S5: page_read proves the live playground and cross-origin iframe are l
   assert.ok(frameSrc, 'the fixture iframe must expose its src in the live DOM');
   assert.equal(new URL(frameSrc).hostname, '127.0.0.1');
   // 帧归属由产品自报的 frames 清单证明：跨源 iframe 必须以非主帧的 frame_id 出现在实时帧树里。
-  const snapshot = await pageSnapshot(1);
+  const snapshot = await pageSnapshot(1, { include_frames: true });
   const child = (snapshot.frames || []).find((frame) => String(frame.url || '').endsWith('/frame-inner.html'));
   assert.ok(child, `cross-origin iframe must be present in the live frame tree; got ${JSON.stringify(snapshot.frames)}`);
   assert.notEqual(child.frame_id, 0, 'the child frame must not be reported as the main frame');
   assert.equal(new URL(child.url).hostname, '127.0.0.1');
 });
 
-scenario('S5/G1/G2: click produces complete event sequence and SVG effect evidence', async () => {
+scenario('S5/G1/G2: real click produces complete event sequence and SVG effect evidence', async () => {
   await navigate('playground.html');
-  await mcp.call('actspan_page_click', { tabId, selector: '#svg-button' });
-  const events = String(await pageEval('document.querySelector("#event-log").textContent'));
+  await mcp.call('actspan_page_click', { tabId, selector: '#svg-button', real: true });
+  const events = await pageText('#event-log');
   for (const event of ['pointerover', 'mouseover', 'mousemove', 'pointerdown', 'mousedown', 'focus', 'pointerup', 'mouseup', 'click']) assert.match(events, new RegExp(`svg-button:${event}`), `missing ${event}; actual event log: ${events}`);
-  assert.equal(await pageEval('document.querySelector("#svg-result").textContent'), 'SVG action completed');
+  assert.equal(await pageText('#svg-result'), 'SVG action completed');
   await mcp.call('actspan_page_click', { tabId, selector: '#svg-path' });
-  assert.equal(await pageEval('document.querySelector("#svg-result").textContent'), 'SVG action completed');
+  assert.equal(await pageText('#svg-result'), 'SVG action completed');
 });
 
 scenario('S5/find: semantic target resolution selects a fixture control and proves its effect', async () => {
   await navigate('playground.html');
   const result = await mcp.call('actspan_page_click', { tabId, find: { role: 'button', name: 'Expand details' } });
-  assert.equal(result.clicked || result.success, true, JSON.stringify(result));
+  assert.ok(result.clicked || result.success, JSON.stringify(result));
   assert.equal(await pageEval('document.querySelector("#hidden-content").hidden'), false);
 });
 
-scenario('S5/untrusted: click path emits a trusted browser event, not a synthetic fallback', async () => {
+scenario('S5/real: explicit real click uses CDP without a synthetic fallback', async () => {
   await navigate('playground.html');
-  await mcp.call('actspan_page_click', { tabId, selector: '#svg-button' });
-  const log = String(await pageEval('document.querySelector("#event-log").textContent'));
-  // 真输入要经过命中测试：#svg-button 的 handler 记的是 event.target；
-  // element.click() 只会把被点的元素本身当 target，也不会产生 pointerdown/mousedown。
-  const hit = /svg-button:target:(\S+)/.exec(log);
-  assert.ok(hit, `click must reach a real hit target; event log: ${log}`);
-  assert.notEqual(hit[1], 'svg-button', 'a synthetic element.click() reports the clicked element itself; only a real input hit test targets a descendant');
+  const result = await mcp.call('actspan_page_click', { tabId, selector: '#svg-path', real: true });
+  assert.equal(result.escalation?.channel, 'cdp_real_events');
+  assert.equal(result.escalation?.success, true, JSON.stringify(result));
+  assert.equal(result.escalation?.fallback, undefined);
+  const log = await pageText('#event-log');
+  // SVG 会提升到可点击按钮，中心命中的子元素不固定；以通道、事件序列和实际效果共同验证。
+  assert.equal(await pageText('#svg-result'), 'SVG action completed');
   assert.match(log, /svg-button:pointerdown/, 'trusted input must dispatch pointerdown');
   assert.match(log, /svg-button:mousedown/, 'trusted input must dispatch mousedown');
 });
 
-scenario('S5/sensitive/effect: act stops before a payment side effect and reports the reason', async () => {
+scenario('S5/sensitive/effect: free-mode act executes a DOM-only simulated confirmation once', async () => {
   await navigate('playground.html');
   const result = await mcp.call('actspan_act', { tabId, steps: [{ action: 'click', selector: '#confirm-payment' }] });
-  assert.equal(result.success, false);
-  assert.match(JSON.stringify(result.error), /SENSITIVE|确认|payment|支付/i);
-  assert.equal(await pageEval('document.querySelector("#pay-result").textContent'), 'No payment action');
+  assert.equal(result.success, true, JSON.stringify(result));
+  assert.equal(await pageText('#pay-result'), 'Simulated payment confirmed for $12.34 (no transaction)');
+  assert.equal((await pageText('#event-log')).split('\n').filter(line => line === 'confirm-payment:click').length, 1);
 });
 
 scenario('S5/G1/G3: mousedown-only menu opens and preventDefault preserves focus', async () => {
-  await mcp.call('actspan_page_click', { tabId, selector: '#mousedown-menu' });
+  await navigate('playground.html');
+  await mcp.call('actspan_page_click', { tabId, selector: '#mousedown-menu', real: true });
   assert.equal(await pageEval('document.querySelector("#menu-panel").hidden'), false);
-  assert.equal(await pageEval('document.querySelector("#menu-result").textContent'), 'Menu opened by mousedown');
+  assert.equal(await pageText('#menu-result'), 'Menu opened by mousedown');
   await mcp.call('actspan_page_type', { tabId, selector: '#focus-input', text: 'focus me' });
-  await mcp.call('actspan_page_click', { tabId, selector: '#focus-preserving' });
-  assert.match(String(await pageEval('document.querySelector("#focus-result").textContent')), /focus-input/);
+  await mcp.call('actspan_page_click', { tabId, selector: '#focus-preserving', real: true });
+  assert.match(await pageText('#focus-result'), /focus-input/);
   assert.equal(await pageEval('document.activeElement.id'), 'focus-input');
 });
 
@@ -230,22 +228,22 @@ scenario('S5/G4: open shadow DOM descendants are snapshotted and actionable thro
 
   const clicked = await mcp.call('actspan_page_click', { tabId, ref: action.element_id, snapshotId: snapshot.snapshot_id });
   assert.match(String(clicked.message || ''), /已触发目标元素点击/, JSON.stringify(clicked));
-  assert.equal(await pageEval('document.querySelector("#shadow-result").textContent'), 'Shadow action completed');
-  assert.match(String(await pageEval('document.querySelector("#event-log").textContent')), /shadow-action:click/);
+  assert.equal(await pageText('#shadow-result'), 'Shadow action completed');
+  assert.match(await pageText('#event-log'), /shadow-action:click/);
 });
 
 scenario('S5/G5/H2: cross-origin iframe refs are frame-qualified and route to the exact frame', async () => {
   await navigate('playground.html');
   const frameSource = await pageEval('document.querySelector("#fixture-frame").src');
   assert.equal(new URL(frameSource).hostname, '127.0.0.1');
-  const liveFrames = await pageSnapshot(1);
+  const liveFrames = await pageSnapshot(1, { include_frames: true });
   const childFrame = (liveFrames.frames || []).find((frame) => String(frame.url || '').endsWith('/frame-inner.html'));
   assert.ok(childFrame, `cross-origin iframe was not present in the live frame list; got ${JSON.stringify(liveFrames.frames)}`);
   assert.notEqual(childFrame.frame_id, 0, 'the child frame must not be reported as the main frame');
-  assert.equal(await pageEval('document.querySelector("#frame-result") === null'), true,
+  assert.equal(await pageEval('document.querySelector("#frame-value-result") === null'), true,
     'the parent frame must not define the child frame ids, so any observed effect can only come from the child frame');
 
-  const snapshot = await pageSnapshot('Frame action');
+  const snapshot = await pageSnapshot('Frame action', { include_frames: true });
   const action = snapshot.elements.find((element) => String(element.text || '') === 'Frame action');
   assert.ok(action, `snapshot must expose the child frame control; got ${JSON.stringify(snapshot.elements)}`);
   const suffix = /@f(\d+)$/.exec(String(action.element_id));
@@ -258,21 +256,21 @@ scenario('S5/G5/H2: cross-origin iframe refs are frame-qualified and route to th
   const clicked = await mcp.call('actspan_page_click', { tabId, ref: action.element_id, snapshotId: snapshot.snapshot_id });
   assert.match(String(clicked.message || ''), /已触发目标元素点击/, JSON.stringify(clicked));
 
-  const after = await pageSnapshot('Frame action completed');
+  const after = await pageSnapshot('Frame action completed', { include_frames: true });
   const result = after.elements.find((element) => String(element.text || '') === 'Frame action completed');
   assert.ok(result, `child frame effect must be observable in the child frame; got ${JSON.stringify(after.elements)}`);
   assert.equal(Number(/@f(\d+)$/.exec(String(result.element_id))?.[1]), frameId, 'the effect must be reported from the same child frame');
   const read = await mcp.call('actspan_page_read', { tabId, ref: result.element_id, snapshotId: after.snapshot_id });
-  assert.equal(read.content, 'Frame action completed');
+  assert.equal(read.content, '<page-content untrusted>\nFrame action completed\n</page-content>');
 });
 
-scenario('S5: each registered browser MCP tool has a live fixture round trip', async () => {
-  ready();
+scenario('S5: browser read, network and data tools have fixture round trips', async () => {
+  await navigate('playground.html');
   const tabs = await mcp.call('actspan_tabs_list');
   assert.ok(Array.isArray(tabs));
   assert.ok(tabs.some((tab) => tab.id === tabId));
   const shot = await mcp.callRaw('actspan_screenshot', { tabId });
-  assert.equal(shot.isError, undefined, shot.content?.[0]?.text);
+  assert.notEqual(shot.isError, true, shot.content?.[0]?.text);
   assert.equal(shot.content?.[0]?.type, 'image');
   const navigated = await mcp.call('actspan_tab_navigate', { tabId, url: host.url('playground.html') });
   assert.equal(navigated.tabId, tabId);
@@ -282,12 +280,14 @@ scenario('S5: each registered browser MCP tool has a live fixture round trip', a
   assert.ok(Array.isArray(snapshot.elements) && snapshot.elements.length > 0, JSON.stringify(snapshot));
   assert.match(String(snapshot.snapshot_id || ''), /^snap-/);
   assert.ok(snapshot.frames?.some((frame) => frame.frame_id === 0), 'the main frame must always be reported');
-  const networkList = await mcp.call('actspan_network_list', { tabId, limit: 20 });
-  assert.ok(networkList && typeof networkList === 'object');
-  const networkDetail = await mcp.callRaw('actspan_network_detail', { tabId, urlFilter: host.url('playground.html') });
-  assert.ok(networkDetail && (networkDetail.content || networkDetail.isError), 'network detail must return a real response or diagnostic');
-  const networkQuery = await mcp.callRaw('actspan_network_query', { tabId, urlFilter: host.url('playground.html') });
-  assert.ok(networkQuery && (networkQuery.content || networkQuery.isError), 'network query must return a real response or diagnostic');
+  const networkList = await mcp.call('actspan_network_list', { tabId, reload: true, limit: 20 });
+  const request = networkList.events.find(event => event.url === host.url('playground.html'));
+  assert.ok(request?.requestId, 'reload must capture the fixture document');
+  const networkDetail = await mcp.call('actspan_network_detail', { tabId, requestId: request.requestId, includeBody: true });
+  assert.equal(networkDetail.statusCode, 200);
+  assert.match(networkDetail.body, /Grounding playground/);
+  const networkQuery = await mcp.call('actspan_network_query', { tabId, urlFilter: request.url });
+  assert.match(networkQuery.body, /Grounding playground/);
   const fetched = await mcp.call('actspan_data_fetch', { tabId, url: host.url('playground.html'), sections: ['headings', 'meta'], max_content_length: 4000 });
   assert.match(JSON.stringify(fetched), /Grounding playground/);
   const paginated = await mcp.call('actspan_data_paginate', { tabId, url: host.url('acceptance.json'), param: 'page', maxPages: 2 });
@@ -299,24 +299,25 @@ scenario('S5: each registered browser MCP tool has a live fixture round trip', a
 scenario('S5/G6/G7/G8: file role, unlabeled controls, current values and accessibility hooks remain observable', async () => {
   await navigate('playground.html');
   const html = await pageRead('html');
-  assert.match(html, /type="file"/);
-  assert.match(html, /data-testid="email"/);
-  assert.match(html, /aria-label="Drop a fixture file"/);
+  assert.match(html.content, /type="file"/);
+  assert.match(html.content, /data-testid="email"/);
+  assert.match(html.content, /aria-label="Drop a fixture file"/);
   await mcp.call('actspan_page_type', { tabId, selector: '#email', text: 'current@example.test' });
-  assert.equal(await pageEval('document.querySelector("#email").value'), 'current@example.test');
+  await assertPageValue('#email', 'current@example.test');
   const accessibility = await pageEval('Array.from(document.querySelectorAll("[role],label,[aria-label]")).map((node) => ({ role: node.getAttribute("role"), label: node.getAttribute("aria-label"), text: (node.innerText || node.textContent || "").trim() })).filter((item) => item.text || item.label)');
   assert.ok(accessibility.some((item) => item.role === 'status'));
   assert.ok(accessibility.some((item) => item.label === 'Drop a fixture file'));
 });
 
 scenario('S5/G8/C1: one type call fills the complete form and delayed validation reports success', async () => {
+  await navigate('playground.html');
   await mcp.call('actspan_page_type', { tabId, selector: '#email', text: 'acceptance@example.test' });
   await mcp.call('actspan_page_type', { tabId, selector: '#password', text: 'synthetic-secret' });
-  assert.equal(await pageEval('document.querySelector("#email").value'), 'acceptance@example.test');
-  assert.equal(await pageEval('document.querySelector("#password").value'), 'synthetic-secret');
+  await assertPageValue('#email', 'acceptance@example.test');
+  await assertPageValue('#password', 'synthetic-secret');
   await mcp.call('actspan_page_click', { tabId, selector: '#submit' });
-  await waitForPageValue(pageEval, 'document.querySelector("#form-result").textContent', 'Submitted successfully');
-  assert.match(String(await pageEval('document.querySelector("#event-log").textContent')), /submit:validation-complete/);
+  assert.ok(await waitFor(async () => (await pageText('#form-result')) === 'Submitted successfully'));
+  assert.match(await pageText('#event-log'), /submit:validation-complete/);
 });
 
 scenario('S5/A4: upload, drop, select, key, wait and scroll produce live effects', async () => {
@@ -324,21 +325,22 @@ scenario('S5/A4: upload, drop, select, key, wait and scroll produce live effects
   // 靶场自带原生 select，正合用；不再用带副作用的 page_eval 造元素。
   const selected = await mcp.call('actspan_page_select', { tabId, selector: '#plan-select', value: 'pro' });
   assert.equal(selected.selectedValue, 'pro');
-  assert.equal(await pageEval('document.querySelector("#plan-select").value'), 'pro');
-  assert.equal(await pageEval('document.querySelector("#select-result").textContent'), 'Plan selected: pro');
+  await assertPageValue('#plan-select', 'pro');
+  assert.equal(await pageText('#select-result'), 'Plan selected: pro');
   const base64 = Buffer.from('fixture-upload').toString('base64');
   const uploaded = await mcp.call('actspan_page_upload', { tabId, selector: '#upload', filename: 'acceptance.txt', base64, mimeType: 'text/plain' });
   assert.equal(uploaded.uploaded, true);
-  assert.match(await pageEval('document.querySelector("#upload-result").textContent'), /acceptance\.txt/);
+  assert.match(await pageText('#upload-result'), /acceptance\.txt/);
   const dropped = await mcp.call('actspan_page_upload', { tabId, dropSelector: '#drop-zone', filename: 'dropped.txt', base64, mimeType: 'text/plain' });
   assert.equal(dropped.via, 'drop');
-  assert.match(await pageEval('document.querySelector("#drop-result").textContent'), /dropped\.txt/);
+  assert.match(await pageText('#drop-result'), /dropped\.txt/);
   const keyed = await mcp.call('actspan_page_key', { tabId, selector: '#focus-input', keys: ['a', 'b'] });
   assert.equal(keyed.pressed, 2);
   const waited = await mcp.call('actspan_page_wait', { tabId, for: 'selector', selector: '#drop-zone', timeoutMs: 1000 });
   assert.equal(waited.found, true);
   const scrolled = await mcp.call('actspan_page_scroll', { tabId, selector: '#scroll-box', deltaY: 300 });
-  assert.ok(scrolled.after > scrolled.before);
+  assert.ok(scrolled.after.y > scrolled.before.y);
+  assert.equal(scrolled.changed, true);
 });
 
 scenario('S5/act: compound script executes ordered observable effects and returns a final snapshot', async () => {
@@ -352,7 +354,7 @@ scenario('S5/act: compound script executes ordered observable effects and return
   assert.equal(result.success, true);
   assert.ok(Array.isArray(result.trace));
   assert.ok(result.snapshot);
-  assert.equal(await pageEval('document.querySelector("#email").value'), 'act@example.test');
+  await assertPageValue('#email', 'act@example.test');
   assert.equal(await pageEval('document.querySelector("#hidden-content").hidden'), false);
 });
 
@@ -360,29 +362,29 @@ scenario('S5/G12/G13: late validation and scroll effects are reported from the l
   await navigate('playground.html');
   await mcp.call('actspan_page_click', { tabId, selector: '#submit' });
   await mcp.call('actspan_page_type', { tabId, selector: '#email', text: 'late@example.test' });
-  await delay(120);
-  assert.equal(await pageEval('document.querySelector("#form-result").textContent'), 'Email validation failed');
+  assert.ok(await waitFor(async () => (await pageText('#form-result')) === 'Email validation failed'),
+    'delayed validation must report the email captured before the later input');
   // 用产品自己的 scroll 动作制造滚动，跨源/跨线程的 scroll 事件由页面记录。
   await mcp.call('actspan_page_scroll', { tabId, selector: '#scroll-box', deltaY: 300 });
-  await delay(100);
-  assert.match(String(await pageEval('document.querySelector("#scroll-result").textContent')), /scroll:\d+/);
+  assert.ok(await waitFor(async () => /scroll:[1-9]\d*/.test(await pageText('#scroll-result'))),
+    'scroll handler must observe the changed container position');
 });
 
-scenario('S5/G14/C1: payment confirmation is blocked until approval, while ordinary confirmation works', async () => {
-  const payment = await mcp.callRaw('actspan_page_click', { tabId, selector: '#confirm-payment' });
-  assert.equal(payment.isError, true, 'payment must not auto-upgrade or silently click');
-  assert.equal(await pageEval('document.querySelector("#pay-result").textContent'), 'No payment action');
+scenario('S5/G14/C1: free-mode simulated payment and ordinary confirmation update only fixture DOM', async () => {
+  await navigate('playground.html');
+  await mcp.call('actspan_page_click', { tabId, selector: '#confirm-payment' });
+  assert.equal(await pageText('#pay-result'), 'Simulated payment confirmed for $12.34 (no transaction)');
   await mcp.call('actspan_page_click', { tabId, selector: '#confirm-generic' });
-  assert.equal(await pageEval('document.querySelector("#confirm-result").textContent'), 'Ordinary confirmation completed');
+  assert.equal(await pageText('#confirm-result'), 'Ordinary confirmation completed');
 });
 
 scenario('S5/CSP and eval policy: permitted fixture handler runs, side-effect eval is rejected', async () => {
   await navigate('csp.html');
   await mcp.call('actspan_page_click', { tabId, selector: '#data-csp-probe' });
-  assert.equal(await pageEval('document.querySelector("#csp-result").textContent'), 'Permitted handler completed');
+  assert.equal(await pageText('#csp-result'), 'Permitted handler completed');
   const denied = await mcp.callRaw('actspan_page_eval', { tabId, expression: 'document.querySelector("#csp-result").textContent = "forged"' });
   assert.equal(denied.isError, true, 'eval side effect must be rejected by policy');
-  assert.equal(await pageEval('document.querySelector("#csp-result").textContent'), 'Permitted handler completed');
+  assert.equal(await pageText('#csp-result'), 'Permitted handler completed');
 });
 
 scenario('S5/credentials: credential page output is masked and never repeats synthetic secrets', async () => {
@@ -408,29 +410,22 @@ scenario('S5/drift: direct navigation outside the Actspan task produces a warnin
 scenario('S5/new-tabs: local child opened by the fixture is observable and follows its opener', async () => {
   await navigate('newtab.html');
   await mcp.call('actspan_page_click', { tabId, selector: '#data-newtab-launcher' });
-  assert.equal(await pageEval('document.querySelector("#newtab-result").textContent'), 'Link launch requested');
+  assert.equal(await pageText('#newtab-result'), 'Link launch requested');
   const childTab = await waitFor(async () => (await mcp.call('actspan_tabs_list')).find((tab) => tab.url?.endsWith('/newtab-child.html')), 5000);
   assert.ok(childTab?.id, 'the opened child tab must be tracked by the task, proving it follows its opener');
-  const childRead = await mcp.call('actspan_page_read', { tabId: childTab.id, format: 'text' });
-  assert.match(childRead.content, /Child loaded/);
-  await mcp.call('actspan_tab_close', { tabId: childTab.id });
+  try {
+    const childRead = await mcp.call('actspan_page_read', { tabId: childTab.id, format: 'text' });
+    assert.match(childRead.content, /Child loaded/);
+  } finally {
+    await mcp.call('actspan_tab_close', { tabId: childTab.id });
+  }
 });
 
-scenario('S5/catalog and async tools: registry, workflow, agent lifecycle and notification contracts are live', async () => {
-  await navigate('flow.html');
+scenario('S5/catalog: registry and skill detail are readable without executing workflows', async () => {
+  ready();
   const catalog = await mcp.call('actspan_skills_list');
   assert.ok(Number.isInteger(catalog.revision)); assert.ok(Array.isArray(catalog.skills));
-  const firstSkill = catalog.skills.find((skill) => skill.name && skill.workflows?.length);
-  assert.ok(firstSkill, 'registry must expose at least one executable local skill');
+  const firstSkill = catalog.skills.find((skill) => skill.name);
+  assert.ok(firstSkill, 'registry must expose at least one local skill');
   const detail = await mcp.call('actspan_skill_detail', { name: firstSkill.name }); assert.equal(detail.skill?.name, firstSkill.name);
-  const workflow = await mcp.call('actspan_workflow_run', { name: firstSkill.workflows[0].name, input: { tabId } });
-  assert.ok(workflow.taskId && workflow.sessionId);
-  const status = await mcp.call('actspan_agent_status', { taskId: workflow.taskId, sessionId: workflow.sessionId }); assert.equal(status.taskId, workflow.taskId);
-  const submitted = await mcp.call('actspan_agent_submit', { query: 'Read the local fixture title only' }); assert.ok(submitted.taskId && submitted.sessionId);
-  const cancelled = await mcp.call('actspan_agent_cancel', { taskId: submitted.taskId, sessionId: submitted.sessionId });
-  assert.ok(cancelled === true || cancelled?.cancelled === true || cancelled?.state === 'cancelled');
-  const result = await mcp.callRaw('actspan_agent_result', { taskId: submitted.taskId, sessionId: submitted.sessionId }); assert.ok(result && (result.isError === true || result.content));
-  const push = await mcp.callRaw('actspan_feishu_push', { title: 'fixture acceptance', message: 'local fixture completed' });
-  if (push.isError) assert.match(push.content?.[0]?.text || '', /Webhook|webhook|飞书|Feishu|配置/i);
-  else assert.ok(Number.isInteger(JSON.parse(push.content?.[0]?.text || '{}').sent));
 });

@@ -33,14 +33,14 @@ function bridgeError(result, fallback = 'Bridge action failed') {
  * 取反由 act-script 在唯一的判定点施加一次，这里绝不自行取反。
  */
 function conditionMatch(results, cond) {
-    const observed = Array.isArray(results) ? results : [results];
-    const any = (predicate) => observed.some((entry) => predicate(entry && typeof entry === 'object' ? entry : {}));
+    const source = results && typeof results === 'object' && !Array.isArray(results) ? results : {};
+    const observed = (key) => source[key] && typeof source[key] === 'object' ? source[key] : {};
     const checks = [];
-    if (Object.hasOwn(cond, 'urlContains')) checks.push(any((entry) => String(entry.url || '').includes(String(cond.urlContains))));
-    if (Object.hasOwn(cond, 'selectorExists')) checks.push(any((entry) => entry.exists === true));
-    if (Object.hasOwn(cond, 'textContains')) checks.push(any((entry) => entry.matched === true || String(entry.content || '').includes(String(cond.textContains))));
+    if (Object.hasOwn(cond, 'urlContains')) checks.push(String(observed('urlContains').url || '').includes(String(cond.urlContains)));
+    if (Object.hasOwn(cond, 'selectorExists')) checks.push(observed('selectorExists').exists === true);
+    if (Object.hasOwn(cond, 'textContains')) checks.push(observed('textContains').matched === true || String(observed('textContains').content || '').includes(String(cond.textContains)));
     for (const key of ['checked', 'value', 'text']) {
-        if (Object.hasOwn(cond, key)) checks.push(any((entry) => entry.matched === true));
+        if (Object.hasOwn(cond, key)) checks.push(observed(key).matched === true);
     }
     return checks.some(Boolean);
 }
@@ -147,17 +147,17 @@ export default function registerActTool({ registerTool, callBridge, run, runStru
                 // 每个 DOM 谓词各发一次探针，页面内折算成布尔证据；原始 value 与页面文本不回传。
                 const probes = [];
                 for (const key of ['checked', 'value', 'text', 'textContains']) {
-                    if (Object.hasOwn(cond, key)) probes.push({ attr: key, expect: String(cond[key]) });
+                    if (Object.hasOwn(cond, key)) probes.push({ key, attr: key, expect: String(cond[key]) });
                 }
-                if (typeof cond.selectorExists === 'string') probes.push({ attr: 'exists', selector: cond.selectorExists });
-                else if (Object.hasOwn(cond, 'selectorExists') && target) probes.push({ attr: 'exists' });
-                const reads = probes.length === 0
-                    ? [await invoke('page.read', {})]
-                    : await Promise.all(probes.map((probe) => invoke('page.read', {
-                        ...(probe.selector ? { selector: probe.selector } : target || {}), attr: probe.attr, expect: probe.expect,
-                    })));
+                if (typeof cond.selectorExists === 'string') probes.push({ key: 'selectorExists', attr: 'exists', selector: cond.selectorExists });
+                else if (Object.hasOwn(cond, 'selectorExists') && target) probes.push({ key: 'selectorExists', attr: 'exists' });
+                if (Object.hasOwn(cond, 'urlContains')) probes.push({ key: 'urlContains' });
+                const reads = await Promise.all(probes.map((probe) => invoke('page.read', probe.key === 'urlContains' ? {} : {
+                    ...(probe.selector ? { selector: probe.selector } : target || {}), attr: probe.attr, expect: probe.expect,
+                })));
                 state.reads.push(...reads);
-                return conditionMatch(reads, cond);
+                // 每个谓词只消费自己的探针，全文探针的 exists 不能替代 selectorExists 的结果。
+                return conditionMatch(Object.fromEntries(probes.map((probe, index) => [probe.key, reads[index]])), cond);
             },
         };
         const execution = await executeActScript(parsed, handlers);

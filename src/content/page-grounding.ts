@@ -1296,7 +1296,11 @@ const initElementHandleAction = () => {
       const target = resolved.target;
       // 条件探针：selector 未命中是合法观测（exists:false）而不是错误；ref/find 未命中仍走上面的 error 分支。
       if (action === 'read' && data.attr) {
-        sendResponse?.({ success: true, data: readStateProbe(target, data.attr, data.expect) });
+        // 已指定目标时不能退回全文匹配，否则页面别处的文字会让缺失目标的断言误通过。
+        const probe = !target && data.selector && data.attr !== 'exists'
+          ? { exists: false, matched: false }
+          : readStateProbe(target, data.attr, data.expect);
+        sendResponse?.({ success: true, data: probe });
         return true;
       }
       if (!target) {

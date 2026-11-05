@@ -449,6 +449,50 @@ const groundingRequest = (type, params) => {
 /** 用假 DOM 跑一次 page snapshot，返回响应体 */
 const snapshotOf = (nodes, params = {}) => withSnapshotDom(nodes, () => groundingRequest('snapshot', params));
 
+test('a missing selector never falls back to body text for a condition probe', () => {
+  withSnapshotDom([], () => {
+    document.body.innerText = 'Unrelated banner: payment success';
+    for (const [attr, expect] of [
+      ['text', document.body.innerText],
+      ['textContains', 'payment success'],
+    ]) {
+      const result = groundingRequest('action', { action: 'read', selector: '#missing', attr, expect });
+      assert.deepEqual(result.data, { exists: false, matched: false }, attr);
+    }
+    assert.deepEqual(groundingRequest('action', {
+      action: 'read', selector: '#missing', attr: 'exists',
+    }).data, { exists: false });
+  });
+});
+
+test('an untargeted condition probe still reads the full page text', () => {
+  withSnapshotDom([], () => {
+    document.body.innerText = 'Payment status: ready';
+    for (const [attr, expect] of [['text', document.body.innerText], ['textContains', 'ready']]) {
+      const result = groundingRequest('action', { action: 'read', attr, expect });
+      assert.deepEqual(result.data, { exists: true, matched: true }, attr);
+    }
+  });
+});
+
+test('missing ref and find probes remain errors even when the body matches', () => {
+  withSnapshotDom([], () => {
+    document.body.innerText = 'ready';
+    for (const target of [
+      { element_id: 'missing-probe-ref' },
+      { find: { role: 'button', name: 'Missing target' } },
+    ]) {
+      let response;
+      for (const handler of Channel.handlers.get('__page_grounding_action')) {
+        handler({ action: 'read', ...target, attr: 'textContains', expect: 'ready' }, null, (value) => { response = value; });
+      }
+      assert.equal(response.success, false, JSON.stringify(target));
+      assert.equal(typeof response.error, 'string');
+      assert.equal(response.data, undefined);
+    }
+  });
+});
+
 test('snapshot descriptors expose aria-selected as a tri-state', () => {
   const selected = domNode('button', { text: 'A', attrs: { role: 'tab', 'aria-selected': 'true' } });
   const unselected = domNode('button', { text: 'B', attrs: { role: 'tab', 'aria-selected': 'false' } });
