@@ -2,7 +2,16 @@ import type { FunctionDefinition, FunctionResult, ToolExecutionContext } from '.
 import { isCredentialUrl, redactDataPayload, redactSensitive } from './redact';
 import { isBlockedFetchUrl } from '../lib/ssrf-guard';
 
-const canonical = (value: unknown): string => JSON.stringify(value, Object.keys((value && typeof value === 'object' && !Array.isArray(value)) ? value as object : {}).sort());
+const canonical = (value: unknown): string => {
+  const normalize = (input: any): unknown => {
+    if (Array.isArray(input)) return input.map(normalize);
+    if (input && typeof input === 'object') {
+      return Object.fromEntries(Object.keys(input).sort().map((key) => [key, normalize(input[key])]));
+    }
+    return input;
+  };
+  return JSON.stringify(normalize(value));
+};
 const pathValue = (value: any, path?: string): unknown => {
   if (!path) return undefined;
   return path.split('.').filter(Boolean).reduce((current, key) => current == null ? undefined : current[key], value);
@@ -57,7 +66,11 @@ export const paginateFunction: FunctionDefinition = {
       for (let index = 0; index < maxPages; index += 1) {
         if (context?.signal?.aborted) return { success: false, error: '操作已取消' };
         const requested = { ...baseParams };
-        if (params.param) requested[params.param] = Number(baseParams[params.param] || 1) + index;
+        if (params.param) {
+          const configuredPage = Number(baseParams[params.param] ?? 1);
+          const initialPage = Number.isFinite(configuredPage) ? configuredPage : 1;
+          requested[params.param] = initialPage + index;
+        }
         if (params.cursorParam && cursor !== undefined) requested[params.cursorParam] = cursor;
         const response = await fetch(withQuery(params.url, requested), { signal: context?.signal, credentials: 'same-origin', redirect: 'manual' });
         // 手动重定向：3xx/opaqueredirect 一律停止，避免公网 URL 把请求带到内网。
@@ -100,7 +113,10 @@ export const fetchPaginatedPage = async (params: any, context?: ToolExecutionCon
   const validationError = paginateFunction.validate?.(params);
   if (validationError) return { success: false, error: validationError };
   const requested = { ...(params.params && typeof params.params === 'object' ? params.params : {}) } as Record<string, unknown>;
-  if (params.param) requested[params.param] = Number(params.page || requested[params.param] || 1);
+  if (params.param) {
+    const configuredPage = Number(params.page ?? requested[params.param] ?? 1);
+    requested[params.param] = Number.isFinite(configuredPage) ? configuredPage : 1;
+  }
   if (params.cursorParam && params.cursor !== undefined) requested[params.cursorParam] = params.cursor;
   try {
     const response = await fetch(withQuery(params.url, requested), { signal: context?.signal, credentials: 'same-origin', redirect: 'manual' });

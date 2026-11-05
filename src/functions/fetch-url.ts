@@ -29,7 +29,13 @@ const fetchBinaryBytes = async (url: string, via: 'extension' | 'page', referer:
       const injected = await chrome.scripting.executeScript({
         target: { tabId }, world: 'MAIN', args: [url, MAX_BINARY_BYTES],
         func: async (targetUrl: string, limit: number) => {
-          const response = await fetch(targetUrl, { credentials: 'include' });
+          const response = await fetch(targetUrl, { credentials: 'include', redirect: 'manual' });
+          if (response.type === 'opaqueredirect' || (response.status >= 300 && response.status < 400)) return { error: 'Binary redirect blocked' };
+          if (!response.ok) return { error: `HTTP ${response.status} ${response.statusText || ''}`.trim() };
+          // 注入函数无法引用扩展闭包，手动请求必须停留在已校验的 URL。
+          const requestedUrl = new URL(targetUrl); requestedUrl.hash = '';
+          const responseUrl = new URL(response.url || targetUrl); responseUrl.hash = '';
+          if (responseUrl.href !== requestedUrl.href) return { error: 'Binary response URL changed' };
           const body = new Uint8Array(await response.arrayBuffer());
           if (body.byteLength > limit) return { tooLarge: true, status: response.status, statusText: response.statusText, url: response.url };
           let raw = ''; for (const byte of body) raw += String.fromCharCode(byte);
@@ -38,17 +44,23 @@ const fetchBinaryBytes = async (url: string, via: 'extension' | 'page', referer:
       });
       return injected?.[0]?.result;
     }, signal) as any;
-    if (!result || result.tooLarge) throw new Error('Binary response exceeds 12MB; use download_file instead.');
+    if (!result) throw new Error('Binary response unavailable');
+    if (result.error) throw new Error(result.error);
+    if (result.tooLarge) throw new Error('Binary response exceeds 12MB; use download_file instead.');
     if (result.status < 200 || result.status >= 300) throw new Error(`HTTP ${result.status} ${result.statusText || ''}`.trim());
     return { bytes: decodeBase64(result.base64), contentType: result.contentType, status: result.status, url: result.url || url };
   }
-  const response = await fetch(url, { headers: referer ? { Referer: referer } : undefined, signal });
+  const response = await fetch(url, { headers: referer ? { Referer: referer } : undefined, signal, redirect: 'manual' });
+  if (response.type === 'opaqueredirect' || (response.status >= 300 && response.status < 400)) throw new Error('Binary redirect blocked');
+  const finalUrl = response.url || url;
+  if (isBlockedFetchUrl(finalUrl)) throw new Error('重定向到本地/内网地址，已拒绝');
+  if (isCredentialUrl(finalUrl)) throw new Error('凭据页面不允许二进制读取');
   if (!response.ok) throw new Error(`HTTP ${response.status} ${response.statusText}`);
   const advertised = Number(response.headers.get('content-length'));
   if (Number.isFinite(advertised) && advertised > MAX_BINARY_BYTES) throw new Error('Binary response exceeds 12MB; use download_file instead.');
   const bytes = new Uint8Array(await response.arrayBuffer());
   if (bytes.byteLength > MAX_BINARY_BYTES) throw new Error('Binary response exceeds 12MB; use download_file instead.');
-  return { bytes, contentType: response.headers.get('content-type') || 'application/octet-stream', status: response.status, url: response.url || url };
+  return { bytes, contentType: response.headers.get('content-type') || 'application/octet-stream', status: response.status, url: finalUrl };
 };
 
 export const startBinaryTransfer = async (params: { url: string; via?: 'extension' | 'page'; referer?: string }, context?: ToolExecutionContext & { taskId?: string }) => {

@@ -251,6 +251,29 @@ test('broadcasts registry_changed with changed skill names and revision', async 
   }]);
 });
 
+test('a missing runtime receiver does not leak a rejection or undo a saved skill', async () => {
+  const originalChrome = globalThis.chrome;
+  globalThis.chrome = { runtime: { sendMessage: () => Promise.reject(
+    new Error('Could not establish connection. Receiving end does not exist.'),
+  ) } };
+  try {
+    const area = storage();
+    const service = new RegistryService({ storage: area, now: () => 400 });
+    const events = [];
+    service.subscribe(event => events.push(event));
+
+    await service.upsertSkill(skill({ source: 'user', updatedAt: 400 }));
+    await new Promise(setImmediate);
+
+    assert.equal(area.values.actspan_skills.skills[0].name, 'catalog');
+    assert.equal((await service.listAll()).revision, 1);
+    assert.equal(events.length, 1);
+  } finally {
+    if (originalChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = originalChrome;
+  }
+});
+
 test('keeps a higher-version remote skill when a stale manifest arrives', async () => {
   const area = storage();
   const service = new RegistryService({ storage: area, now: () => 100 });

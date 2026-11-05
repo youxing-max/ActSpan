@@ -88,6 +88,7 @@ export async function inspectNetworkCapture(tabId: number, options: NetworkCaptu
   const result = { tabId, index, matching: matches.length, ...describe(chosen) };
   if (options.mode === 'detail' && !options.includeBody) return result;
   const body = await cdpNetworkFunction.execute({ action: 'get_body', request_id: chosen.requestId, tab_id: tabId }, { signal });
+  if (signal?.aborted) throw new Error('Network inspection cancelled');
   if (!body.success) throw new Error(`Observed ${result.url} but its response body was unavailable: ${body.error}. Inspect another batch or repeat the page action and query again.`);
   const safeBody = redactSensitive(body.data);
   if (typeof body.data?.body === 'string' && /json/i.test(chosen.mimeType || '')) {
@@ -322,6 +323,7 @@ export const cdpNetworkFunction: FunctionDefinition = {
         const bodyResult = await CDPSessionManager.sendCommand(tabId, 'Network.getResponseBody', {
           requestId: params.request_id,
         });
+        if (context?.signal?.aborted) return { success: false, error: '操作已取消' };
         if (!bodyResult.success) {
           return { success: false, error: `获取响应体失败: ${bodyResult.error}` };
         }
@@ -353,17 +355,19 @@ export const cdpNetworkFunction: FunctionDefinition = {
           };
         }
 
-        // 文本内容，截断过大的响应；返回前对 JSON/文本做凭据与 PII 脱敏。
-        if (body.length > MAX_BODY_SIZE) {
-          body = body.substring(0, MAX_BODY_SIZE);
-          truncated = true;
-        }
+        // 必须先处理完整 JSON，否则截断会破坏结构，导致敏感键无法被识别。
         let safeBody = body;
         try {
           safeBody = JSON.stringify(redactSensitive(JSON.parse(body)));
         } catch {
           const redacted = redactSensitive(body);
           safeBody = typeof redacted === 'string' ? redacted : body;
+        }
+        // encodeInto 只写完整字符；read 是实际消费的 UTF-16 长度。
+        const { read } = new TextEncoder().encodeInto(safeBody, new Uint8Array(MAX_BODY_SIZE));
+        if (read < safeBody.length) {
+          safeBody = safeBody.slice(0, read);
+          truncated = true;
         }
 
         return {

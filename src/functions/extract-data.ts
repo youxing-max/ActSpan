@@ -511,6 +511,8 @@ export const extractDataFunction: FunctionDefinition = {
     context?: ToolExecutionContext,
   ): Promise<FunctionResult> => {
     const { mode, scope, schema, buffer_id, tab_id } = params;
+    const signal = context?.signal;
+    if (signal?.aborted) return { success: false, error: '操作已取消' };
     const requestedItems = params.max_items;
     const maxItems = requestedItems === undefined || Number.isNaN(requestedItems)
       ? 100 : Math.min(Math.max(Math.floor(requestedItems), 1), 500);
@@ -530,6 +532,7 @@ export const extractDataFunction: FunctionDefinition = {
     }
 
     try {
+      if (signal?.aborted) return { success: false, error: '操作已取消' };
       // 注入提取逻辑到页面执行
       const results = await chrome.scripting.executeScript({
         target: { tabId },
@@ -537,6 +540,7 @@ export const extractDataFunction: FunctionDefinition = {
         args: [mode, scope || null, maxItems, schema || null],
         world: 'MAIN',
       });
+      if (signal?.aborted) return { success: false, error: '操作已取消' };
 
       const result = results?.[0]?.result;
       if (!result) {
@@ -549,6 +553,7 @@ export const extractDataFunction: FunctionDefinition = {
 
       // 如果指定了 buffer_id，走旁路存储模式
       if (buffer_id) {
+        if (signal?.aborted) return { success: false, error: '操作已取消' };
         getOrCreateBuffer(buffer_id);
         const appendResult = appendToBuffer(buffer_id, result.data.items);
         return {

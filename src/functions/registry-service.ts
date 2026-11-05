@@ -345,7 +345,7 @@ export class RegistryService {
     for (const listener of this.listeners) listener(clone(event));
     if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
       try {
-        void chrome.runtime.sendMessage(event);
+        void Promise.resolve(chrome.runtime.sendMessage(event)).catch(() => undefined);
       } catch {
         // Runtime messaging is best-effort; storage remains authoritative.
       }

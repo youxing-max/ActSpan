@@ -89,6 +89,7 @@ const applyFilter = (
   op: string,
   value: any,
 ): Record<string, any>[] => {
+  const regex = op === 'regex' ? new RegExp(String(value)) : undefined;
   return items.filter(item => {
     const fieldValue = item[field];
     switch (op) {
@@ -100,14 +101,7 @@ const applyFilter = (
       case 'lte': return Number(fieldValue) <= Number(value);
       case 'contains': return String(fieldValue || '').includes(String(value));
       case 'not_contains': return !String(fieldValue || '').includes(String(value));
-      case 'regex': {
-        try {
-          const regex = new RegExp(String(value));
-          return regex.test(String(fieldValue || ''));
-        } catch {
-          return false;
-        }
-      }
+      case 'regex': return regex!.test(String(fieldValue ?? ''));
       default: return true;
     }
   });

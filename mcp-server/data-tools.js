@@ -7,6 +7,16 @@ const safePath = (value) => {
     if (/(^|[\\/])\.\.?([\\/]|$)/.test(value)) throw new Error('savePath must not contain traversal segments');
     return value;
 };
+const canonical = (value) => {
+    const normalize = (input) => {
+        if (Array.isArray(input)) return input.map(normalize);
+        if (input && typeof input === 'object') {
+            return Object.fromEntries(Object.keys(input).sort().map((key) => [key, normalize(input[key])]));
+        }
+        return input;
+    };
+    return JSON.stringify(normalize(value));
+};
 const pagePreview = (value) => value === undefined ? null : JSON.stringify(value).slice(0, 2000);
 const writePage = async (savePath, value, first) => {
     const target = safePath(savePath);
@@ -36,11 +46,12 @@ export default function registerDataTools({ registerTool, callBridge, run, tabId
     }, run(async (args) => {
         const { savePath, ...params } = args || {};
         const task = args || {};
+        const target = savePath === undefined ? undefined : safePath(savePath);
+        if (target !== undefined && !params.binary) throw new Error('savePath is supported for binary fetch only; use data.paginate for NDJSON');
         const result = await callBridge('data.fetch', params, 60000, task);
-        if (savePath) {
-            if (!params.binary) throw new Error('savePath is supported for binary fetch only; use data.paginate for NDJSON');
-            const target = await writeBinaryChunks(savePath, result, callBridge, task);
-            return { saved: target, bytes: result.bytes, status: result.status, content_type: result.content_type };
+        if (target !== undefined) {
+            const saved = await writeBinaryChunks(target, result, callBridge, task);
+            return { saved, bytes: result.bytes, status: result.status, content_type: result.content_type };
         }
         return result;
     }));
@@ -52,26 +63,28 @@ export default function registerDataTools({ registerTool, callBridge, run, tabId
     }, run(async (args) => {
         const { savePath, ...params } = args || {};
         const task = args || {};
+        const target = savePath === undefined ? undefined : safePath(savePath);
         if (!params.param && !params.cursorParam) throw new Error('Provide param for page pagination or cursorParam for cursor pagination; no pagination parameter was guessed');
         if (params.param && params.cursorParam) throw new Error('param and cursorParam are mutually exclusive');
         if (params.cursorParam && !params.cursorPath) throw new Error('cursorParam requires cursorPath');
         const maxPages = Math.min(100, Math.max(1, Math.floor(Number(params.maxPages) || 10)));
-        let page = 1; let cursor; let previous = ''; let stop_reason = 'normal_end'; let firstPage; let page_count = 0; let actual_page_sizes = [];
+        const configuredPage = params.param ? Number(params.params?.[params.param] ?? 1) : 1;
+        let page = Number.isFinite(configuredPage) ? configuredPage : 1; let cursor; let previous = ''; let stop_reason = 'normal_end'; let firstPage; let page_count = 0; let actual_page_sizes = [];
         for (let index = 0; index < maxPages; index += 1) {
             const request = { ...params, ...(params.param ? { page } : {}), ...(params.cursorParam && cursor !== undefined ? { cursor } : {}) };
             const result = await callBridge('data.paginate', request, 90000, task);
             if (!result?.ok) { stop_reason = result?.stop_reason || 'non_2xx'; break; }
-            const signature = JSON.stringify(result.data);
+            const signature = canonical(result.data);
             if (previous && signature === previous) { stop_reason = 'identical_response'; break; }
             previous = signature; if (firstPage === undefined) firstPage = result.data;
             page_count += 1; if (typeof result.actual_page_size === 'number') actual_page_sizes.push(result.actual_page_size);
-            if (savePath) await writePage(savePath, result.data, page_count === 1);
+            if (target !== undefined) await writePage(target, result.data, page_count === 1);
             if (result.data === null || result.data === '' || (Array.isArray(result.data) && result.data.length === 0)) { stop_reason = 'normal_end'; break; }
             if (params.cursorParam) { if (result.nextCursor === undefined || result.nextCursor === null || result.nextCursor === '') { stop_reason = 'normal_end'; break; } cursor = result.nextCursor; }
             else page += 1;
             if (index === maxPages - 1) stop_reason = 'max_pages';
         }
-        return { page_count, stop_reason, actual_page_sizes, ...(savePath ? { saved: safePath(savePath) } : {}), first_page_preview: pagePreview(firstPage) };
+        return { page_count, stop_reason, actual_page_sizes, ...(target !== undefined && page_count > 0 ? { saved: target } : {}), first_page_preview: pagePreview(firstPage) };
     }));
 
     registerTool('actspan_data_download', {

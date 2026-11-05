@@ -30,14 +30,14 @@ const bundled = await build({
     export { extractDataFunction } from './src/functions/extract-data.ts';
     export { downloadFileFunction } from './src/functions/download-file.ts';
     export { fetchUrlFunction } from './src/functions/fetch-url.ts';
-    export { paginateFunction } from './src/functions/paginate.ts';
+    export { paginateFunction, fetchPaginatedPage } from './src/functions/paginate.ts';
     export { cdpFetchFunction } from './src/functions/cdp-fetch.ts';
     export { ArtifactStore } from './src/lib/artifact-store.ts';
     export { cdpNetworkFunction } from './src/functions/cdp-network.ts';
   `, resolveDir: process.cwd(), loader: 'ts' },
   bundle: true, write: false, format: 'esm', platform: 'node',
 });
-const { bookmarkOpsFunction, dataPipelineFunction, extractDataFunction, downloadFileFunction, fetchUrlFunction, paginateFunction, cdpFetchFunction, cdpNetworkFunction, ArtifactStore } =
+const { bookmarkOpsFunction, dataPipelineFunction, extractDataFunction, downloadFileFunction, fetchUrlFunction, paginateFunction, fetchPaginatedPage, cdpFetchFunction, cdpNetworkFunction, ArtifactStore } =
   await import(`data:text/javascript;base64,${Buffer.from(bundled.outputFiles[0].contents).toString('base64')}`);
 
 test('download schema directs data retrieval through available tools before file export', () => {
@@ -64,6 +64,32 @@ test('pipeline preview limits offsets and reports continuation', async () => {
   const last = await dataPipelineFunction.execute({ action: 'preview', buffer_id: id, limit: 1, offset: 2 });
   assert.deepEqual([last.data.has_more, last.data.next_offset], [false, null]);
   await dataPipelineFunction.execute({ action: 'clear', buffer_id: id });
+});
+
+test('pipeline rejects invalid regex without committing any transform', async () => {
+  const id = `invalid-regex-${Date.now()}`;
+  const data = [{ name: 'Alice' }, { name: 'Bob' }];
+  await dataPipelineFunction.execute({ action: 'append', buffer_id: id, data });
+  try {
+    const result = await dataPipelineFunction.execute({ action: 'transform', buffer_id: id, operations: [
+      { type: 'limit', count: 1 }, { type: 'filter', field: 'name', op: 'regex', value: '[' },
+    ] });
+    assert.equal(result.success, false);
+    assert.match(result.error, /正则|regular expression|regex/i);
+    assert.deepEqual((await dataPipelineFunction.execute({ action: 'preview', buffer_id: id })).data.items, data);
+  } finally { await dataPipelineFunction.execute({ action: 'clear', buffer_id: id }); }
+});
+
+test('pipeline applies valid regex to false and zero field values', async () => {
+  const id = `valid-regex-${Date.now()}`;
+  await dataPipelineFunction.execute({ action: 'append', buffer_id: id, data: [{ value: 0 }, { value: false }, { value: 1 }] });
+  try {
+    const result = await dataPipelineFunction.execute({ action: 'transform', buffer_id: id, operations: [
+      { type: 'filter', field: 'value', op: 'regex', value: '^(0|false)$' },
+    ] });
+    assert.equal(result.success, true);
+    assert.deepEqual((await dataPipelineFunction.execute({ action: 'preview', buffer_id: id })).data.items, [{ value: 0 }, { value: false }]);
+  } finally { await dataPipelineFunction.execute({ action: 'clear', buffer_id: id }); }
 });
 
 test('pipeline exports UTF-8 base64 in JSON, CSV, Markdown and TSV MIME formats', async () => {
@@ -204,6 +230,35 @@ test('extract reports zero appended at full buffer capacity', async () => {
   }
 });
 
+for (const phase of ['before', 'during']) {
+  test(`extract cancels ${phase} injection without appending results`, async () => {
+    const id = `cancel-extract-${phase}`;
+    const original = chrome.scripting;
+    const controller = new AbortController();
+    let calls = 0;
+    let finish;
+    chrome.scripting = { executeScript: () => {
+      calls += 1;
+      return new Promise(resolve => { finish = () => resolve([{ result: { success: true, data: { items: [{ id: 2 }], fields: ['id'] } } }]); });
+    } };
+    await dataPipelineFunction.execute({ action: 'append', buffer_id: id, data: [{ id: 1 }] });
+    try {
+      if (phase === 'before') controller.abort();
+      const pending = extractDataFunction.execute({ mode: 'schema', buffer_id: id, tab_id: 1 }, { signal: controller.signal });
+      controller.abort();
+      finish?.();
+      const result = await pending;
+      assert.equal(result.success, false);
+      assert.match(result.error, /取消|abort/i);
+      assert.equal(calls, phase === 'before' ? 0 : 1);
+      assert.deepEqual((await dataPipelineFunction.execute({ action: 'preview', buffer_id: id })).data.items, [{ id: 1 }]);
+    } finally {
+      chrome.scripting = original;
+      await dataPipelineFunction.execute({ action: 'clear', buffer_id: id });
+    }
+  });
+}
+
 test('CDP truncated binary body remains valid base64 within size limit', async () => {
   const original = chrome.debugger.sendCommand;
   const bytes = Buffer.alloc(51 * 1024, 255);
@@ -290,6 +345,46 @@ test('pagination requires explicit mode and reports stop reasons plus observed p
     assert.equal(result.data.stop_reason, 'identical_response');
     assert.equal(result.data.pages[0].actual_page_size, 10);
     assert.equal(calls, 2);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+for (const nested of [false, true]) {
+  test(`pagination retains different ${nested ? 'nested' : 'array'} rows and ignores object key ordering`, async () => {
+    const originalFetch = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = async () => {
+      const rows = ++calls === 1 ? [{ id: 1, title: 'first' }] : calls === 2 ? [{ id: 2, title: 'second' }] : [{ title: 'second', id: 2 }];
+      return new Response(JSON.stringify(nested ? { items: rows } : rows), { status: 200 });
+    };
+    try {
+      const result = await paginateFunction.execute({ url: 'https://api.test/items', param: 'page', maxPages: 4 });
+      assert.equal(result.success, true);
+      assert.equal(result.data.page_count, 2);
+      assert.equal(result.data.stop_reason, 'identical_response');
+      assert.deepEqual(result.data.pages.map(page => (nested ? page.data.items : page.data)[0].id), [1, 2]);
+      assert.equal(calls, 3);
+    } finally { globalThis.fetch = originalFetch; }
+  });
+}
+
+test('pagination preserves explicit initial pages including zero across both extension paths', async () => {
+  const originalFetch = globalThis.fetch;
+  const requested = [];
+  globalThis.fetch = async url => {
+    const page = Number(new URL(url).searchParams.get('page'));
+    requested.push(page);
+    return new Response(JSON.stringify({ page }), { status: 200 });
+  };
+  try {
+    for (const start of [0, 5]) {
+      requested.length = 0;
+      await paginateFunction.execute({ url: 'https://api.test/items', param: 'page', params: { page: start }, maxPages: 2 });
+      assert.deepEqual(requested, [start, start + 1]);
+      requested.length = 0;
+      await fetchPaginatedPage({ url: 'https://api.test/items', param: 'page', params: { page: start } });
+      await fetchPaginatedPage({ url: 'https://api.test/items', param: 'page', params: { page: 9 }, page: start });
+      assert.deepEqual(requested, [start, start]);
+    }
   } finally { globalThis.fetch = originalFetch; }
 });
 
@@ -387,6 +482,56 @@ test('binary fetch denies a credential URL reached by redirect', async () => {
     assert.match(redirected.error, /凭据页面/);
   } finally { globalThis.fetch = originalFetch; }
 });
+
+for (const via of ['extension', 'page']) {
+  test(`binary ${via} fetch rejects redirects and unsafe final URLs before reading bytes`, async () => {
+    const originalFetch = globalThis.fetch;
+    const originalTabs = chrome.tabs;
+    const originalScripting = chrome.scripting;
+    const removed = [];
+    chrome.tabs = {
+      create: async () => ({ id: 92 }), remove: async id => removed.push(id),
+      get: (_id, callback) => callback?.({ status: 'complete' }),
+      onUpdated: { addListener: () => {}, removeListener: () => {} },
+    };
+    // Execute the injected function from its serialized source, like Chrome (no extension closures).
+    chrome.scripting = { executeScript: async options => [{ result: await (0, eval)(`(${options.func.toString()})`)(...options.args) }] };
+    try {
+      for (const response of [
+        { status: 302, type: 'default', url: 'https://cdn.test/file.bin' },
+        { status: 0, type: 'opaqueredirect', url: '' },
+        { status: 200, type: 'default', url: 'http://127.0.0.1/private' },
+        { status: 200, type: 'default', url: 'https://cdn.test/secrets/download' },
+        { status: 503, type: 'default', url: 'https://cdn.test/file.bin' },
+      ]) {
+        let bodyReads = 0;
+        let options;
+        globalThis.fetch = async (_url, input) => {
+          options = input;
+          return { ...response, ok: response.status === 200, statusText: 'failure', headers: new Headers(), arrayBuffer: async () => { bodyReads += 1; return new Uint8Array([1]).buffer; } };
+        };
+        const result = await fetchUrlFunction.execute({ url: 'https://cdn.test/file.bin', binary: true, via });
+        assert.equal(result.success, false, JSON.stringify(response));
+        assert.equal(bodyReads, 0, JSON.stringify(response));
+        assert.equal(options.redirect, 'manual');
+      }
+      if (via === 'page') assert.equal(removed.length, 5);
+      globalThis.fetch = async (_url, options) => {
+        assert.equal(options.redirect, 'manual');
+        return { status: 200, ok: true, url: 'https://cdn.test/file.bin', headers: new Headers({ 'content-type': 'application/octet-stream' }), arrayBuffer: async () => new Uint8Array([0, 255, 128]).buffer };
+      };
+      const ordinary = await fetchUrlFunction.execute({ url: 'https://cdn.test/file.bin#download', binary: true, via });
+      assert.equal(ordinary.success, true);
+      assert.equal(ordinary.data.bytes, 3);
+      assert.equal(ordinary.data.content_type, 'application/octet-stream');
+      if (via === 'page') assert.equal(removed.length, 6);
+    } finally {
+      globalThis.fetch = originalFetch;
+      chrome.tabs = originalTabs;
+      chrome.scripting = originalScripting;
+    }
+  });
+}
 
 test('pagination refuses credential pages without returning their content', async () => {
   const originalFetch = globalThis.fetch;
