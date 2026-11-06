@@ -102,6 +102,14 @@ async function waitFor(probe, timeoutMs = 5000) {
   return null;
 }
 
+async function finishCleanup(actions, errors = []) {
+  for (const action of actions) {
+    try { await action(); } catch (error) { errors.push(error); }
+  }
+  if (errors.length === 1) throw errors[0];
+  if (errors.length > 1) throw new AggregateError(errors, errors.map(error => error?.message || error).join('; '));
+}
+
 /**
  * 默认测试只跳过未显式启用的真机场景；显式启用后，初始化或工具失败必须报错。
  * ACTSPAN_FIXTURE_CONNECTOR 指向 export evaluate 的本地模块；未配置时本机导航仍
@@ -160,19 +168,18 @@ before(async () => {
 });
 
 after(async () => {
-  const restoreFocus = fixtureEvaluate && Number.isInteger(fixturePreviousTab) && Number.isInteger(tabId)
-    ? await fixtureEvaluate(`chrome.tabs.query({ active: true, currentWindow: true }).then(tabs => tabs[0]?.id === ${tabId})`)
-    : false;
-  try {
-    if (mcp && Number.isInteger(tabId)) await mcp.call('actspan_tab_close', { tabId });
-  } finally {
-    try {
-      try {
-        if (restoreFocus) await fixtureEvaluate(`chrome.tabs.get(${fixturePreviousTab}).then(tab => chrome.tabs.update(tab.id, { active: true }), () => undefined)`);
-      } finally { if (mcp) await mcp.close(); }
-    }
-    finally { if (host) await host.close(); }
-  }
+  let restoreFocus = false;
+  await finishCleanup([
+    async () => {
+      if (fixtureEvaluate && Number.isInteger(fixturePreviousTab) && Number.isInteger(tabId)) {
+        restoreFocus = await fixtureEvaluate(`chrome.tabs.query({ active: true, currentWindow: true }).then(tabs => tabs[0]?.id === ${tabId})`);
+      }
+    },
+    async () => { if (mcp && Number.isInteger(tabId)) await mcp.call('actspan_tab_close', { tabId }); },
+    async () => { if (restoreFocus) await fixtureEvaluate(`chrome.tabs.get(${fixturePreviousTab}).then(tab => chrome.tabs.update(tab.id, { active: true }), () => undefined)`); },
+    async () => { if (mcp) await mcp.close(); },
+    async () => { if (host) await host.close(); },
+  ]);
 });
 
 scenario('S1/S2: local fixture host serves every required fixture class', async () => {
@@ -462,6 +469,7 @@ scenario('S5/drift: direct navigation outside the Actspan task produces a warnin
   const opened = await mcp.call('actspan_tab_open', { ...identity, url: baselineUrl, focus: true });
   assert.ok(Number.isInteger(opened?.tabId), 'drift fixture tab did not return an id');
   const driftTabId = opened.tabId;
+  const errors = [];
   try {
     assert.equal(opened.url, baselineUrl, 'the task must establish its baseline at the exact fixture URL');
     await installPublicFixture({ evaluate: fixtureEvaluate, tabId: driftTabId, name: 'creds.html', runId: fixtureRunId });
@@ -477,12 +485,15 @@ scenario('S5/drift: direct navigation outside the Actspan task produces a warnin
     assert.equal(actualUrl, driftUrl);
     assert.match((await read()).warning || '', /漂移|drift/i);
     assert.doesNotMatch((await read()).warning || '', /漂移|drift/i, 'the same session must not repeat its drift warning');
+  } catch (error) {
+    errors.push(error);
   } finally {
-    const restore = await fixtureEvaluate(`chrome.tabs.query({ active: true, currentWindow: true }).then(tabs => tabs[0]?.id === ${driftTabId})`);
-    try { await mcp.call('actspan_tab_close', { ...identity, tabId: driftTabId }); }
-    finally {
-      if (restore && Number.isInteger(previousTab)) await fixtureEvaluate(`chrome.tabs.get(${previousTab}).then(tab => chrome.tabs.update(tab.id, { active: true }), () => undefined)`);
-    }
+    let restore = false;
+    await finishCleanup([
+      async () => { restore = await fixtureEvaluate(`chrome.tabs.query({ active: true, currentWindow: true }).then(tabs => tabs[0]?.id === ${driftTabId})`); },
+      async () => { await mcp.call('actspan_tab_close', { ...identity, tabId: driftTabId }); },
+      async () => { if (restore && Number.isInteger(previousTab)) await fixtureEvaluate(`chrome.tabs.get(${previousTab}).then(tab => chrome.tabs.update(tab.id, { active: true }), () => undefined)`); },
+    ], errors);
   }
 });
 
